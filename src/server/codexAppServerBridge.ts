@@ -60,6 +60,8 @@ type RpcProxyRequest = {
   params?: unknown
 }
 
+const customAgentThreadCwdById = new Map<string, string>()
+
 type ServerRequestReply = {
   result?: unknown
   error?: {
@@ -315,6 +317,34 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+function rewriteCustomAgentThreadCwd<T>(value: T): T {
+  const record = asRecord(value)
+  if (!record) return value
+
+  const rewriteThread = (threadValue: unknown): void => {
+    const thread = asRecord(threadValue)
+    const threadId = typeof thread?.id === 'string' ? thread.id : ''
+    const mappedCwd = threadId ? customAgentThreadCwdById.get(threadId) : undefined
+    if (thread && mappedCwd) {
+      thread.cwd = mappedCwd
+    }
+  }
+
+  rewriteThread(record.thread)
+  if (Array.isArray(record.threads)) {
+    for (const thread of record.threads) rewriteThread(thread)
+  }
+
+  const thread = asRecord(record.thread)
+  const threadId = typeof thread?.id === 'string' ? thread.id : ''
+  const mappedCwd = threadId ? customAgentThreadCwdById.get(threadId) : undefined
+  if (mappedCwd) {
+    record.cwd = mappedCwd
+  }
+
+  return value
 }
 
 function isInlineDataUrl(value: string): boolean {
@@ -2280,9 +2310,102 @@ async function listFilesWithRipgrep(cwd: string): Promise<string[]> {
   })
 }
 
+async function listAgentInstructionFiles(cwd: string): Promise<Array<{
+  value: string
+  label: string
+  path: string
+  content: string
+  isDefault: boolean
+  scope: 'project' | 'global'
+}>> {
+  const normalizedCwd = isAbsolute(cwd) ? cwd : resolve(cwd)
+  const info = await stat(normalizedCwd)
+  if (!info.isDirectory()) {
+    throw new Error('cwd is not a directory')
+  }
+
+  const projectEntries = await readdir(normalizedCwd, { withFileTypes: true })
+  const projectCustomFiles = projectEntries
+    .filter((entry) => entry.isFile() && /^AGENTS(?:\.[^.]+)+\.md$/u.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b))
+  const rows: Array<{
+    value: string
+    label: string
+    path: string
+    content: string
+    isDefault: boolean
+    scope: 'project' | 'global'
+  }> = []
+
+  for (const fileName of ['AGENTS.md', ...projectCustomFiles]) {
+    const filePath = join(normalizedCwd, fileName)
+    try {
+      const content = await readFile(filePath, 'utf8')
+      rows.push({
+        value: `project:${fileName}`,
+        label: fileName === 'AGENTS.md' ? 'Default AGENTS.md' : `Project: ${fileName}`,
+        path: filePath,
+        content,
+        isDefault: fileName === 'AGENTS.md',
+        scope: 'project',
+      })
+    } catch {
+      if (fileName === 'AGENTS.md') {
+        rows.push({
+          value: 'project:AGENTS.md',
+          label: 'Default AGENTS.md',
+          path: filePath,
+          content: '',
+          isDefault: true,
+          scope: 'project',
+        })
+      }
+    }
+  }
+
+  const codexHome = getCodexHomeDir()
+  try {
+    const globalEntries = await readdir(codexHome, { withFileTypes: true })
+    const globalCustomFiles = globalEntries
+      .filter((entry) => entry.isFile() && /^AGENTS(?:\.[^.]+)+\.md$/u.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b))
+    for (const fileName of globalCustomFiles) {
+      const filePath = join(codexHome, fileName)
+      try {
+        const content = await readFile(filePath, 'utf8')
+        rows.push({
+          value: `global:${fileName}`,
+          label: `Global: ${fileName}`,
+          path: filePath,
+          content,
+          isDefault: false,
+          scope: 'global',
+        })
+      } catch {
+        // Ignore unreadable global personality files so one bad file does not hide project options.
+      }
+    }
+  } catch {
+    // A missing CODEX_HOME should not prevent project-level AGENTS selection.
+  }
+
+  return rows
+}
+
 function getCodexHomeDir(): string {
   const codexHome = process.env.CODEX_HOME?.trim()
   return codexHome && codexHome.length > 0 ? codexHome : join(homedir(), '.codex')
+}
+
+async function getNeutralInstructionsCwd(): Promise<string> {
+  const neutralCwd = join(tmpdir(), 'codex-web-agent-instructions-neutral')
+  await mkdir(neutralCwd, { recursive: true })
+  if (existsSync(join(neutralCwd, 'AGENTS.md'))) {
+    throw new Error(`Neutral instructions cwd unexpectedly contains AGENTS.md: ${neutralCwd}`)
+  }
+  return neutralCwd
 }
 
 function getSkillsInstallDir(): string {
@@ -5052,7 +5175,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
         const rpcResult = await appServer.rpc(body.method, body.params ?? null)
         const trimmedResult = trimThreadTurnsInRpcResult(body.method, rpcResult)
-        const result = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
+        const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
+        const result = rewriteCustomAgentThreadCwd(sanitizedResult)
 
         if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
           const rpcRecord = asRecord(result)
@@ -5064,6 +5188,36 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         setJson(res, 200, { result })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/thread/start-with-agent-instructions') {
+        const payload = asRecord(await readJsonBody(req))
+        const targetCwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : ''
+        const model = typeof payload?.model === 'string' ? payload.model.trim() : ''
+        const baseInstructions = typeof payload?.baseInstructions === 'string' ? payload.baseInstructions : ''
+        if (!baseInstructions.trim()) {
+          setJson(res, 400, { error: 'Missing baseInstructions' })
+          return
+        }
+        try {
+          const neutralCwd = await getNeutralInstructionsCwd()
+          const params: Record<string, unknown> = {
+            cwd: neutralCwd,
+            baseInstructions,
+          }
+          if (model) params.model = model
+          const rpcResult = await appServer.rpc('thread/start', params)
+          const rpcRecord = asRecord(rpcResult)
+          const thread = asRecord(rpcRecord?.thread)
+          const threadId = typeof thread?.id === 'string' ? thread.id : ''
+          if (threadId && targetCwd) {
+            customAgentThreadCwdById.set(threadId, targetCwd)
+          }
+          setJson(res, 200, { result: rewriteCustomAgentThreadCwd(rpcResult) })
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to start thread with custom agent instructions') })
+        }
         return
       }
 
@@ -5906,6 +6060,21 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           setJson(res, 200, { data: scored })
         } catch (error) {
           setJson(res, 500, { error: getErrorMessage(error, 'Failed to search files') })
+        }
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/agent-instructions') {
+        const rawCwd = url.searchParams.get('cwd')?.trim() ?? ''
+        if (!rawCwd) {
+          setJson(res, 400, { error: 'Missing cwd' })
+          return
+        }
+        try {
+          const rows = await listAgentInstructionFiles(rawCwd)
+          setJson(res, 200, { data: rows })
+        } catch (error) {
+          setJson(res, 400, { error: getErrorMessage(error, 'Failed to load agent instructions') })
         }
         return
       }

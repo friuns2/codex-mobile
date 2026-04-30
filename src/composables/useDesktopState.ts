@@ -4326,6 +4326,7 @@ export function useDesktopState() {
     imageUrls: string[] = [],
     skills: Array<{ name: string; path: string }> = [],
     fileAttachments: FileAttachment[] = [],
+    baseInstructions?: string,
   ): Promise<string> {
     if (isUpdatingSpeedMode.value) return ''
 
@@ -4344,14 +4345,24 @@ export function useDesktopState() {
 
     try {
       try {
-        const startedThread = await startThread(targetCwd || undefined, selectedModel || undefined)
+        const startedThread = await startThread(
+          targetCwd || undefined,
+          selectedModel || undefined,
+          baseInstructions,
+          { deferCwdUntilTurn: typeof baseInstructions === 'string' && baseInstructions.trim().length > 0 },
+        )
         threadId = startedThread.threadId
         setThreadModelId(threadId, startedThread.model)
         setSelectedCollaborationModeForThread(threadId, selectedMode)
       } catch (unknownError) {
         if (selectedModel && selectedModel !== MODEL_FALLBACK_ID && isUnsupportedChatGptModelError(unknownError)) {
           await applyFallbackModelSelection()
-          const fallbackThread = await startThread(targetCwd || undefined, MODEL_FALLBACK_ID)
+          const fallbackThread = await startThread(
+            targetCwd || undefined,
+            MODEL_FALLBACK_ID,
+            baseInstructions,
+            { deferCwdUntilTurn: typeof baseInstructions === 'string' && baseInstructions.trim().length > 0 },
+          )
           threadId = fallbackThread.threadId
           setThreadModelId(threadId, fallbackThread.model)
           setSelectedCollaborationModeForThread(threadId, selectedMode)
@@ -4386,7 +4397,7 @@ export function useDesktopState() {
       const capturedThreadId = threadId
       const capturedCwd = targetCwd || null
       const capturedPrompt = nextText
-      void startTurnForThread(threadId, nextText, imageUrls, skills, fileAttachments, selectedMode)
+      void startTurnForThread(threadId, nextText, imageUrls, skills, fileAttachments, selectedMode, targetCwd || undefined)
         .catch((unknownError) => {
           shouldAutoScrollOnNextAgentEvent = false
           setThreadInProgress(threadId, false)
@@ -4423,6 +4434,7 @@ export function useDesktopState() {
     skills: Array<{ name: string; path: string }> = [],
     fileAttachments: FileAttachment[] = [],
     collaborationModeOverride?: CollaborationModeKind,
+    cwdOverride?: string,
   ): Promise<void> {
     const reasoningEffort = selectedReasoningEffort.value
     const collaborationMode = collaborationModeOverride === 'plan' ? 'plan' : collaborationModeOverride === 'default'
@@ -4470,6 +4482,7 @@ export function useDesktopState() {
           skills.length > 0 ? skills : undefined,
           fileAttachments,
           collaborationMode,
+          cwdOverride,
         )
       } catch (unknownError) {
         if (modelId && modelId !== MODEL_FALLBACK_ID && isUnsupportedChatGptModelError(unknownError)) {
@@ -4492,6 +4505,7 @@ export function useDesktopState() {
             skills.length > 0 ? skills : undefined,
             fileAttachments,
             collaborationMode,
+            cwdOverride,
           )
         } else {
           throw unknownError

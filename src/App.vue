@@ -525,6 +525,17 @@
                 <p v-if="newThreadCwd" class="new-thread-folder-selected" :title="newThreadCwd">
                   {{ t('Selected folder') }}: {{ newThreadCwd }}
                 </p>
+                <div v-if="newThreadAgentOptions.length > 1" class="new-thread-agents-select">
+                  <p class="new-thread-agents-select-label">{{ t('Instructions') }}</p>
+                  <ComposerDropdown
+                    class="new-thread-agents-dropdown"
+                    :model-value="selectedNewThreadAgentFile"
+                    :options="newThreadAgentDropdownOptions"
+                    :placeholder="t('Select instructions')"
+                    :disabled="isLoadingNewThreadAgents"
+                    @update:model-value="onSelectNewThreadAgentFile"
+                  />
+                </div>
                 <div class="new-thread-folder-actions">
                   <button class="new-thread-folder-action new-thread-folder-action-primary" type="button" @click="onOpenExistingFolder">
                     {{ t('Select folder') }}
@@ -874,6 +885,7 @@ import {
   getAccounts,
   createLocalDirectory,
   getFirstLaunchPluginsCardPreference,
+  getAgentInstructionsOptions,
   getHomeDirectory,
   getTelegramConfig,
   getProjectRootSuggestion,
@@ -890,7 +902,7 @@ import {
 } from './api/codexGateway'
 import type { ReasoningEffort, SpeedMode, ThreadScrollState, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
-import type { LocalDirectoryEntry, TelegramStatus, WorktreeBranchOption } from './api/codexGateway'
+import type { AgentInstructionsOption, LocalDirectoryEntry, TelegramStatus, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 
@@ -1133,6 +1145,9 @@ const newThreadRuntime = ref<'local' | 'worktree'>('local')
 const newWorktreeBaseBranch = ref('')
 const worktreeBranchOptions = ref<WorktreeBranchOption[]>([])
 const isLoadingWorktreeBranches = ref(false)
+const newThreadAgentOptions = ref<AgentInstructionsOption[]>([])
+const selectedNewThreadAgentFile = ref('project:AGENTS.md')
+const isLoadingNewThreadAgents = ref(false)
 const workspaceRootOptionsState = ref<{ order: string[]; labels: Record<string, string> }>({ order: [], labels: {} })
 const worktreeInitStatus = ref<{ phase: 'idle' | 'running' | 'error'; title: string; message: string }>({
   phase: 'idle',
@@ -1421,6 +1436,12 @@ const newWorktreeBranchDropdownOptions = computed<Array<{ value: string; label: 
   }
   return options
 })
+const newThreadAgentDropdownOptions = computed<Array<{ value: string; label: string }>>(() =>
+  newThreadAgentOptions.value.map((option) => ({ value: option.value, label: option.label })),
+)
+const selectedNewThreadAgentOption = computed(() =>
+  newThreadAgentOptions.value.find((option) => option.value === selectedNewThreadAgentFile.value) ?? null,
+)
 const selectedWorktreeBranchLabel = computed(() => {
   const selectedBranch = newWorktreeBaseBranch.value.trim()
   if (!selectedBranch) return ''
@@ -2340,6 +2361,10 @@ function scheduleMobileConversationJumpToLatest(): void {
 function onSelectNewThreadFolder(cwd: string): void {
   newThreadCwd.value = cwd.trim()
   createFolderError.value = ''
+}
+
+function onSelectNewThreadAgentFile(value: string): void {
+  selectedNewThreadAgentFile.value = value.trim() || 'project:AGENTS.md'
 }
 
 function onSelectNewWorktreeBranch(branch: string): void {
@@ -3332,9 +3357,31 @@ watch(
   () => newThreadCwd.value,
   () => {
     worktreeInitStatus.value = { phase: 'idle', title: '', message: '' }
+    void loadNewThreadAgentOptions()
     void refreshDefaultProjectName()
   },
 )
+
+async function loadNewThreadAgentOptions(): Promise<void> {
+  const cwd = newThreadCwd.value.trim()
+  selectedNewThreadAgentFile.value = 'project:AGENTS.md'
+  newThreadAgentOptions.value = []
+  if (!cwd) return
+
+  isLoadingNewThreadAgents.value = true
+  try {
+    const options = await getAgentInstructionsOptions(cwd)
+    newThreadAgentOptions.value = options
+    if (!options.some((option) => option.value === selectedNewThreadAgentFile.value)) {
+      selectedNewThreadAgentFile.value = options[0]?.value ?? 'project:AGENTS.md'
+    }
+  } catch {
+    newThreadAgentOptions.value = []
+    selectedNewThreadAgentFile.value = 'project:AGENTS.md'
+  } finally {
+    isLoadingNewThreadAgents.value = false
+  }
+}
 
 watch(
   () => [newThreadRuntime.value, newThreadCwd.value] as const,
@@ -3445,7 +3492,9 @@ async function submitFirstMessageForNewThread(
       targetCwd = directory.cwd
       newThreadCwd.value = directory.cwd
     }
-    const threadId = await sendMessageToNewThread(text, targetCwd, imageUrls, skills, fileAttachments)
+    const selectedAgent = selectedNewThreadAgentOption.value
+    const baseInstructions = selectedAgent && !selectedAgent.isDefault ? selectedAgent.content : undefined
+    const threadId = await sendMessageToNewThread(text, targetCwd, imageUrls, skills, fileAttachments, baseInstructions)
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
     scheduleMobileConversationJumpToLatest()
@@ -3748,6 +3797,22 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .new-thread-folder-selected {
   @apply mt-2 mb-0 max-w-3xl text-center text-xs text-zinc-500 break-all;
+}
+
+.new-thread-agents-select {
+  @apply mt-3 w-full max-w-3xl;
+}
+
+.new-thread-agents-select-label {
+  @apply m-0 mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500;
+}
+
+.new-thread-agents-dropdown :deep(.composer-dropdown-trigger) {
+  @apply h-9 rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-700;
+}
+
+:global(:root.dark) .new-thread-agents-select-label {
+  @apply text-zinc-500;
 }
 
 .new-thread-folder-actions {

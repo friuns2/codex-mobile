@@ -3883,3 +3883,43 @@ Codex app-server `account/chatgptAuthTokens/refresh` requests are handled automa
 
 #### Rollback/Cleanup
 - None, unless a test-only `$CODEX_HOME` was used
+
+---
+
+### New-thread custom and global AGENTS selector
+
+#### Feature/Change Name
+The new-thread screen detects project `AGENTS.*.md` files and global `~/.codex/AGENTS.*.md` personality files, then lets the user choose custom instructions without loading the default `AGENTS.md`.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Test folder `/Users/igor/temp/TestChat` exists
+3. Test files exist:
+   - `/Users/igor/temp/TestChat/AGENTS.md` with marker `ORIGINAL_AGENTS_MARKER`
+   - `/Users/igor/temp/TestChat/AGENTS.alpha.md` with marker `CUSTOM_ALPHA_MARKER`
+   - `/Users/igor/temp/TestChat/AGENTS.beta.md` with marker `CUSTOM_BETA_MARKER`
+4. Optional global personality file exists: `/Users/igor/.codex/AGENTS.global-test.md` with marker `GLOBAL_AGENT_MARKER`
+5. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. Open the new-thread screen in light theme
+2. Select `/Users/igor/temp/TestChat` as the folder
+3. Confirm an `Instructions` dropdown appears with `Default AGENTS.md`, `Project: AGENTS.alpha.md`, `Project: AGENTS.beta.md`, and any available `Global: AGENTS.*.md` files
+4. Select `Project: AGENTS.alpha.md`
+5. Send: `What is the active marker? Answer with only the marker.`
+6. Confirm the assistant answers `CUSTOM_ALPHA_MARKER`
+7. Confirm the custom start response has `instructionSources: []` and does not include `/Users/igor/temp/TestChat/AGENTS.md`
+8. If `/Users/igor/.codex/AGENTS.global-test.md` exists, select `Global: AGENTS.global-test.md`, send the same prompt, and confirm the assistant answers `GLOBAL_AGENT_MARKER`
+9. Switch to dark theme and repeat the dropdown visibility/readability check
+
+#### Expected Results
+- No instructions dropdown is shown unless the selected folder or `~/.codex` has at least one `AGENTS.*.md` file
+- Leaving `Default AGENTS.md` selected uses the normal `thread/start` path without `baseInstructions`
+- Selecting `Project: AGENTS.alpha.md` sends that file content as `baseInstructions`
+- Selecting a global `~/.codex/AGENTS.*.md` file sends that global file content as `baseInstructions`
+- The backend starts custom-instruction threads in a neutral cwd first, so the original `AGENTS.md` is not read
+- The UI still shows the real selected folder as the thread cwd after custom thread creation
+- Dropdown trigger, menu, and labels are readable in both light theme and dark theme
+
+#### Rollback/Cleanup
+- Remove the temporary `/Users/igor/temp/TestChat/AGENTS*.md` files if they are no longer needed

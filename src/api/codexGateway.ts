@@ -284,6 +284,15 @@ export type ComposerFileSuggestion = {
   path: string
 }
 
+export type AgentInstructionsOption = {
+  value: string
+  label: string
+  path: string
+  content: string
+  isDefault: boolean
+  scope: 'project' | 'global'
+}
+
 const DEFAULT_COLLABORATION_MODE_OPTIONS: CollaborationModeOption[] = [
   { value: 'default', label: 'Default' },
   { value: 'plan', label: 'Plan' },
@@ -1332,16 +1341,26 @@ export type ForkedThread = {
   messages: UiMessage[]
 }
 
-export async function startThread(cwd?: string, model?: string): Promise<StartedThread> {
+export async function startThread(
+  cwd?: string,
+  model?: string,
+  baseInstructions?: string,
+  options?: { deferCwdUntilTurn?: boolean },
+): Promise<StartedThread> {
   try {
     const params: Record<string, unknown> = {}
-    if (typeof cwd === 'string' && cwd.trim().length > 0) {
+    if (options?.deferCwdUntilTurn !== true && typeof cwd === 'string' && cwd.trim().length > 0) {
       params.cwd = cwd.trim()
     }
     if (typeof model === 'string' && model.trim().length > 0) {
       params.model = model.trim()
     }
-    const payload = await callRpc<ThreadStartResponse>('thread/start', params)
+    if (typeof baseInstructions === 'string' && baseInstructions.trim().length > 0) {
+      params.baseInstructions = baseInstructions
+    }
+    const payload = options?.deferCwdUntilTurn === true && typeof baseInstructions === 'string' && baseInstructions.trim().length > 0
+      ? await startThreadWithAgentInstructions(cwd, model, baseInstructions)
+      : await callRpc<ThreadStartResponse>('thread/start', params)
     const threadId = normalizeThreadIdFromPayload(payload)
     if (!threadId) {
       throw new Error('thread/start did not return a thread id')
@@ -1353,6 +1372,34 @@ export async function startThread(cwd?: string, model?: string): Promise<Started
   } catch (error) {
     throw normalizeCodexApiError(error, 'Failed to start a new thread', 'thread/start')
   }
+}
+
+async function startThreadWithAgentInstructions(
+  cwd: string | undefined,
+  model: string | undefined,
+  baseInstructions: string,
+): Promise<ThreadStartResponse> {
+  const body: Record<string, unknown> = { baseInstructions }
+  if (typeof cwd === 'string' && cwd.trim().length > 0) {
+    body.cwd = cwd.trim()
+  }
+  if (typeof model === 'string' && model.trim().length > 0) {
+    body.model = model.trim()
+  }
+  const response = await fetch('/codex-api/thread/start-with-agent-instructions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const payload = await readJsonResponse(response)
+  if (!response.ok) {
+    throw new Error(getErrorMessageFromPayload(payload, 'Failed to start thread with custom agent instructions'))
+  }
+  const record =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  return (record.result ?? {}) as ThreadStartResponse
 }
 
 export async function forkThread(threadId: string): Promise<ForkedThread>
@@ -1504,6 +1551,7 @@ export async function startThreadTurn(
   skills?: Array<{ name: string; path: string }>,
   fileAttachments: FileAttachmentParam[] = [],
   collaborationMode?: CollaborationModeKind,
+  cwd?: string,
 ): Promise<string> {
   try {
     const normalizedModel = model?.trim() ?? ''
@@ -1548,6 +1596,9 @@ export async function startThreadTurn(
     const params: Record<string, unknown> = {
       threadId,
       input,
+    }
+    if (typeof cwd === 'string' && cwd.trim().length > 0) {
+      params.cwd = cwd.trim()
     }
     if (attachments.length > 0) params.attachments = attachments
     if (normalizedModel) {
@@ -2573,6 +2624,40 @@ export async function createProjectlessThreadDirectory(prompt?: string): Promise
     outputDirectory: typeof data.outputDirectory === 'string' ? normalizePathForUi(data.outputDirectory) : cwd,
     workspaceRoot: typeof data.workspaceRoot === 'string' ? normalizePathForUi(data.workspaceRoot) : '',
   }
+}
+
+export async function getAgentInstructionsOptions(cwd: string): Promise<AgentInstructionsOption[]> {
+  const trimmedCwd = cwd.trim()
+  if (!trimmedCwd) return []
+  const query = new URLSearchParams({ cwd: trimmedCwd })
+  const response = await fetch(`/codex-api/agent-instructions?${query.toString()}`)
+  const payload = await readJsonResponse(response)
+  if (!response.ok) {
+    const message = getErrorMessageFromPayload(payload, 'Failed to load agent instructions')
+    throw new Error(message)
+  }
+  const record =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  const data = Array.isArray(record.data) ? record.data : []
+  return data.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const row = item as Record<string, unknown>
+    const value = typeof row.value === 'string' ? row.value.trim() : ''
+    const label = typeof row.label === 'string' ? row.label.trim() : ''
+    const path = typeof row.path === 'string' ? normalizePathForUi(row.path) : ''
+    const content = typeof row.content === 'string' ? row.content : ''
+    if (!value || !label || !path) return []
+    return [{
+      value,
+      label,
+      path,
+      content,
+      isDefault: row.isDefault === true,
+      scope: row.scope === 'global' ? 'global' : 'project',
+    }]
+  })
 }
 
 export async function getProjectRootSuggestion(basePath: string): Promise<{ name: string; path: string }> {
