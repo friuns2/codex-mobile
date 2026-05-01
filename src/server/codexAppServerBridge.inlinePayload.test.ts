@@ -1,5 +1,9 @@
 import { existsSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { sanitizeThreadTurnsInlinePayloads } from './codexAppServerBridge'
 
 const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
@@ -7,6 +11,22 @@ const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2w=='
 const webpBase64 = 'UklGRiIAAABXRUJQVlA4IC4AAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA='
+const originalCodexHome = process.env.CODEX_HOME
+
+let tempCodexHome: string | null = null
+
+beforeEach(async () => {
+  tempCodexHome = await mkdtemp(join(tmpdir(), 'codexui-inline-media-'))
+  process.env.CODEX_HOME = tempCodexHome
+})
+
+afterEach(async () => {
+  process.env.CODEX_HOME = originalCodexHome
+  if (tempCodexHome) {
+    await rm(tempCodexHome, { recursive: true, force: true })
+    tempCodexHome = null
+  }
+})
 
 function localImagePathFromProxyUrl(value: string): string {
   const parsed = new URL(value, 'http://localhost')

@@ -29,6 +29,11 @@ import {
 import { handleOpenRouterProxyRequest } from './openRouterProxy.js'
 import { handleZenProxyRequest } from './zenProxy.js'
 import { handleCustomEndpointProxyRequest } from './customEndpointProxy.js'
+import {
+  pruneManagedTempMedia,
+  storeManagedTempMediaDataUrl,
+  storeManagedTempMediaFile,
+} from './tempMediaStore.js'
 import { ThreadTerminalManager } from './terminalManager.js'
 import { getSpawnInvocation } from '../utils/commandInvocation.js'
 import {
@@ -398,17 +403,6 @@ function normalizeBase64ImageDataUrl(value: string, mimeType: string): string | 
   return `data:${finalMimeType};base64,${compact}`
 }
 
-function extensionFromMimeType(mimeType: string): string {
-  const normalized = mimeType.trim().toLowerCase()
-  if (normalized === 'image/png') return '.png'
-  if (normalized === 'image/jpeg') return '.jpg'
-  if (normalized === 'image/webp') return '.webp'
-  if (normalized === 'image/gif') return '.gif'
-  if (normalized === 'image/svg+xml') return '.svg'
-  if (normalized === 'application/pdf') return '.pdf'
-  return ''
-}
-
 function asNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
@@ -427,33 +421,7 @@ function toAttachmentLinkTarget(block: Record<string, unknown>, fallback: string
 }
 
 async function persistInlineDataUrlToLocalFile(dataUrl: string, baseName: string): Promise<string | null> {
-  const trimmed = dataUrl.trim()
-  const match = /^data:([^;,]*)(;base64)?,(.*)$/isu.exec(trimmed)
-  if (!match) return null
-  const mimeType = (match[1] ?? '').trim().toLowerCase()
-  const encodedPayload = match[3] ?? ''
-  let bytes: Buffer
-  try {
-    bytes = match[2]
-      ? Buffer.from(encodedPayload, 'base64')
-      : Buffer.from(decodeURIComponent(encodedPayload), 'utf8')
-  } catch {
-    return null
-  }
-  if (bytes.length === 0) return null
-
-  const hash = createHash('sha1').update(bytes).digest('hex')
-  const ext = extensionFromMimeType(mimeType)
-  const mediaDir = join(tmpdir(), 'codex-web-inline-media')
-  await mkdir(mediaDir, { recursive: true })
-  const fileName = `${baseName}-${hash}${ext}`
-  const filePath = join(mediaDir, fileName)
-  try {
-    await stat(filePath)
-  } catch {
-    await writeFile(filePath, bytes)
-  }
-  return filePath
+  return await storeManagedTempMediaDataUrl(dataUrl, baseName)
 }
 
 function toLocalImageProxyUrl(path: string): string {
@@ -3648,11 +3616,7 @@ function handleFileUpload(req: IncomingMessage, res: ServerResponse): void {
         break
       }
       if (!fileData) { setJson(res, 400, { error: 'No file in request' }); return }
-      const uploadDir = join(tmpdir(), 'codex-web-uploads')
-      await mkdir(uploadDir, { recursive: true })
-      const destDir = await mkdtemp(join(uploadDir, 'f-'))
-      const destPath = join(destDir, fileName)
-      await writeFile(destPath, fileData)
+      const destPath = await storeManagedTempMediaFile(fileName, fileData)
       setJson(res, 200, { path: destPath })
     } catch (err) {
       setJson(res, 500, { error: getErrorMessage(err, 'Upload failed') })

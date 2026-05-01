@@ -7,6 +7,7 @@ import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
 import { createDirectoryListingHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from './localBrowseUi.js'
+import { pruneManagedTempMedia } from './tempMediaStore.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -75,6 +76,7 @@ function readWildcardPathParam(value: unknown): string {
 export function createServer(options: ServerOptions = {}): ServerInstance {
   const app = express()
   const bridge = createCodexBridgeMiddleware()
+  void pruneManagedTempMedia().catch(() => {})
   const authSession = options.password ? createAuthSession(options.password) : null
 
   // 1. Auth middleware (if password is set)
