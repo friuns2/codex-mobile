@@ -4175,3 +4175,34 @@ Managed worktree threads remain visible under their matching canonical workspace
 
 #### Rollback/Cleanup
 - None.
+
+---
+
+### Optional node-pty install on Android/Termux
+
+#### Feature/Change Name
+`node-pty` is now installed as an optional dependency so global install does not fail on Android/Termux when native PTY rebuild is unavailable.
+
+#### Prerequisites/Setup
+1. Android Termux environment with Node.js and npm.
+2. No globally installed `codexapp` package.
+3. A second host (macOS/Linux/Windows) where `node-pty` can install successfully for terminal feature verification.
+4. Light theme and dark theme are available in the UI.
+
+#### Steps
+1. In Termux, run `npm i -g codexapp`.
+2. Confirm install completes even if npm logs a skipped/failed optional build for `node-pty`.
+3. Run `codexapp --no-login` and open a thread.
+4. Verify integrated terminal is shown as unavailable (no crash) when PTY support is missing.
+5. On a supported host, run `npm i -g codexapp` and launch `codexapp --no-login`.
+6. In light theme, open a thread and verify integrated terminal opens normally.
+7. Switch to dark theme and verify integrated terminal remains readable and functional.
+
+#### Expected Results
+- Termux global installation no longer hard-fails because `node-pty` rebuild fails.
+- App startup succeeds on Termux and gracefully reports terminal unavailability instead of crashing.
+- Supported hosts still load `node-pty` and integrated terminal behavior remains unchanged.
+- Terminal surfaces remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Remove global package via `npm rm -g codexapp` on test hosts if installed only for validation.
