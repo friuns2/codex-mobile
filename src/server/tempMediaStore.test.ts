@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -19,6 +19,20 @@ describe('managed temp media store', () => {
       const path = await storeManagedTempMediaFile('screenshot.png', Buffer.from('hello'), { root })
       expect(path.startsWith(root)).toBe(true)
       await expect(stat(path)).resolves.toMatchObject({ size: 5 })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps uploaded file writes isolated per upload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codexui-temp-media-'))
+    try {
+      const firstPath = await storeManagedTempMediaFile('screenshot.png', Buffer.from('hello'), { root })
+      const secondPath = await storeManagedTempMediaFile('screenshot.png', Buffer.from('hello'), { root })
+
+      expect(firstPath).not.toBe(secondPath)
+      expect(firstPath.startsWith(join(root, 'asset-'))).toBe(true)
+      expect(secondPath.startsWith(join(root, 'asset-'))).toBe(true)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -49,11 +63,25 @@ describe('managed temp media store', () => {
     }
   })
 
-  it('stores inline image data under the managed root', async () => {
+  it('stores inline image data under a deterministic managed path', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codexui-temp-media-'))
     try {
       const path = await storeManagedTempMediaDataUrl(pngDataUrl, 'inline-image', { root })
-      expect(path).toMatch(new RegExp(`^${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+      expect(path).toMatch(new RegExp(`^${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/inline/[0-9a-f]{2}/inline-image-[0-9a-f]{40}\\.png$`))
+      await expect(stat(path ?? '')).resolves.toBeTruthy()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reuses deterministic inline image paths for repeated content', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codexui-temp-media-'))
+    try {
+      const firstPath = await storeManagedTempMediaDataUrl(pngDataUrl, 'inline-image', { root })
+      const secondPath = await storeManagedTempMediaDataUrl(pngDataUrl, 'inline-image', { root })
+
+      expect(firstPath).toBe(secondPath)
+      await expect(readdir(root)).resolves.toEqual(['inline'])
     } finally {
       await rm(root, { recursive: true, force: true })
     }

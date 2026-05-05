@@ -242,11 +242,13 @@ Uploaded screenshots, pasted images, and dragged files are stored in a Codex-man
 4. Check the server host and confirm the file is stored under `CODEX_HOME/tmp/codex-web-media`.
 5. Repeat steps 1 through 4 using drag and drop.
 6. Switch to dark theme and repeat steps 1 through 4.
-7. Create or keep a scratch media directory older than 30 days, then trigger another upload and confirm the stale directory is removed by the temp-media cleanup path.
+7. Reopen or refresh a thread containing an inline generated image several times and confirm the same inline media file path is reused under `CODEX_HOME/tmp/codex-web-media/inline`.
+8. Create or keep a scratch media directory older than 30 days, then trigger another upload and confirm the stale directory is removed by the temp-media cleanup path.
 
 #### Expected Results
 - The browser can upload images from a different machine without depending on a browser-local filesystem path.
 - Uploaded media is retained in the Codex-managed temp tree instead of `tmpdir()` on the OS.
+- Re-reading the same inline media payload does not create duplicate `asset-*` directories.
 - The preview and sent attachment remain usable after upload.
 - Temp media older than 30 days is pruned before new media is written.
 - Behavior is consistent in light theme and dark theme.

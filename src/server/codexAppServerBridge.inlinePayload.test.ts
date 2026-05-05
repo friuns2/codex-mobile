@@ -21,7 +21,11 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  process.env.CODEX_HOME = originalCodexHome
+  if (typeof originalCodexHome === 'string') {
+    process.env.CODEX_HOME = originalCodexHome
+  } else {
+    delete process.env.CODEX_HOME
+  }
   if (tempCodexHome) {
     await rm(tempCodexHome, { recursive: true, force: true })
     tempCodexHome = null

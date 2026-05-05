@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const TEMP_MEDIA_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const TEMP_MEDIA_ROOT_SEGMENT = join('tmp', 'codex-web-media')
@@ -17,6 +17,10 @@ export function getManagedTempMediaRoot(codexHome = getCodexHomeDir()): string {
 
 function isMissingFileSystemEntryError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
+}
+
+function isExistingFileSystemEntryError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'EEXIST'
 }
 
 function sanitizeTempMediaFileName(fileName: string): string {
@@ -102,6 +106,22 @@ export async function storeManagedTempMediaDataUrl(
   const hash = createHash('sha1').update(bytes).digest('hex')
   const extension = extensionFromMimeType(mimeType)
   const safeBaseName = sanitizeTempMediaFileName(baseName)
-  const fileName = `${safeBaseName}-${hash}${extension}`
-  return await storeManagedTempMediaFile(fileName, bytes, options)
+  const root = options.root ?? getManagedTempMediaRoot()
+  const filePath = join(root, 'inline', hash.slice(0, 2), `${safeBaseName}-${hash}${extension}`)
+
+  try {
+    await stat(filePath)
+    return filePath
+  } catch (error) {
+    if (!isMissingFileSystemEntryError(error)) throw error
+  }
+
+  await pruneManagedTempMedia(root)
+  await mkdir(dirname(filePath), { recursive: true })
+  try {
+    await writeFile(filePath, bytes, { flag: 'wx' })
+  } catch (error) {
+    if (!isExistingFileSystemEntryError(error)) throw error
+  }
+  return filePath
 }
