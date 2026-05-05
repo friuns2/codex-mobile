@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { writeFile } from 'node:fs/promises'
 import { handleAccountRoutes } from './accountRoutes.js'
+import { closeBrowserUseBackends, tryEnsureBrowserUseBackendForSession } from './browserUseBackend.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { handleReviewRoutes } from './reviewGit.js'
 import { handleSkillsRoutes, initializeSkillsSyncOnStartup } from './skillsRoutes.js'
@@ -3832,7 +3833,6 @@ class AppServerProcess {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
-  private readonly appServerArgs = buildAppServerArgs()
   private readonly streamEventsByThreadId = new Map<string, StreamEventFrame[]>()
   private readonly lastThreadReadSnapshotByThreadId = new Map<string, unknown>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
@@ -3849,11 +3849,7 @@ class AppServerProcess {
   }
 
   private buildAppServerConfig(): { args: string[]; env: Record<string, string> } {
-    const args = [
-      'app-server',
-      '-c', 'approval_policy="never"',
-      '-c', 'sandbox_mode="danger-full-access"',
-    ]
+    const args = buildAppServerArgs()
     let extraEnv: Record<string, string> = {}
     const serverPort = parseInt(process.env.CODEXUI_SERVER_PORT ?? '', 10) || undefined
     const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
@@ -5276,9 +5272,26 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           return
         }
 
+        if (body.method === 'turn/start') {
+          const params = asRecord(body.params)
+          const threadId = typeof params?.threadId === 'string' ? params.threadId : ''
+          if (threadId) {
+            await tryEnsureBrowserUseBackendForSession(threadId)
+          }
+        }
+
         const rpcResult = await appServer.rpc(body.method, body.params ?? null)
         const trimmedResult = trimThreadTurnsInRpcResult(body.method, rpcResult)
         const result = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
+
+        if (body.method === 'thread/start') {
+          const rpcRecord = asRecord(result)
+          const rpcThread = asRecord(rpcRecord?.thread)
+          const threadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
+          if (threadId) {
+            await tryEnsureBrowserUseBackendForSession(threadId)
+          }
+        }
 
         if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
           const rpcRecord = asRecord(result)
@@ -6579,6 +6592,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     telegramBridge.stop()
     terminalManager.dispose()
     backendQueueProcessor.dispose()
+    void closeBrowserUseBackends()
     appServer.dispose()
   }
   middleware.subscribeNotifications = (

@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
+const MACOS_CODEX_APP_COMMAND = '/Applications/Codex.app/Contents/Resources/codex'
+
 export type CommandInvocation = {
   command: string
   args: string[]
@@ -120,9 +122,10 @@ export function prependPathEntry(existingPath: string, entry: string): string {
 export function resolveCodexCommand(): string | null {
   const explicit = process.env.CODEXUI_CODEX_COMMAND?.trim()
   const packageCandidates = getPotentialNpmPrefixes().flatMap(getPotentialCodexExecutables)
+  const appBundleCandidates = process.platform === 'darwin' ? [MACOS_CODEX_APP_COMMAND] : []
   const fallbackCandidates = process.platform === 'win32'
     ? [...packageCandidates, 'codex']
-    : ['codex', ...packageCandidates]
+    : [...appBundleCandidates, 'codex', ...packageCandidates]
 
   for (const candidate of uniqueStrings([explicit, ...fallbackCandidates])) {
     if (isRunnableCommand(candidate, ['--version'])) {

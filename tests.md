@@ -224,6 +224,41 @@ This file tracks manual regression and feature verification steps.
 
 ---
 
+### Browser Use plugin runtime command
+
+#### Feature/Change Name
+codexui exposes Browser Use in chats by using the bundled Codex.app runtime, registering `node_repl`, and registering a session-scoped local Browser Use backend whose browser launches lazily on first tab use.
+
+#### Prerequisites/Setup
+1. macOS with `/Applications/Codex.app/Contents/Resources/codex` installed.
+2. Browser Use plugin enabled in `~/.codex/config.toml`.
+3. Dev server running (`pnpm run dev --host 127.0.0.1 --port 4173`).
+4. Light theme and dark theme are available from the appearance switcher.
+
+#### Steps
+1. Run `pnpm exec vitest run src/commandResolution.test.ts`.
+2. Run `pnpm run build:cli`.
+3. Run `node -e "require('node:fs').accessSync('/Applications/Codex.app/Contents/Resources/codex'); console.log('bundled codex available')"` before starting codexui.
+4. Open `http://127.0.0.1:4173` in light theme.
+5. Create or open a codexui chat and ask it to use Browser Use to open `https://example.com` and report the page title.
+6. Confirm the chat produces `mcp__node_repl__js` Browser Use activity and returns `{"title":"Example Domain","url":"https://example.com/"}` without a missing-tool or IAB discovery error.
+7. Temporarily point `CODEX_HOME` or `CODEXUI_BROWSER_USE_CLIENT_PATH` at a location without the Browser Use client and confirm a normal non-Browser Use chat still starts instead of returning a 502.
+8. Switch to dark theme and repeat steps 5-7.
+
+#### Expected Results
+- On macOS, codexui launches the Codex.app bundled app-server by default.
+- `CODEXUI_CODEX_COMMAND` still overrides the bundled command when set.
+- `mcpServerStatus/list` includes `node_repl` with `js` and `js_reset`.
+- Browser Use works inside codexui chats in both light and dark theme, and Chromium launches only after Browser Use requests a tab.
+- Browser Use setup is best-effort: missing plugin files, changed client patch shape, or backend startup errors are logged and do not block normal `turn/start` or `thread/start` RPC calls.
+- Browser Use socket names are derived from a bounded hash of the session id, malformed socket frames close the socket instead of throwing, unauthorized socket peers are closed, and backend cleanup runs during bridge disposal.
+- The theme switch does not affect tool availability or pending tool-call rendering.
+
+#### Rollback/Cleanup
+- Stop any disposable dev server started only for this validation.
+
+---
+
 ### Skills sync idempotent commits and nested shared skills handling
 
 #### Feature/Change Name

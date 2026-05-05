@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+
 const SANDBOX_MODES = new Set([
   'read-only',
   'workspace-write',
@@ -23,6 +25,8 @@ const DEFAULT_RUNTIME_CONFIG: AppServerRuntimeConfig = {
   sandboxMode: 'danger-full-access',
   approvalPolicy: 'never',
 }
+
+const MACOS_CODEX_APP_NODE_REPL_COMMAND = '/Applications/Codex.app/Contents/Resources/node_repl'
 
 function normalizeRuntimeValue(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? ''
@@ -53,13 +57,22 @@ export function resolveAppServerRuntimeConfig(): AppServerRuntimeConfig {
 
 export function buildAppServerArgs(): string[] {
   const config = resolveAppServerRuntimeConfig()
-  return [
+  const args = [
     'app-server',
     '-c',
     `approval_policy="${config.approvalPolicy}"`,
     '-c',
     `sandbox_mode="${config.sandboxMode}"`,
   ]
+  if (process.platform === 'darwin' && existsSync(MACOS_CODEX_APP_NODE_REPL_COMMAND)) {
+    args.push(
+      '-c',
+      `mcp_servers.node_repl.command="${MACOS_CODEX_APP_NODE_REPL_COMMAND}"`,
+      '-c',
+      'mcp_servers.node_repl.args=["--disable-sandbox"]',
+    )
+  }
+  return args
 }
 
 export function parseSandboxMode(value: string): CodexSandboxMode | null {
