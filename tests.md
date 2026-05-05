@@ -224,6 +224,38 @@ This file tracks manual regression and feature verification steps.
 
 ---
 
+### Remote-safe media uploads
+
+#### Feature/Change Name
+Uploaded screenshots, pasted images, and dragged files are stored in a Codex-managed temp media tree with 30-day retention.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Access to the app from a browser on another host, or a remote session over Tailscale
+3. One disposable thread for attachment testing
+4. Light theme and dark theme are available from the appearance switcher
+
+#### Steps
+1. In light theme, upload or paste a small image into the composer.
+2. Confirm the image preview appears before sending.
+3. Send the message and confirm the attachment renders in the conversation.
+4. Check the server host and confirm the file is stored under `CODEX_HOME/tmp/codex-web-media`.
+5. Repeat steps 1 through 4 using drag and drop.
+6. Switch to dark theme and repeat steps 1 through 4.
+7. Create or keep a scratch media directory older than 30 days, then trigger another upload and confirm the stale directory is removed by the temp-media cleanup path.
+
+#### Expected Results
+- The browser can upload images from a different machine without depending on a browser-local filesystem path.
+- Uploaded media is retained in the Codex-managed temp tree instead of `tmpdir()` on the OS.
+- The preview and sent attachment remain usable after upload.
+- Temp media older than 30 days is pruned before new media is written.
+- Behavior is consistent in light theme and dark theme.
+
+#### Rollback/Cleanup
+- Remove any disposable attachments and delete scratch files under `CODEX_HOME/tmp/codex-web-media` if they were created for testing.
+
+---
+
 ### npx run dev compatibility shim
 
 #### Feature/Change Name
