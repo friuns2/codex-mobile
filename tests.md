@@ -344,10 +344,10 @@ The accidental `npx run dev` command starts the repository dev wrapper instead o
 
 ---
 
-### Skills sync idempotent commits and nested shared skills handling
+### Skills sync generic file sync and nested shared skills handling
 
 #### Feature/Change Name
-Skills Sync skips unchanged manifest writes and does not fail parent commits when only nested `shared_skills` content is dirty.
+Skills Sync treats the skills repository as generic files and does not fail parent commits when only nested `shared_skills` content is dirty.
 
 #### Prerequisites/Setup
 1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 5173`)
@@ -357,16 +357,17 @@ Skills Sync skips unchanged manifest writes and does not fail parent commits whe
 
 #### Steps
 1. In light theme, open `#/skills`.
-2. Click `Startup Sync` when no installed skills manifest content has changed.
-3. Confirm the sync completes without adding a new `Update synced skills manifest` commit to the GitHub repo.
+2. Click `Startup Sync` when no tracked skill file content has changed.
+3. Confirm the sync completes without adding a new manifest-only commit to the GitHub repo.
 4. Modify a file inside `/Users/igor/.codex/skills/shared_skills` without committing it inside that nested repository.
 5. Click `Push` or `Startup Sync` again.
-6. Confirm the sync does not show `Command failed (git commit -m Sync installed skills folder and manifest)` for the parent `/Users/igor/.codex/skills` repository.
+6. Confirm the sync does not show a no-change `git commit` failure for the parent `/Users/igor/.codex/skills` repository.
 7. Confirm the startup auto-push path skips when the only local status is dirty nested `shared_skills` content and local `HEAD` equals `origin/main`.
 8. Switch to dark theme and repeat steps 1, 2, and 5.
 
 #### Expected Results
-- Unchanged `installed-skills.json` content is not written back to GitHub, so repeated empty-looking manifest commits are not created.
+- Skills Sync does not read, write, or rely on `installed-skills.json`; the repository file tree is the sync source of truth.
+- A missing `installed-skills.json` does not delete local skills during Pull or Startup Sync.
 - A dirty nested `shared_skills` repository does not make the parent skills sync fail with `no changes added to commit`.
 - Dirty nested `shared_skills` content alone does not keep triggering no-op startup push work.
 - Skills Sync status, errors, and action buttons remain readable in light theme and dark theme.
@@ -1481,7 +1482,7 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 5. Verify `AGENTS.md` still exists locally and in remote `origin/main`.
 
 #### Expected Results
-- Startup sync may update manifest, but must not delete `AGENTS.md`.
+- Startup sync may update skill files, but must not delete `AGENTS.md`.
 - If sync creates a commit, changed files do not include `D AGENTS.md`.
 - Local and remote `AGENTS.md` hashes remain equal after sync.
 
