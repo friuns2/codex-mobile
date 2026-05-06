@@ -64,7 +64,15 @@
 
       <div v-if="selectedSkills.length > 0" class="thread-composer-skill-chips">
         <span v-for="skill in selectedSkills" :key="skill.path" class="thread-composer-skill-chip">
-          <span class="thread-composer-skill-chip-name">{{ skill.displayName || skill.name }}</span>
+          <button
+            class="thread-composer-skill-chip-name"
+            type="button"
+            :title="skillMarkdownPath(skill.path)"
+            :aria-label="`Open ${skill.displayName || skill.name} SKILL.md`"
+            @click="openSkillMarkdown(skill)"
+          >
+            {{ skill.displayName || skill.name }}
+          </button>
           <button
             class="thread-composer-skill-chip-remove"
             type="button"
@@ -1146,6 +1154,18 @@ function removeSkill(path: string): void {
   selectedSkills.value = selectedSkills.value.filter((s) => s.path !== path)
 }
 
+function skillMarkdownPath(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed) return ''
+  return trimmed.endsWith('/SKILL.md') ? trimmed : `${trimmed.replace(/\/+$/, '')}/SKILL.md`
+}
+
+function openSkillMarkdown(skill: SkillItem): void {
+  const markdownPath = skillMarkdownPath(skill.path)
+  if (!markdownPath || typeof window === 'undefined') return
+  window.open(`/codex-local-browse${encodeURI(markdownPath)}`, '_blank', 'noopener,noreferrer')
+}
+
 function removeFileAttachment(fsPath: string): void {
   fileAttachments.value = fileAttachments.value.filter((a) => a.fsPath !== fsPath)
 }
@@ -1887,7 +1907,7 @@ watch(
 }
 
 .thread-composer-skill-chip-name {
-  @apply font-medium;
+  @apply min-w-0 max-w-[12rem] truncate border-0 bg-transparent p-0 text-left font-medium text-inherit underline-offset-2 transition hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500;
 }
 
 .thread-composer-skill-chip-remove {
