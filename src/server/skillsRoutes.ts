@@ -514,14 +514,12 @@ function groupRpcSkillRecords<T extends RpcSkillRecord>(skills: T[]): T[] {
 }
 
 type InstalledSkillInfo = { name: string; path: string; enabled: boolean }
-type SyncedSkill = { owner?: string; name: string; enabled: boolean }
 
 type SkillsSyncState = {
   githubToken?: string
   githubUsername?: string
   repoOwner?: string
   repoName?: string
-  installedOwners?: Record<string, string>
   lastPullCommitSha?: string
   lastPushCommitSha?: string
   lastSyncAttemptCount?: number
@@ -541,7 +539,6 @@ type GithubTokenResponse = { access_token?: string; error?: string }
 
 const GITHUB_DEVICE_CLIENT_ID = 'Iv1.b507a08c87ecfe98'
 const DEFAULT_SKILLS_SYNC_REPO_NAME = 'codexskills'
-const SKILLS_SYNC_MANIFEST_PATH = 'installed-skills.json'
 const SYNC_UPSTREAM_SKILLS_OWNER = 'OpenClawAndroid'
 const SYNC_UPSTREAM_SKILLS_REPO = 'skills'
 const PRIVATE_SYNC_BRANCH = 'main'
@@ -806,60 +803,6 @@ async function ensurePrivateForkFromUpstream(token: string, username: string, re
   }
 }
 
-async function readRemoteSkillsManifest(token: string, repoOwner: string, repoName: string): Promise<SyncedSkill[]> {
-  const url = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${SKILLS_SYNC_MANIFEST_PATH}`
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'codex-web-local',
-    },
-  })
-  if (resp.status === 404) return []
-  if (!resp.ok) throw new Error(`Failed to read remote manifest (${resp.status})`)
-  const payload = await resp.json() as { content?: string }
-  const content = payload.content ? Buffer.from(payload.content.replace(/\n/g, ''), 'base64').toString('utf8') : '[]'
-  const parsed = JSON.parse(content) as unknown
-  if (!Array.isArray(parsed)) return []
-  const skills: SyncedSkill[] = []
-  for (const row of parsed) {
-    const item = asRecord(row)
-    const owner = typeof item?.owner === 'string' ? item.owner : ''
-    const name = typeof item?.name === 'string' ? item.name : ''
-    if (!name) continue
-    skills.push({ ...(owner ? { owner } : {}), name, enabled: item?.enabled !== false })
-  }
-  return skills
-}
-
-async function writeRemoteSkillsManifest(token: string, repoOwner: string, repoName: string, skills: SyncedSkill[]): Promise<boolean> {
-  const url = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${SKILLS_SYNC_MANIFEST_PATH}`
-  let sha = ''
-  const nextContent = JSON.stringify(skills, null, 2)
-  const existing = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'codex-web-local',
-    },
-  })
-  if (existing.ok) {
-    const payload = await existing.json() as { sha?: string; content?: string }
-    sha = payload.sha ?? ''
-    const currentContent = payload.content ? Buffer.from(payload.content.replace(/\n/g, ''), 'base64').toString('utf8') : ''
-    if (currentContent === nextContent) return false
-  }
-  const content = Buffer.from(nextContent, 'utf8').toString('base64')
-  await getGithubJson(url, token, 'PUT', {
-    message: 'Update synced skills manifest',
-    content,
-    ...(sha ? { sha } : {}),
-  })
-  return true
-}
-
 function toGitHubTokenRemote(repoOwner: string, repoName: string, token: string): string {
   return `https://x-access-token:${encodeURIComponent(token)}@github.com/${repoOwner}/${repoName}.git`
 }
@@ -900,25 +843,23 @@ async function ensureSkillsWorkingTreeRepo(repoUrl: string, branch: string): Pro
     await runCommand('git', ['checkout', '-B', branch], { cwd: localDir })
   }
   await resolveMergeConflictsByNewerCommit(localDir, branch, localMtimesBeforeSync)
-  const hasLocalChangesBeforePull = await hasLocalUncommittedChanges(localDir)
-  const localMtimesBeforePull = hasLocalChangesBeforePull ? await snapshotFileMtimes(localDir) : new Map<string, number>()
-  let createdAutostash = false
-  try {
-    const stashOutput = await runCommandWithOutput('git', ['stash', 'push', '--include-untracked', '-m', 'codex-skills-autostash'], { cwd: localDir })
-    createdAutostash = !stashOutput.includes('No local changes to save')
-  } catch {}
-  let pulledMtimes = new Map<string, number>()
+  await checkpointLocalSkillsChanges(localDir)
   await runGitFetchWithRefLockRetry(localDir, ['fetch', 'origin', branch])
-  await runCommand('git', ['reset', '--hard', `origin/${branch}`], { cwd: localDir })
-  pulledMtimes = await snapshotFileMtimes(localDir)
-  if (createdAutostash) {
-    try {
-      await runCommand('git', ['stash', 'pop'], { cwd: localDir })
-    } catch {
-      await resolveStashPopConflictsByFileTime(localDir, localMtimesBeforePull, pulledMtimes)
-    }
+  try {
+    await runCommand('git', ['rebase', `origin/${branch}`], { cwd: localDir })
+  } catch {
+    await resolveMergeConflictsByNewerCommit(localDir, branch, localMtimesBeforeSync)
   }
   return localDir
+}
+
+async function checkpointLocalSkillsChanges(repoDir: string): Promise<void> {
+  await runCommand('git', ['add', '-A'], { cwd: repoDir })
+  try {
+    await runCommand('git', ['diff', '--cached', '--quiet', '--exit-code'], { cwd: repoDir })
+    return
+  } catch {}
+  await runCommand('git', ['commit', '-m', 'Local skills checkpoint before sync'], { cwd: repoDir })
 }
 
 async function resolveMergeConflictsByNewerCommit(
@@ -1016,29 +957,6 @@ async function getCommitTime(repoDir: string, ref: string, path: string): Promis
   }
 }
 
-async function resolveStashPopConflictsByFileTime(
-  repoDir: string,
-  localMtimesBeforePull: Map<string, number>,
-  pulledMtimes: Map<string, number>,
-): Promise<void> {
-  const unmerged = (await runCommandWithOutput('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: repoDir }))
-    .split(/\r?\n/)
-    .map((row) => row.trim())
-    .filter(Boolean)
-  if (unmerged.length === 0) return
-  for (const path of unmerged) {
-    const localMtime = localMtimesBeforePull.get(path) ?? 0
-    const pulledMtime = pulledMtimes.get(path) ?? 0
-    const side = localMtime >= pulledMtime ? '--theirs' : '--ours'
-    await checkoutConflictSideWithFallback(repoDir, path, side)
-    await runCommand('git', ['add', '--', path], { cwd: repoDir })
-  }
-  const mergeHead = await readOptionalGitRef(repoDir, 'MERGE_HEAD')
-  if (mergeHead) {
-    await runCommand('git', ['commit', '-m', 'Auto-resolve stash-pop conflicts by file time'], { cwd: repoDir })
-  }
-}
-
 async function snapshotFileMtimes(dir: string): Promise<Map<string, number>> {
   const mtimes = new Map<string, number>()
   await walkFileMtimes(dir, dir, mtimes)
@@ -1051,12 +969,10 @@ async function hasLocalUncommittedChanges(repoDir: string): Promise<boolean> {
 }
 
 async function hasCommittableWorkingTreeChanges(repoDir: string): Promise<boolean> {
-  try {
-    await runCommand('git', ['diff', '--quiet', '--exit-code', '--ignore-submodules=dirty'], { cwd: repoDir })
-    await runCommand('git', ['diff', '--cached', '--quiet', '--exit-code', '--ignore-submodules=dirty'], { cwd: repoDir })
-  } catch {
-    return true
-  }
+  const unstaged = (await runCommandWithOutput('git', ['diff', '--name-only', '--ignore-submodules=dirty'], { cwd: repoDir })).trim()
+  if (unstaged.length > 0) return true
+  const staged = (await runCommandWithOutput('git', ['diff', '--cached', '--name-only', '--ignore-submodules=dirty'], { cwd: repoDir })).trim()
+  if (staged.length > 0) return true
   const untracked = (await runCommandWithOutput('git', ['ls-files', '--others', '--exclude-standard'], { cwd: repoDir })).trim()
   return untracked.length > 0
 }
@@ -1178,10 +1094,19 @@ async function syncInstalledSkillsFolderToRepo(
   await runCommand('git', ['config', 'user.name', 'Skills Sync'], { cwd: repoDir })
   await restoreProtectedFilesFromOrigin(repoDir, branch)
   await runCommand('git', ['add', '.'], { cwd: repoDir })
+  let hasStagedChanges = true
   try {
     await runCommand('git', ['diff', '--cached', '--quiet', '--exit-code'], { cwd: repoDir })
-    return
+    hasStagedChanges = false
   } catch {}
+  if (!hasStagedChanges) {
+    const head = (await runCommandWithOutput('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).trim()
+    const originHead = (await runCommandWithOutput('git', ['rev-parse', `origin/${branch}`], { cwd: repoDir })).trim()
+    if (head !== originHead) {
+      await pushWithNonFastForwardRetry(repoDir, branch)
+    }
+    return
+  }
   await runCommand('git', ['commit', '-m', 'Sync installed skills folder and manifest'], { cwd: repoDir })
   await pushWithNonFastForwardRetry(repoDir, branch)
 }
@@ -1198,32 +1123,7 @@ async function bootstrapSkillsFromUpstreamIntoLocal(): Promise<void> {
   await ensureSkillsWorkingTreeRepo(repoUrl, branch)
 }
 
-async function collectLocalSyncedSkills(appServer: AppServerLike): Promise<SyncedSkill[]> {
-  const state = await readSkillsSyncState()
-  const owners = { ...(state.installedOwners ?? {}) }
-  const skills = (await appServer.rpc('skills/list', {})) as {
-    data?: Array<{ skills?: Array<{ name?: string; enabled?: boolean; path?: string; scope?: string }> }>
-  }
-  const seen = new Set<string>()
-  const synced: SyncedSkill[] = []
-  let ownersChanged = false
-  for (const entry of skills.data ?? []) {
-    for (const skill of groupRpcSkillRecords(entry.skills ?? [])) {
-      const name = typeof skill.name === 'string' ? skill.name : ''
-      if (!name || skill.scope !== 'user' || seen.has(name)) continue
-      seen.add(name)
-      const owner = owners[name] ?? ''
-      synced.push({ ...(owner ? { owner } : {}), name, enabled: skill.enabled !== false })
-    }
-  }
-  if (ownersChanged) {
-    await writeSkillsSyncState({ ...state, installedOwners: owners })
-  }
-  synced.sort((a, b) => `${a.owner ?? ''}/${a.name}`.localeCompare(`${b.owner ?? ''}/${b.name}`))
-  return synced
-}
-
-async function autoPushSyncedSkills(appServer: AppServerLike): Promise<void> {
+async function autoPushSyncedSkills(_appServer: AppServerLike): Promise<void> {
   const state = await readSkillsSyncState()
   if (!state.githubToken || !state.repoOwner || !state.repoName) return
   if (isUpstreamSkillsRepo(state.repoOwner, state.repoName)) {
@@ -1237,9 +1137,7 @@ async function autoPushSyncedSkills(appServer: AppServerLike): Promise<void> {
   // After a successful pull, if local tree is already clean and equal to remote,
   // skip push entirely to avoid rewriting/deleting remote-only updates.
   if (!hasCommittableChanges && head === originHead) return
-  const local = await collectLocalSyncedSkills(appServer)
   const installedMap = await scanInstalledSkillsFromDisk()
-  await writeRemoteSkillsManifest(state.githubToken, state.repoOwner, state.repoName, local)
   await syncInstalledSkillsFolderToRepo(state.githubToken, state.repoOwner, state.repoName, installedMap)
 }
 
@@ -1489,11 +1387,9 @@ export async function handleSkillsRoutes(
         setJson(res, 400, { error: 'Refusing to push to upstream repository' })
         return true
       }
-      const local = await collectLocalSyncedSkills(appServer)
       const installedMap = await collectInstalledSkillsMap(appServer)
-      await writeRemoteSkillsManifest(state.githubToken, state.repoOwner, state.repoName, local)
       await syncInstalledSkillsFolderToRepo(state.githubToken, state.repoOwner, state.repoName, installedMap)
-      setJson(res, 200, { ok: true, data: { synced: local.length } })
+      setJson(res, 200, { ok: true, data: { synced: installedMap.size } })
     } catch (error) {
       setJson(res, 502, { error: getErrorMessage(error, 'Failed to push synced skills') })
     }
@@ -1519,46 +1415,18 @@ export async function handleSkillsRoutes(
         setJson(res, 200, { ok: true, data: { synced: 0, source: 'upstream' } })
         return true
       }
-      const remote = await readRemoteSkillsManifest(state.githubToken, state.repoOwner, state.repoName)
-      const localDir = await detectUserSkillsDir(appServer)
       await pullInstalledSkillsFolderFromRepo(state.githubToken, state.repoOwner, state.repoName)
       const localSkills = await scanInstalledSkillsFromDisk()
-      const missingAfterPull: string[] = []
-      for (const skill of remote) {
-        const owner = skill.owner || ''
-        if (!owner) continue
-        if (!localSkills.has(skill.name)) {
-          missingAfterPull.push(`${owner}/${skill.name}`)
-          continue
-        }
-        const skillPath = join(localDir, skill.name)
-        await appServer.rpc('skills/config/write', { path: skillPath, enabled: skill.enabled })
-      }
-      if (missingAfterPull.length > 0) {
-        throw new Error(`Missing skill folders after pull: ${missingAfterPull.join(', ')}`)
-      }
-      const remoteNames = new Set(remote.map((row) => row.name))
-      for (const [name, localInfo] of localSkills.entries()) {
-        if (!remoteNames.has(name)) {
-          await rm(localInfo.path.replace(/\/SKILL\.md$/, ''), { recursive: true, force: true })
-        }
-      }
-      const nextOwners: Record<string, string> = {}
-      for (const item of remote) {
-        const owner = item.owner || ''
-        if (owner) nextOwners[item.name] = owner
-      }
       const pulledHead = await runCommandWithOutput('git', ['rev-parse', 'HEAD'], { cwd: getSkillsInstallDir() }).catch(() => '')
       await writeSkillsSyncState({
         ...state,
-        installedOwners: nextOwners,
         lastPullCommitSha: pulledHead.trim(),
         lastSyncAttemptCount: 1,
         lastSyncError: '',
         lastSyncAtIso: new Date().toISOString(),
       })
       try { await appServer.rpc('skills/list', { forceReload: true }) } catch {}
-      setJson(res, 200, { ok: true, data: { synced: remote.length } })
+      setJson(res, 200, { ok: true, data: { synced: localSkills.size } })
     } catch (error) {
       setJson(res, 502, { error: getErrorMessage(error, 'Failed to pull synced skills') })
     }
@@ -1633,12 +1501,6 @@ export async function handleSkillsRoutes(
         return true
       }
       await rm(target, { recursive: true, force: true })
-      if (name) {
-        const syncState = await readSkillsSyncState()
-        const nextOwners = { ...(syncState.installedOwners ?? {}) }
-        delete nextOwners[name]
-        await writeSkillsSyncState({ ...syncState, installedOwners: nextOwners })
-      }
       autoPushSyncedSkills(appServer).catch(() => {})
       try { await withTimeout(appServer.rpc('skills/list', { forceReload: true }), 10_000, 'skills/list reload') } catch {}
       setJson(res, 200, { ok: true, deletedPath: target })
