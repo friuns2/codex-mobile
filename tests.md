@@ -271,6 +271,38 @@ This file tracks manual regression and feature verification steps.
 
 ---
 
+### Sidebar project pinning
+
+#### Feature/Change Name
+Project rows can be pinned and unpinned from the sidebar action menu using Codex.app-compatible `pinned-project-ids` state.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Sidebar contains at least three visible projects
+3. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, open the sidebar Projects section.
+2. Open a non-top project action menu and click `Pin project`.
+3. Confirm the project moves above the regular projects and its action menu now shows `Unpin project`.
+4. Refresh the browser tab and confirm the pinned project remains above regular projects.
+5. Inspect `~/.codex/.codex-global-state.json` and confirm `pinned-project-ids` contains the pinned project root or remote project id.
+6. Open the pinned project action menu and click `Unpin project`.
+7. Confirm the project returns to its normal `project-order` position and `pinned-project-ids` no longer contains that project.
+8. Switch to dark theme and repeat steps 2-7 with a different project.
+
+#### Expected Results
+- Project action menus expose `Pin project` for unpinned projects and `Unpin project` for pinned projects.
+- Pinned projects render before non-pinned projects without rewriting the saved `project-order`.
+- Pin and unpin persist through `/codex-api/workspace-roots-state` and Codex global state.
+- Duplicate folder-name projects and remote project rows pin the intended project id.
+- Project menu items and row controls remain readable in light and dark themes.
+
+#### Rollback/Cleanup
+- Unpin any projects pinned during verification.
+
+---
+
 ### Startup avoids duplicate setup probes
 
 #### Feature/Change Name
@@ -4921,6 +4953,33 @@ The sidebar Chats section lists the first 10 projectless chats, offers Show more
 - The New chat action remains available.
 - The main sidebar search remains functional.
 - Rows and header actions remain readable in light and dark themes.
+
+#### Rollback/Cleanup
+- None.
+
+---
+
+### Pinned chats survive paginated thread list
+
+#### Feature/Change Name
+Pinned sidebar chats hydrate from their stored pinned ids even when they are older than the first `thread/list` page.
+
+#### Prerequisites/Setup
+1. Dev server running (`npm run dev -- --host 127.0.0.1 --port 5173` or equivalent)
+2. `.codex-global-state.json` contains `pinned-thread-ids` for chats that are not returned by the first recent `thread/list` page
+3. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, open the app and expand the sidebar if it is collapsed.
+2. Confirm the `Pinned` section is visible above `Projects`.
+3. Confirm the pinned chat rows are visible even if those chat ids are absent from the first `thread/list` page.
+4. Refresh the browser tab and confirm the same pinned chat rows remain visible.
+5. Switch to dark theme and repeat steps 1-4.
+
+#### Expected Results
+- Stored pinned chat ids are not pruned just because they are absent from the current paginated thread list.
+- The sidebar hydrates missing pinned chat summaries and renders them in the `Pinned` section.
+- Pinned chat rows remain readable and selectable in light and dark themes.
 
 #### Rollback/Cleanup
 - None.

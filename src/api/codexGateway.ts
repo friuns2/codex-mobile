@@ -50,6 +50,7 @@ import type {
   UiReviewWorkspaceView,
   UiRateLimitSnapshot,
   UiRateLimitWindow,
+  UiThread,
   UiThreadAutomation,
   UiThreadAutomationStatus,
 } from '../types/codex'
@@ -268,6 +269,7 @@ export type WorkspaceRootsState = {
   labels: Record<string, string>
   active: string[]
   projectOrder: string[]
+  pinnedProjectIds?: string[]
   remoteProjects?: Array<{
     id: string
     hostId: string
@@ -751,6 +753,31 @@ export async function getThreadGroupsPage(
   } catch (error) {
     throw normalizeCodexApiError(error, 'Failed to load thread groups', 'thread/list')
   }
+}
+
+export async function getThreadSummariesByIds(threadIds: string[]): Promise<UiThread[]> {
+  const normalizedThreadIds = threadIds
+    .map((threadId) => threadId.trim())
+    .filter((threadId, index, rows) => threadId.length > 0 && rows.indexOf(threadId) === index)
+
+  if (normalizedThreadIds.length === 0) return []
+
+  const summaries = await Promise.all(
+    normalizedThreadIds.map(async (threadId) => {
+      try {
+        const payload = await callRpc<ThreadReadResponse>('thread/read', {
+          threadId,
+          includeTurns: false,
+        })
+        const groups = normalizeThreadGroupsV2({ data: [payload.thread] } as ThreadListResponse)
+        return groups.flatMap((group) => group.threads)[0] ?? null
+      } catch {
+        return null
+      }
+    }),
+  )
+
+  return summaries.filter((thread): thread is UiThread => thread !== null)
 }
 
 export function getBackgroundThreadListLimit(): number {
@@ -2242,6 +2269,7 @@ function normalizeWorkspaceRootsState(payload: unknown): WorkspaceRootsState {
     labels,
     active: normalizeArray(record.active).map((value) => normalizePathForUi(value)),
     projectOrder: normalizeArray(record.projectOrder).map((value) => normalizePathForUi(value)),
+    pinnedProjectIds: normalizeArray(record.pinnedProjectIds).map((value) => normalizePathForUi(value)),
     remoteProjects: Array.isArray(record.remoteProjects)
       ? record.remoteProjects.flatMap((item) => {
         if (!item || typeof item !== 'object' || Array.isArray(item)) return []
@@ -2351,6 +2379,7 @@ function cloneWorkspaceRootsState(state: WorkspaceRootsState): WorkspaceRootsSta
     labels: { ...state.labels },
     active: [...state.active],
     projectOrder: [...state.projectOrder],
+    pinnedProjectIds: [...(state.pinnedProjectIds ?? [])],
     remoteProjects: state.remoteProjects?.map((item) => ({ ...item })) ?? [],
   }
 }
@@ -2728,6 +2757,7 @@ async function readJsonResponse(response: Response): Promise<unknown> {
 }
 
 export async function setWorkspaceRootsState(nextState: WorkspaceRootsState): Promise<void> {
+  const previousState = cachedWorkspaceRootsState
   const response = await fetch('/codex-api/workspace-roots-state', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -2736,7 +2766,10 @@ export async function setWorkspaceRootsState(nextState: WorkspaceRootsState): Pr
   if (!response.ok) {
     throw new Error('Failed to save workspace roots state')
   }
-  cachedWorkspaceRootsState = cloneWorkspaceRootsState(nextState)
+  cachedWorkspaceRootsState = cloneWorkspaceRootsState({
+    ...nextState,
+    remoteProjects: nextState.remoteProjects ?? previousState?.remoteProjects ?? [],
+  })
 }
 
 export async function openProjectRoot(path: string, options?: { createIfMissing?: boolean; label?: string }): Promise<string> {

@@ -46,3 +46,9 @@
 - Updated wiki page: `concepts/opencode-zen-big-pickle.md`.
 - Documents: DeepSeek thinking-mode `reasoning_content` round-trip requirement, Chat-shaped Zen proxy endpoint selection, streaming reasoning preservation, Docker validation, and the `/tmp/app.tar` restart gotcha.
 - Updated `index.md`.
+
+## [2026-05-09] ingest | sidebar project pinning
+- Added source: `raw/features/sidebar-project-pinning.md`.
+- Created wiki page: `concepts/sidebar-project-pinning.md`.
+- Documents: Codex.app `pinned-project-ids` state, project menu pin/unpin behavior, pinned ordering before `project-order`, and workspace-root preservation.
+- Updated `index.md`.

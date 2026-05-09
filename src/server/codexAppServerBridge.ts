@@ -81,6 +81,7 @@ type WorkspaceRootsState = {
   labels: Record<string, string>
   active: string[]
   projectOrder: string[]
+  pinnedProjectIds: string[]
   remoteProjects: Array<{
     id: string
     hostId: string
@@ -3886,6 +3887,7 @@ async function readWorkspaceRootsState(): Promise<WorkspaceRootsState> {
     labels: normalizeStringRecord(payload['electron-workspace-root-labels']),
     active: normalizeStringArray(payload['active-workspace-roots']),
     projectOrder: normalizeStringArray(payload['project-order']),
+    pinnedProjectIds: normalizeStringArray(payload['pinned-project-ids']),
     remoteProjects: normalizeRemoteProjects(payload['remote-projects']),
   }
 }
@@ -3904,6 +3906,7 @@ async function writeWorkspaceRootsState(nextState: WorkspaceRootsState): Promise
   payload['electron-workspace-root-labels'] = normalizeStringRecord(nextState.labels)
   payload['active-workspace-roots'] = normalizeStringArray(nextState.active)
   payload['project-order'] = normalizeStringArray(nextState.projectOrder)
+  payload['pinned-project-ids'] = normalizeStringArray(nextState.pinnedProjectIds)
 
   await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }
@@ -3947,6 +3950,7 @@ async function persistWorkspaceRoot(workspaceRoot: string, label = ''): Promise<
       labels: nextLabels,
       active: prependUniqueString(normalizedRoot, existingState.active),
       projectOrder: prependUniqueString(normalizedRoot, existingState.projectOrder),
+      pinnedProjectIds: existingState.pinnedProjectIds,
       remoteProjects: existingState.remoteProjects,
     }
   })
@@ -6657,6 +6661,9 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           projectOrder: Array.isArray(record.projectOrder)
             ? normalizeStringArray(record.projectOrder)
             : existingState.projectOrder,
+          pinnedProjectIds: Array.isArray(record.pinnedProjectIds)
+            ? normalizeStringArray(record.pinnedProjectIds)
+            : existingState.pinnedProjectIds,
           remoteProjects: existingState.remoteProjects,
         }))
         setJson(res, 200, { ok: true })

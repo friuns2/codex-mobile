@@ -316,6 +316,9 @@
                       <button class="project-menu-item" type="button" @click="onBrowseProjectFiles(group.projectName)">
                         Browse files
                       </button>
+                      <button class="project-menu-item" type="button" @click="onToggleProjectPinned(group.projectName)">
+                        {{ isProjectPinned(group.projectName) ? 'Unpin project' : 'Pin project' }}
+                      </button>
                       <button
                         v-if="projectGitRepoByName[group.projectName]"
                         class="project-menu-item"
@@ -806,6 +809,7 @@ import type { ComponentPublicInstance } from 'vue'
 import {
   deleteThreadAutomation,
   getPinnedThreadState,
+  getThreadSummariesByIds,
   getThreadAutomationMap,
   persistPinnedThreadIds,
   runThreadAutomationNow,
@@ -828,6 +832,7 @@ const props = defineProps<{
   groups: UiProjectGroup[]
   projectDisplayNameById: Record<string, string>
   projectGitRepoByName: Record<string, boolean>
+  pinnedProjectNames: string[]
   selectedThreadId: string
   isLoading: boolean
   searchQuery: string
@@ -843,6 +848,7 @@ const emit = defineEmits<{
   'browse-thread-files': [threadId: string]
   'browse-project-files': [projectName: string]
   'request-project-git-status': [projectName: string]
+  'set-project-pinned': [payload: { projectName: string; pinned: boolean }]
   'create-project-worktree': [projectName: string]
   'rename-project': [payload: { projectName: string; displayName: string }]
   'rename-thread': [payload: { threadId: string; title: string }]
@@ -909,6 +915,7 @@ const showChatsFirst = ref(loadBooleanStorage(CHATS_FIRST_STORAGE_KEY, false))
 const chatSortMode = ref<ChatSortMode>(loadChatSortMode())
 let hasLoadedPinnedThreadState = false
 const pinnedThreadIds = ref<string[]>([])
+const pinnedThreadFallbackById = ref<Record<string, UiThread>>({})
 const inlineDeleteConfirmThreadId = ref('')
 const optimisticallyArchivedThreadIds = ref<string[]>([])
 const openProjectMenuId = ref('')
@@ -1150,6 +1157,11 @@ const hasHiddenChatThreads = computed(() => {
 const threadById = computed(() => {
   const map = new Map<string, UiThread>()
 
+  for (const thread of Object.values(pinnedThreadFallbackById.value)) {
+    if (optimisticallyArchivedThreadIdSet.value.has(thread.id)) continue
+    map.set(thread.id, thread)
+  }
+
   for (const group of props.groups) {
     for (const thread of group.threads) {
       if (optimisticallyArchivedThreadIdSet.value.has(thread.id)) continue
@@ -1168,11 +1180,18 @@ watch(
   },
 )
 
-watch(threadById, (threadsById) => {
-  const filtered = pinnedThreadIds.value.filter((threadId) => threadsById.has(threadId))
-  if (filtered.length === pinnedThreadIds.value.length) return
-  pinnedThreadIds.value = filtered
-})
+async function hydratePinnedThreadFallbacks(threadIds: string[]): Promise<void> {
+  const missingThreadIds = threadIds.filter((threadId) => !threadById.value.has(threadId))
+  if (missingThreadIds.length === 0) return
+
+  const threads = await getThreadSummariesByIds(missingThreadIds)
+  if (threads.length === 0) return
+
+  pinnedThreadFallbackById.value = {
+    ...pinnedThreadFallbackById.value,
+    ...Object.fromEntries(threads.map((thread) => [thread.id, thread])),
+  }
+}
 
 onMounted(async () => {
   const { threadIds } = await getPinnedThreadState()
@@ -1185,6 +1204,7 @@ onMounted(async () => {
 
   if (normalized.length > 0) {
     pinnedThreadIds.value = normalized
+    await hydratePinnedThreadFallbacks(normalized)
   }
   try {
     automationByThreadId.value = await getThreadAutomationMap()
@@ -1821,6 +1841,10 @@ function isProjectMenuOpen(projectName: string): boolean {
   return openProjectMenuId.value === projectName
 }
 
+function isProjectPinned(projectName: string): boolean {
+  return props.pinnedProjectNames.includes(projectName)
+}
+
 function closeProjectMenu(): void {
   openProjectMenuId.value = ''
   projectMenuMode.value = 'actions'
@@ -1896,6 +1920,14 @@ function openRenameProjectMenu(group: UiProjectGroup): void {
 
 function onBrowseProjectFiles(projectName: string): void {
   emit('browse-project-files', projectName)
+  closeProjectMenu()
+}
+
+function onToggleProjectPinned(projectName: string): void {
+  emit('set-project-pinned', {
+    projectName,
+    pinned: !isProjectPinned(projectName),
+  })
   closeProjectMenu()
 }
 

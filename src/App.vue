@@ -62,6 +62,7 @@
 
           <SidebarThreadTree :groups="projectGroups" :project-display-name-by-id="projectDisplayNameById"
             :project-git-repo-by-name="projectGitRepoByName"
+            :pinned-project-names="pinnedProjectNames"
             v-if="!isSidebarCollapsed"
             :selected-thread-id="selectedThreadId" :is-loading="isLoadingThreads"
             :search-query="sidebarSearchQuery"
@@ -71,6 +72,7 @@
             @browse-thread-files="onBrowseThreadFiles"
             @browse-project-files="onBrowseProjectFiles"
             @request-project-git-status="onRequestProjectGitStatus"
+            @set-project-pinned="onSetProjectPinned"
             @create-project-worktree="onCreateProjectWorktree"
             @rename-thread="onRenameThread"
             @fork-thread="onForkThread"
@@ -1179,6 +1181,7 @@ const WHISPER_LANGUAGES: Record<string, string> = {
 
 const {
   projectGroups,
+  pinnedProjectNames,
   projectDisplayNameById,
   selectedThread,
   selectedThreadTokenUsage,
@@ -1230,6 +1233,7 @@ const {
   removeProject,
   reorderProject,
   pinProjectToTop,
+  setProjectPinned,
   startPolling,
   stopPolling,
   primeSelectedThread,
@@ -1263,10 +1267,11 @@ const gitRepoStatusRequestByCwd = new Map<string, Promise<boolean>>()
 const newWorktreeBaseBranch = ref('')
 const worktreeBranchOptions = ref<WorktreeBranchOption[]>([])
 const isLoadingWorktreeBranches = ref(false)
-const workspaceRootOptionsState = ref<{ order: string[]; labels: Record<string, string>; projectOrder: string[] }>({
+const workspaceRootOptionsState = ref<{ order: string[]; labels: Record<string, string>; projectOrder: string[]; pinnedProjectIds: string[] }>({
   order: [],
   labels: {},
   projectOrder: [],
+  pinnedProjectIds: [],
 })
 const worktreeInitStatus = ref<{ phase: 'idle' | 'running' | 'error'; title: string; message: string }>({
   phase: 'idle',
@@ -2438,6 +2443,10 @@ function onReorderProject(payload: { projectName: string; toIndex: number }): vo
   reorderProject(payload.projectName, payload.toIndex)
 }
 
+function onSetProjectPinned(payload: { projectName: string; pinned: boolean }): void {
+  void setProjectPinned(payload.projectName, payload.pinned)
+}
+
 function onRequestProjectGitStatus(projectName: string): void {
   const group = projectGroups.value.find((entry) => entry.projectName === projectName)
   const cwd = resolvePreferredLocalCwd(projectName, group?.threads[0]?.cwd?.trim() ?? '')
@@ -3283,9 +3292,10 @@ async function loadWorkspaceRootOptionsState(): Promise<void> {
       order: [...state.order],
       labels: { ...state.labels },
       projectOrder: [...state.projectOrder],
+      pinnedProjectIds: [...(state.pinnedProjectIds ?? [])],
     }
   } catch {
-    workspaceRootOptionsState.value = { order: [], labels: {}, projectOrder: [] }
+    workspaceRootOptionsState.value = { order: [], labels: {}, projectOrder: [], pinnedProjectIds: [] }
   }
 }
 

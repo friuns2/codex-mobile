@@ -62,9 +62,20 @@
 - Reproduce the issue with a focused test when feasible; if direct reproduction is impractical, document the exact reasoning and code evidence used to accept or reject the finding.
 - Prefer adding or updating a regression test for every accepted review-bot bug before or alongside the fix.
 - Do not patch purely to satisfy a bot comment if the behavior is correct, stale, already fixed, or the proposed change would make the implementation worse.
-- After pushing any commit to an open PR, wait and poll for Qodo/review-bot comments and PR review status for about 30 seconds before reporting the push workflow as complete.
-- After fixing an accepted review-bot finding, run the narrow regression test plus the relevant build/typecheck command, push the commit, and re-check the PR comments/status.
-- In the completion report, distinguish confirmed fixes from stale or rejected bot comments.
+- After creating any PR, always wait for Qodo to finish before reporting the PR workflow as complete:
+  1. Poll the PR with `gh pr view <pr-number> --json comments,reviews,reviewDecision,mergeStateStatus,statusCheckRollup`.
+  2. If the Qodo code-review comment says `Check back in a few minutes`, `is analyzing this pull request`, or otherwise looks like a placeholder, sleep 30 seconds and poll again.
+  3. Continue polling until Qodo posts a completed code-review comment with active counts such as `Bugs (N)`, `Rule violations (N)`, or `Requirement gaps (N)`.
+  4. Do not treat the separate Qodo summary/walkthrough comment as the completed code review.
+- When Qodo reports findings:
+  1. Inspect each finding and classify it as accepted, stale/already fixed, rejected/incorrect, or needs follow-up.
+  2. For each accepted bug, inspect the code path and add or update a focused regression test where feasible.
+  3. Implement the fix, then run the narrow regression test plus the relevant build/typecheck command.
+  4. Commit the fix as its own discrete commit and push it to the PR branch.
+  5. Poll Qodo again using the same 30-second loop until the updated review is complete.
+  6. Repeat until Qodo reports `Bugs (0)`, `Rule violations (0)`, and `Requirement gaps (0)`, or until all remaining findings are explicitly documented as stale/rejected with code evidence.
+- After pushing any commit to an open PR, run the same Qodo wait-and-fix loop before reporting the push workflow as complete.
+- In the completion report, include the PR URL, latest commit, commands run, Qodo final counts, and which bot findings were fixed versus stale/rejected.
 
 ## Performance Audit Rule (MANDATORY)
 

@@ -166,6 +166,91 @@ describe('filterGroupsByWorkspaceRoots', () => {
     ])
   })
 
+  it('places Codex pinned projects before regular project order', () => {
+    const groups: UiProjectGroup[] = [
+      {
+        projectName: 'alpha',
+        threads: [thread('alpha-chat', '/tmp/alpha')],
+      },
+      {
+        projectName: 'beta',
+        threads: [thread('beta-chat', '/tmp/beta')],
+      },
+      {
+        projectName: 'gamma',
+        threads: [thread('gamma-chat', '/tmp/gamma')],
+      },
+    ]
+    const rootsState: WorkspaceRootsState = {
+      order: ['/tmp/alpha', '/tmp/beta', '/tmp/gamma'],
+      labels: {},
+      active: ['/tmp/alpha'],
+      projectOrder: ['/tmp/beta', '/tmp/alpha', '/tmp/gamma'],
+      pinnedProjectIds: ['/tmp/gamma'],
+    }
+
+    expect(filterGroupsByWorkspaceRoots(groups, rootsState).map((group) => group.projectName)).toEqual([
+      'gamma',
+      'beta',
+      'alpha',
+    ])
+  })
+
+  it('maps durable pinned root paths to visible project names', () => {
+    const groups: UiProjectGroup[] = [
+      {
+        projectName: 'promo',
+        threads: [thread('promo-chat', '/tmp/promo')],
+      },
+      {
+        projectName: '.codex',
+        threads: [thread('codex-chat', '/Users/igor/.codex')],
+      },
+    ]
+    const rootsState: WorkspaceRootsState = {
+      order: ['/tmp/promo', '/Users/igor/.codex'],
+      labels: {},
+      active: ['/tmp/promo'],
+      projectOrder: ['/tmp/promo', '/Users/igor/.codex'],
+      pinnedProjectIds: ['/Users/igor/.codex'],
+    }
+
+    expect(filterGroupsByWorkspaceRoots(groups, rootsState).map((group) => group.projectName)).toEqual([
+      '.codex',
+      'promo',
+    ])
+  })
+
+  it('keeps projectless groups stable when projects are pinned', () => {
+    const groups: UiProjectGroup[] = [
+      {
+        projectName: 'Projectless',
+        threads: [thread('projectless-chat', '')],
+      },
+      {
+        projectName: 'alpha',
+        threads: [thread('alpha-chat', '/tmp/alpha')],
+      },
+      {
+        projectName: 'beta',
+        threads: [thread('beta-chat', '/tmp/beta')],
+      },
+    ]
+    const rootsState: WorkspaceRootsState = {
+      order: ['/tmp/alpha', '/tmp/beta'],
+      labels: {},
+      active: ['/tmp/alpha'],
+      projectOrder: ['/tmp/alpha', '/tmp/beta'],
+      pinnedProjectIds: ['/tmp/beta'],
+    }
+
+    expect(filterGroupsByWorkspaceRoots(groups, rootsState).map((group) => group.projectName)).toEqual([
+      'Projectless',
+      'beta',
+      'alpha',
+    ])
+  })
+
   it('keeps empty duplicate workspace roots visible in Codex project order', () => {
     const groups: UiProjectGroup[] = [
       {
@@ -278,6 +363,51 @@ describe('filterGroupsByWorkspaceRoots', () => {
     expect(filterGroupsByWorkspaceRoots(groups, rootsState).map((group) => [group.projectName, group.threads.map((row) => row.id)])).toEqual([
       ['/Users/igor/Git-projects/codex-web-local', ['main-chat']],
     ])
+  })
+})
+
+describe('project pinning state', () => {
+  it('preserves remote projects when persisting a project pin', async () => {
+    installTestWindow()
+    const remoteProjects = [{
+      id: 'remote-project-id',
+      hostId: 'remote-ssh-discovered:a1',
+      remotePath: '/home/ubuntu',
+      label: 'ubuntu',
+    }]
+    gatewayMocks.getWorkspaceRootsState.mockResolvedValue({
+      order: ['/tmp/alpha'],
+      labels: {},
+      active: ['/tmp/alpha'],
+      projectOrder: ['/tmp/alpha'],
+      pinnedProjectIds: [],
+      remoteProjects,
+    })
+
+    const state = useDesktopState()
+    await state.setProjectPinned('alpha', true)
+
+    expect(gatewayMocks.setWorkspaceRootsState).toHaveBeenCalledWith(expect.objectContaining({
+      pinnedProjectIds: ['/tmp/alpha'],
+      remoteProjects,
+    }))
+  })
+
+  it('does not persist non-durable project pin ids', async () => {
+    installTestWindow()
+    gatewayMocks.getWorkspaceRootsState.mockResolvedValue({
+      order: ['/tmp/alpha'],
+      labels: {},
+      active: ['/tmp/alpha'],
+      projectOrder: ['/tmp/alpha'],
+      pinnedProjectIds: [],
+      remoteProjects: [],
+    })
+
+    const state = useDesktopState()
+    await state.setProjectPinned('Projectless', true)
+
+    expect(gatewayMocks.setWorkspaceRootsState).not.toHaveBeenCalled()
   })
 })
 
