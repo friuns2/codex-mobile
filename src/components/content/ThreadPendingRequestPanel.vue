@@ -107,33 +107,24 @@
 
             <label v-else-if="field.kind === 'boolean'" class="thread-pending-request-select-wrap">
               <span class="thread-pending-request-select-label">{{ t('Choice') }}</span>
-              <select
+              <ComposerDropdown
                 class="thread-pending-request-select"
-                :value="serializeMcpBooleanValue(readMcpElicitationFieldValue(request.id, field))"
-                @change="onMcpElicitationBooleanChange(request.id, field, $event)"
-              >
-                <option v-if="!field.hasExplicitDefault" value="">{{ t('Select true or false') }}</option>
-                <option value="true">{{ t('True') }}</option>
-                <option value="false">{{ t('False') }}</option>
-              </select>
+                :model-value="serializeMcpBooleanValue(readMcpElicitationFieldValue(request.id, field))"
+                :options="mcpBooleanOptions(field)"
+                :placeholder="t('Select true or false')"
+                @update:model-value="onMcpElicitationBooleanValueChange(request.id, field, $event)"
+              />
             </label>
 
             <label v-else-if="field.kind === 'singleEnum'" class="thread-pending-request-select-wrap">
               <span class="thread-pending-request-select-label">{{ t('Choice') }}</span>
-              <select
+              <ComposerDropdown
                 class="thread-pending-request-select"
-                :value="String(readMcpElicitationFieldValue(request.id, field) ?? '')"
-                @change="onMcpElicitationFieldInput(request.id, field, $event)"
-              >
-                <option v-if="!field.hasExplicitDefault" value="">{{ t('Select an option') }}</option>
-                <option
-                  v-for="option in field.options"
-                  :key="`${request.id}:${field.key}:${option.value}`"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
+                :model-value="String(readMcpElicitationFieldValue(request.id, field) ?? '')"
+                :options="mcpSingleEnumOptions(field)"
+                :placeholder="t('Select an option')"
+                @update:model-value="onMcpElicitationFieldValueChange(request.id, field, $event)"
+              />
             </label>
 
             <div v-else class="thread-pending-request-question-options">
@@ -182,19 +173,12 @@
             <div v-if="question.options.length > 0" class="thread-pending-request-question-options">
               <label class="thread-pending-request-select-wrap">
                 <span class="thread-pending-request-select-label">{{ t('Choice') }}</span>
-                <select
+                <ComposerDropdown
                   class="thread-pending-request-select"
-                  :value="readQuestionAnswer(request.id, question.id, question.options[0]?.label || '')"
-                  @change="onQuestionAnswerChange(request.id, question.id, $event)"
-                >
-                  <option
-                    v-for="option in question.options"
-                    :key="`${request.id}:${question.id}:${option.label}`"
-                    :value="option.label"
-                  >
-                    {{ option.label }}
-                  </option>
-                </select>
+                  :model-value="readQuestionAnswer(request.id, question.id, question.options[0]?.label || '')"
+                  :options="toolQuestionOptions(question.options)"
+                  @update:model-value="onQuestionAnswerValueChange(request.id, question.id, $event)"
+                />
               </label>
 
               <p
@@ -250,6 +234,7 @@
 import { computed, ref, watch } from 'vue'
 import type { UiServerRequest, UiServerRequestReply } from '../../types/codex'
 import { useUiLanguage } from '../../composables/useUiLanguage'
+import ComposerDropdown from './ComposerDropdown.vue'
 
 type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel'
 
@@ -528,6 +513,10 @@ function readQuestionAnswer(requestId: number, questionId: string, fallback: str
   return fallback
 }
 
+function toolQuestionOptions(options: ParsedToolQuestion['options']): Array<{ value: string; label: string }> {
+  return options.map((option) => ({ value: option.label, label: option.label }))
+}
+
 function readQuestionOtherAnswer(requestId: number, questionId: string): string {
   return toolQuestionOtherAnswers.value[toolQuestionKey(requestId, questionId)] ?? ''
 }
@@ -535,10 +524,14 @@ function readQuestionOtherAnswer(requestId: number, questionId: string): string 
 function onQuestionAnswerChange(requestId: number, questionId: string, event: Event): void {
   const target = event.target
   if (!(target instanceof HTMLSelectElement)) return
+  onQuestionAnswerValueChange(requestId, questionId, target.value)
+}
+
+function onQuestionAnswerValueChange(requestId: number, questionId: string, value: string): void {
   const key = toolQuestionKey(requestId, questionId)
   toolQuestionAnswers.value = {
     ...toolQuestionAnswers.value,
-    [key]: target.value,
+    [key]: value,
   }
 }
 
@@ -728,8 +721,10 @@ function readMcpElicitationMultiValue(requestId: number, field: McpElicitationFi
 function onMcpElicitationFieldInput(requestId: number, field: McpElicitationField, event: Event): void {
   const target = event.target
   if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return
+  onMcpElicitationFieldValueChange(requestId, field, target.value)
+}
 
-  const rawValue = target.value
+function onMcpElicitationFieldValueChange(requestId: number, field: McpElicitationField, rawValue: string): void {
   const nextValue =
     field.kind === 'number'
       ? rawValue
@@ -745,16 +740,34 @@ function onMcpElicitationFieldInput(requestId: number, field: McpElicitationFiel
 function onMcpElicitationBooleanChange(requestId: number, field: McpElicitationField, event: Event): void {
   const target = event.target
   if (!(target instanceof HTMLSelectElement)) return
+  onMcpElicitationBooleanValueChange(requestId, field, target.value)
+}
 
+function onMcpElicitationBooleanValueChange(requestId: number, field: McpElicitationField, value: string): void {
   let nextValue: boolean | null = null
-  if (target.value === 'true') nextValue = true
-  else if (target.value === 'false') nextValue = false
+  if (value === 'true') nextValue = true
+  else if (value === 'false') nextValue = false
 
   mcpElicitationAnswers.value = {
     ...mcpElicitationAnswers.value,
     [mcpElicitationAnswerKey(requestId, field.key)]: nextValue,
   }
   mcpElicitationValidationError.value = ''
+}
+
+function mcpBooleanOptions(field: McpElicitationField): Array<{ value: string; label: string }> {
+  return [
+    ...(!field.hasExplicitDefault ? [{ value: '', label: t('Select true or false') }] : []),
+    { value: 'true', label: t('True') },
+    { value: 'false', label: t('False') },
+  ]
+}
+
+function mcpSingleEnumOptions(field: McpElicitationField): Array<{ value: string; label: string }> {
+  return [
+    ...(!field.hasExplicitDefault ? [{ value: '', label: t('Select an option') }] : []),
+    ...field.options,
+  ]
 }
 
 function onMcpElicitationMultiToggle(

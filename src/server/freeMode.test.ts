@@ -6,6 +6,7 @@ import {
   OPENCODE_ZEN_PROVIDER_ID,
   createDefaultOpenCodeZenFreeModeState,
   getFreeModeConfigArgs,
+  getOpenCodeZenFreeModelIds,
   shouldCreateDefaultFreeModeStateForMissingAuth,
 } from './freeMode'
 
@@ -58,5 +59,31 @@ describe('unauthenticated free mode defaults', () => {
   it('creates the default only when state is absent and Codex auth is missing', () => {
     expect(shouldCreateDefaultFreeModeStateForMissingAuth(null, false)).toBe(true)
     expect(shouldCreateDefaultFreeModeStateForMissingAuth(null, true)).toBe(false)
+  })
+
+  it('limits OpenCode Zen models to free/default choices without an API key', () => {
+    expect(getOpenCodeZenFreeModelIds([
+      'gpt-5.5',
+      'big-pickle',
+      'minimax-m2.5-free',
+      'gpt-5.4-mini',
+      'hy3-preview-free',
+    ])).toEqual([
+      'big-pickle',
+      'minimax-m2.5-free',
+      'hy3-preview-free',
+    ])
+  })
+
+  it('keeps the built-in OpenCode Zen dropdown on free/default choices even with an API key', () => {
+    expect(getOpenCodeZenFreeModelIds([
+      'gpt-5.5',
+      'big-pickle',
+      'minimax-m2.5-free',
+      'gpt-5.4-mini',
+    ])).toEqual([
+      'big-pickle',
+      'minimax-m2.5-free',
+    ])
   })
 })

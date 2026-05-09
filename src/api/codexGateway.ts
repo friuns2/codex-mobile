@@ -249,6 +249,7 @@ type ProviderModelsResponse = {
 }
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
+const FREE_MODE_STATUS_FETCH_TIMEOUT_MS = 8_000
 
 type ResolvedCollaborationModeSettings = {
   model: string
@@ -1715,7 +1716,12 @@ export interface FreeModeStatus {
 }
 
 export async function getFreeModeStatus(): Promise<FreeModeStatus> {
-  const response = await fetch('/codex-api/free-mode/status')
+  const response = await fetch('/codex-api/free-mode/status', {
+    signal: AbortSignal.timeout(FREE_MODE_STATUS_FETCH_TIMEOUT_MS),
+  })
+  if (!response.ok) {
+    throw new Error(`Free-mode status request failed with ${response.status}`)
+  }
   return await response.json() as FreeModeStatus
 }
 
@@ -1799,10 +1805,19 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
 
 export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {
   const payload = await callRpc<ConfigReadResponse>('config/read', {})
-  const model = payload.config.model ?? ''
-  const providerId = typeof payload.config.model_provider === 'string' ? payload.config.model_provider : ''
+  let model = payload.config.model ?? ''
+  let providerId = typeof payload.config.model_provider === 'string' ? payload.config.model_provider : ''
   const reasoningEffort = normalizeReasoningEffort(payload.config.model_reasoning_effort)
   const speedMode = normalizeSpeedMode(payload.config.service_tier)
+  try {
+    const freeModeStatus = await getFreeModeStatus()
+    if (freeModeStatus.enabled) {
+      model = freeModeStatus.currentModel ?? model
+      providerId = freeModeStatus.provider ?? providerId
+    }
+  } catch {
+    // Keep the app usable when free-mode status is unavailable.
+  }
   return { model, providerId, reasoningEffort, speedMode }
 }
 

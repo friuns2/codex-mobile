@@ -153,6 +153,13 @@ export const CUSTOM_PROVIDER_ID = 'custom-endpoint'
 export const OPENCODE_ZEN_PROVIDER_ID = 'opencode-zen'
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1'
 export const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
+export const OPENCODE_ZEN_FALLBACK_FREE_MODELS = [
+  OPENCODE_ZEN_DEFAULT_MODEL,
+  'minimax-m2.5-free',
+  'hy3-preview-free',
+  'nemotron-3-super-free',
+  'trinity-large-preview-free',
+]
 
 export type WireApi = 'responses' | 'chat'
 
@@ -193,6 +200,14 @@ export function createDefaultOpenCodeZenFreeModeState(): FreeModeState {
     wireApi: 'chat',
     providerKeys: {},
   }
+}
+
+export function getOpenCodeZenFreeModelIds(modelIds: string[]): string[] {
+  const uniqueIds = modelIds
+    .map((id) => id.trim())
+    .filter((id, index, ids) => id.length > 0 && ids.indexOf(id) === index)
+  const freeIds = uniqueIds.filter((id) => id.endsWith('-free') || id === OPENCODE_ZEN_DEFAULT_MODEL)
+  return freeIds.length > 0 ? freeIds : OPENCODE_ZEN_FALLBACK_FREE_MODELS
 }
 
 export function shouldCreateDefaultFreeModeStateForMissingAuth(

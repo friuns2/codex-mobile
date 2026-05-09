@@ -27,6 +27,8 @@ import {
   createDefaultOpenCodeZenFreeModeState,
   getFreeModeConfigArgs,
   getFreeModeEnvVars,
+  getOpenCodeZenFreeModelIds,
+  OPENCODE_ZEN_DEFAULT_MODEL,
   shouldCreateDefaultFreeModeStateForMissingAuth,
   type FreeModeState,
 } from './freeMode.js'
@@ -5171,7 +5173,12 @@ class MethodCatalog {
 
 type CodexBridgeMiddleware = ((req: IncomingMessage, res: ServerResponse, next: () => void) => Promise<void>) & {
   dispose: () => void
+  startBackgroundServices: () => void
   subscribeNotifications: (listener: (value: { method: string; params: unknown; atIso: string }) => void) => () => void
+}
+
+export type CodexBridgeOptions = {
+  startBackgroundServices?: boolean
 }
 
 type SharedBridgeState = {
@@ -5296,10 +5303,11 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
   return { docsById }
 }
 
-export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
+export function createCodexBridgeMiddleware(options: CodexBridgeOptions = {}): CodexBridgeMiddleware {
   const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = getSharedBridgeState()
   let threadSearchIndex: ThreadSearchIndex | null = null
   let threadSearchIndexPromise: Promise<ThreadSearchIndex> | null = null
+  let backgroundServicesStarted = false
 
   async function getThreadSearchIndex(): Promise<ThreadSearchIndex> {
     if (threadSearchIndex) return threadSearchIndex
@@ -5315,15 +5323,23 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     }
     return threadSearchIndexPromise
   }
-  void initializeSkillsSyncOnStartup(appServer)
-  void readTelegramBridgeConfig()
-    .then((config) => {
-      if (!config.botToken) return
-      telegramBridge.configureToken(config.botToken)
-      telegramBridge.configureAllowedUserIds(config.allowedUserIds)
-      telegramBridge.start()
-    })
-    .catch(() => {})
+  function startBackgroundServices(): void {
+    if (backgroundServicesStarted) return
+    backgroundServicesStarted = true
+    void initializeSkillsSyncOnStartup(appServer)
+    void readTelegramBridgeConfig()
+      .then((config) => {
+        if (!config.botToken) return
+        telegramBridge.configureToken(config.botToken)
+        telegramBridge.configureAllowedUserIds(config.allowedUserIds)
+        telegramBridge.start()
+      })
+      .catch(() => {})
+  }
+
+  if (options.startBackgroundServices !== false) {
+    startBackgroundServices()
+  }
 
   const middleware = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const requestStartNs = process.hrtime.bigint()
@@ -5424,8 +5440,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
 
         function readFreeModeState(): FreeModeState {
-          return ensureDefaultFreeModeStateForMissingAuthSync(statePath)
+          const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
             ?? { enabled: false, apiKey: null, model: FREE_MODE_DEFAULT_MODEL }
+          if (state.provider === 'opencode-zen' && !state.model?.trim()) {
+            return { ...state, model: OPENCODE_ZEN_DEFAULT_MODEL }
+          }
+          return state
         }
 
         if (req.method === 'POST' && url.pathname === '/codex-api/free-mode') {
@@ -5593,7 +5613,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               ? (current.model || FREE_MODE_DEFAULT_MODEL)
               : providerType === 'custom'
                 ? await fetchCustomEndpointDefaultModel(baseUrl, resolvedKey)
-                : ''
+                : OPENCODE_ZEN_DEFAULT_MODEL
             const state: FreeModeState = {
               enabled: true,
               apiKey: resolvedKey,
@@ -6099,22 +6119,29 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               try {
                 const modelsUrl = 'https://opencode.ai/zen/v1/models'
                 const headers: Record<string, string> = {}
-                if (fmState.apiKey && fmState.apiKey !== 'dummy') {
+                const hasZenApiKey = Boolean(fmState.apiKey && fmState.apiKey !== 'dummy')
+                if (hasZenApiKey) {
                   headers['Authorization'] = `Bearer ${fmState.apiKey}`
                 }
                 const resp = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(8000) })
                 if (resp.ok) {
                   const json = await resp.json() as { data?: Array<{ id: string }> }
                   const allIds = (json.data ?? []).map(m => m.id).filter(Boolean)
-                  const freeIds = allIds.filter(id => id.endsWith('-free') || id === 'big-pickle')
-                  const paidIds = allIds.filter(id => !id.endsWith('-free') && id !== 'big-pickle')
-                  setJson(res, 200, { data: [...freeIds, ...paidIds], exclusive: true, source: 'opencode-zen' })
+                  setJson(res, 200, {
+                    data: getOpenCodeZenFreeModelIds(allIds),
+                    exclusive: true,
+                    source: 'opencode-zen',
+                  })
                   return
                 }
               } catch {
                 // OpenCode Zen model fetch failed
               }
-              setJson(res, 200, { data: ['big-pickle', 'minimax-m2.5-free', 'nemotron-3-super-free', 'trinity-large-preview-free'], exclusive: true, source: 'opencode-zen' })
+              setJson(res, 200, {
+                data: getOpenCodeZenFreeModelIds([]),
+                exclusive: true,
+                source: 'opencode-zen',
+              })
               return
             }
             if (fmState.provider === 'custom' && fmState.customBaseUrl) {
@@ -7082,6 +7109,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     backendQueueProcessor.dispose()
     appServer.dispose()
   }
+  middleware.startBackgroundServices = startBackgroundServices
   middleware.subscribeNotifications = (
     listener: (value: { method: string; params: unknown; atIso: string }) => void,
   ) => {

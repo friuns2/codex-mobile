@@ -207,13 +207,13 @@
               </button>
               <div class="sidebar-settings-row sidebar-settings-row--select" :title="t('Choose the interface language for the app.')">
                 <span class="sidebar-settings-label">{{ t('UI language') }}</span>
-                <select
-                  class="sidebar-settings-provider-select"
-                  :value="uiLanguage"
-                  @change="setUiLanguage(($event.target as HTMLSelectElement).value as 'en' | 'zh-CN')"
-                >
-                  <option v-for="option in uiLanguageOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
+                <ComposerDropdown
+                  class="sidebar-settings-language-dropdown"
+                  :model-value="uiLanguage"
+                  :options="uiLanguageOptions"
+                  open-direction="up"
+                  @update:model-value="setUiLanguage($event as 'en' | 'zh-CN')"
+                />
               </div>
               <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.chatWidth" @click="cycleChatWidth">
                 <span class="sidebar-settings-label">{{ t('Chat width') }}</span>
@@ -230,17 +230,15 @@
 
               <div class="sidebar-settings-row sidebar-settings-row--select" :title="t('Choose the API provider for the Codex backend')">
                 <span class="sidebar-settings-label">{{ t('Provider') }}</span>
-                <select
-                  class="sidebar-settings-provider-select"
-                  :value="selectedProvider"
+                <ComposerDropdown
+                  class="sidebar-settings-provider-dropdown"
+                  :model-value="selectedProvider"
+                  :options="providerOptions"
                   :disabled="freeModeLoading"
-                  @change="onProviderChange(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="codex">Codex</option>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="opencode-zen">OpenCode Zen</option>
-                  <option value="custom">Custom endpoint</option>
-                </select>
+                  :placeholder="t('Provider')"
+                  open-direction="up"
+                  @update:model-value="onProviderChange"
+                />
               </div>
               <div v-if="providerError" class="sidebar-settings-row sidebar-settings-error">
                 {{ providerError }}
@@ -779,6 +777,7 @@
                   :selected-reasoning-effort="selectedReasoningEffort"
                   :selected-speed-mode="selectedSpeedMode"
                   :is-updating-speed-mode="isUpdatingSpeedMode"
+                  :disabled="freeModeLoading"
                   :skills="installedSkills"
                   :thread-token-usage="selectedThreadTokenUsage"
                   :codex-quota="codexQuota"
@@ -853,6 +852,7 @@
                     :selected-reasoning-effort="selectedReasoningEffort"
                     :selected-speed-mode="selectedSpeedMode"
                     :is-updating-speed-mode="isUpdatingSpeedMode"
+                    :disabled="freeModeLoading"
                     :skills="installedSkills"
                     :thread-token-usage="selectedThreadTokenUsage"
                     :codex-quota="codexQuota"
@@ -1221,6 +1221,7 @@ const {
   steerQueuedMessage,
   setSelectedCollaborationMode,
   readModelIdForThread,
+  previewProviderModelSelection,
   setSelectedModelIdForThread,
 
   setSelectedReasoningEffort,
@@ -1253,8 +1254,10 @@ const terminalStoredQuickCommands = ref<TerminalHeaderQuickCommand[]>(loadTermin
 const terminalHeaderDropdownValue = ref('')
 const editingQueuedMessageState = ref<{ threadId: string; queueIndex: number } | null>(null)
 const isRouteSyncInProgress = ref(false)
+const providerSwitchPreservedThreadId = ref('')
 const directoryTryInFlightKey = ref('')
 let hasPendingRouteSync = false
+let providerSwitchRestoreTimer: number | null = null
 const hasInitialized = ref(false)
 const newThreadCwd = ref('')
 const newThreadRuntime = ref<'local' | 'worktree'>('local')
@@ -1343,6 +1346,12 @@ const freeModeCustomKeyMasked = ref<string | null>(null)
 const freeModeCustomKeySaving = ref(false)
 const providerError = ref('')
 const selectedProvider = ref<'codex' | 'openrouter' | 'opencode-zen' | 'custom'>('codex')
+const providerOptions = computed(() => [
+  { value: 'codex', label: 'Codex' },
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'opencode-zen', label: 'OpenCode Zen' },
+  { value: 'custom', label: t('Custom endpoint') },
+])
 const customEndpointUrl = ref('')
 const customEndpointKey = ref('')
 const customEndpointWireApi = ref<'responses' | 'chat'>('responses')
@@ -1427,7 +1436,9 @@ const latestUserTurnId = computed(() => {
 })
 const liveOverlay = computed(() => selectedLiveOverlay.value)
 const composerThreadContextId = computed(() => (isHomeRoute.value ? '__new-thread__' : selectedThreadId.value))
-const composerSelectedModelId = computed(() => readModelIdForThread(composerThreadContextId.value))
+const composerSelectedModelId = computed(() => (
+  readModelIdForThread(composerThreadContextId.value).trim() || selectedModelId.value.trim()
+))
 const selectedThreadPendingRequest = computed<UiServerRequest | null>(() => {
   const rows = selectedThreadServerRequests.value
   return rows.length > 0 ? rows[rows.length - 1] : null
@@ -1780,7 +1791,7 @@ onMounted(() => {
   void refreshDefaultProjectName()
   void refreshTelegramConfig()
   void refreshTelegramStatus()
-  void loadFreeModeStatus()
+  void loadInitialFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
 })
@@ -2798,7 +2809,7 @@ async function syncAfterMobileResume(): Promise<void> {
   }
 }
 
-function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fileAttachments: Array<{ label: string; path: string; fsPath: string }>; skills: Array<{ name: string; path: string }>; mode: 'steer' | 'queue' }): void {
+function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fileAttachments: Array<{ label: string; path: string; fsPath: string }>; skills: Array<{ name: string; path: string }>; selectedModel: string; mode: 'steer' | 'queue' }): void {
   const text = payload.text
   scheduleMobileConversationJumpToLatest()
   const editingState = editingQueuedMessageState.value
@@ -2813,7 +2824,16 @@ function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fil
     void submitFirstMessageForNewThread(text, payload.imageUrls, payload.skills, payload.fileAttachments)
     return
   }
-  void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
+  void sendMessageToSelectedThread(
+    text,
+    payload.imageUrls,
+    payload.skills,
+    payload.mode,
+    payload.fileAttachments,
+    queueInsertIndex,
+    undefined,
+    payload.selectedModel,
+  )
 }
 
 function onEditQueuedMessage(messageId: string): void {
@@ -3573,46 +3593,126 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
+async function restoreThreadRouteAfterProviderChange(threadId: string): Promise<void> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return
+  primeSelectedThread(normalizedThreadId)
+  if (route.name !== 'thread' || routeThreadId.value !== normalizedThreadId) {
+    await router.replace({ name: 'thread', params: { threadId: normalizedThreadId } })
+  }
+}
+
+function finishProviderSwitchRoutePreservation(threadId: string): void {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return
+  if (providerSwitchRestoreTimer !== null) {
+    window.clearTimeout(providerSwitchRestoreTimer)
+  }
+  providerSwitchRestoreTimer = window.setTimeout(() => {
+    void restoreThreadRouteAfterProviderChange(normalizedThreadId).finally(() => {
+      if (providerSwitchPreservedThreadId.value === normalizedThreadId) {
+        providerSwitchPreservedThreadId.value = ''
+      }
+      providerSwitchRestoreTimer = null
+    })
+  }, 250)
+}
+
+function withProviderSwitchTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      reject(new Error(`${label} timed out`))
+    }, 15_000)
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeout)
+        resolve(value)
+      },
+      (error) => {
+        window.clearTimeout(timeout)
+        reject(error)
+      },
+    )
+  })
+}
 
 async function onProviderChange(provider: string): Promise<void> {
   if (freeModeLoading.value) return
   freeModeLoading.value = true
+  const activeThreadIdBeforeProviderChange = (
+    route.name === 'thread' ? routeThreadId.value.trim() : selectedThreadId.value.trim()
+  )
+  if (activeThreadIdBeforeProviderChange) {
+    providerSwitchPreservedThreadId.value = activeThreadIdBeforeProviderChange
+  }
   try {
     if (provider === 'codex') {
       selectedProvider.value = 'codex'
-      const result = await setFreeMode(false)
+      previewProviderModelSelection(provider)
+      const result = await withProviderSwitchTimeout(setFreeMode(false), 'Codex provider switch')
       freeModeEnabled.value = result.enabled
     } else if (provider === 'openrouter') {
       selectedProvider.value = 'openrouter'
-      const result = await setFreeMode(true)
+      previewProviderModelSelection(provider)
+      const result = await withProviderSwitchTimeout(setFreeMode(true), 'OpenRouter provider switch')
       freeModeEnabled.value = result.enabled
-      await setCustomProvider('', '', {
-        wireApi: openRouterWireApi.value,
-        provider: 'openrouter',
-      })
+      await withProviderSwitchTimeout(
+        setCustomProvider('', '', {
+          wireApi: openRouterWireApi.value,
+          provider: 'openrouter',
+        }),
+        'OpenRouter provider configuration',
+      )
     } else if (provider === 'opencode-zen') {
       selectedProvider.value = 'opencode-zen'
-      await setCustomProvider('', opencodeZenKey.value.trim(), {
-        wireApi: 'chat',
-        provider: 'opencode-zen',
-      })
+      previewProviderModelSelection(provider)
+      await withProviderSwitchTimeout(
+        setCustomProvider('', opencodeZenKey.value.trim(), {
+          wireApi: 'chat',
+          provider: 'opencode-zen',
+        }),
+        'OpenCode Zen provider configuration',
+      )
       freeModeEnabled.value = true
     } else if (provider === 'custom') {
       selectedProvider.value = 'custom'
+      previewProviderModelSelection(provider)
       if (customEndpointUrl.value.trim() && customEndpointKey.value.trim()) {
-        await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
-          wireApi: customEndpointWireApi.value,
-        })
+        await withProviderSwitchTimeout(
+          setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
+            wireApi: customEndpointWireApi.value,
+          }),
+          'Custom provider configuration',
+        )
         freeModeEnabled.value = true
       }
     }
+    await withProviderSwitchTimeout(loadFreeModeStatus(), 'Provider status refresh')
     providerError.value = ''
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
-    if (route.name === 'thread') {
-      void router.push({ name: 'home' })
+    await withProviderSwitchTimeout(
+      refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true }),
+      'Provider refresh',
+    )
+    if (activeThreadIdBeforeProviderChange) {
+      const existingThreadModelId = readModelIdForThread(activeThreadIdBeforeProviderChange).trim()
+      const providerModelId = readModelIdForThread('__new-thread__').trim() || selectedModelId.value.trim()
+      if (!existingThreadModelId && providerModelId) {
+        setSelectedModelIdForThread(activeThreadIdBeforeProviderChange, providerModelId)
+      }
+      await restoreThreadRouteAfterProviderChange(activeThreadIdBeforeProviderChange)
+      await withProviderSwitchTimeout(
+        ensureThreadMessagesLoaded(activeThreadIdBeforeProviderChange, { silent: true }).catch(() => {}),
+        'Provider thread refresh',
+      )
+      await nextTick()
+      await restoreThreadRouteAfterProviderChange(activeThreadIdBeforeProviderChange)
+      finishProviderSwitchRoutePreservation(activeThreadIdBeforeProviderChange)
     }
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
+    if (activeThreadIdBeforeProviderChange && providerSwitchPreservedThreadId.value === activeThreadIdBeforeProviderChange) {
+      providerSwitchPreservedThreadId.value = ''
+    }
   } finally {
     freeModeLoading.value = false
   }
@@ -3716,23 +3816,42 @@ async function loadFreeModeStatus(): Promise<void> {
     freeModeEnabled.value = status.enabled
     freeModeHasCustomKey.value = status.customKey ?? false
     freeModeCustomKeyMasked.value = status.maskedKey ?? null
+    let nextProvider: 'codex' | 'openrouter' | 'opencode-zen' | 'custom' = 'codex'
     if (status.enabled) {
       if (status.provider === 'opencode-zen') {
-        selectedProvider.value = 'opencode-zen'
+        nextProvider = 'opencode-zen'
       } else if (status.provider === 'custom') {
-        selectedProvider.value = 'custom'
+        nextProvider = 'custom'
         customEndpointUrl.value = status.customBaseUrl ?? ''
         customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
       } else {
-        selectedProvider.value = 'openrouter'
+        nextProvider = 'openrouter'
         openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
       }
-    } else {
-      selectedProvider.value = 'codex'
+    }
+    selectedProvider.value = nextProvider
+    previewProviderModelSelection(nextProvider)
+    const currentModel = status.currentModel?.trim() ?? ''
+    if (currentModel) {
+      setSelectedModelIdForThread('__new-thread__', currentModel)
+      const threadId = selectedThreadId.value.trim()
+      if (threadId && !readModelIdForThread(threadId).trim()) {
+        setSelectedModelIdForThread(threadId, currentModel)
+      }
     }
   } catch {
     // Ignore — free mode status unknown
   }
+}
+
+async function loadInitialFreeModeStatus(): Promise<void> {
+  await loadFreeModeStatus()
+  if (selectedProvider.value === 'codex') return
+  await refreshAll({
+    includeSelectedThreadMessages: false,
+    providerChanged: true,
+    awaitAncillaryRefreshes: true,
+  })
 }
 
 function onDictationLanguageChange(nextValue: string): void {
@@ -3881,6 +4000,11 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
       hasPendingRouteSync = false
 
       if (route.name === 'home' || route.name === 'skills') {
+        const preservedThreadId = providerSwitchPreservedThreadId.value.trim()
+        if (route.name === 'home' && preservedThreadId) {
+          await restoreThreadRouteAfterProviderChange(preservedThreadId)
+          continue
+        }
         if (selectedThreadId.value !== '') {
           await selectThread('')
         }
@@ -3893,11 +4017,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
 
         if (selectedThreadId.value !== threadId) {
           if (!threadExistsInSidebar(threadId)) {
-            if (selectedThreadId.value) {
-              await router.replace({ name: 'thread', params: { threadId: selectedThreadId.value } })
-            } else {
-              await router.replace({ name: 'home' })
-            }
+            await selectThread(threadId)
             continue
           }
           await selectThread(threadId)
@@ -3950,6 +4070,11 @@ watch(
     if (isHomeRoute.value || isSkillsRoute.value) return
 
     if (!threadId) {
+      const preservedThreadId = providerSwitchPreservedThreadId.value.trim()
+      if (preservedThreadId) {
+        await restoreThreadRouteAfterProviderChange(preservedThreadId)
+        return
+      }
       if (route.name !== 'home') {
         await router.replace({ name: 'home' })
       }
@@ -5090,11 +5215,23 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply shrink-0 w-6 h-6 flex items-center justify-center rounded-full border border-zinc-200 text-xs text-zinc-400 transition-colors hover:text-zinc-600 hover:border-zinc-300 disabled:opacity-40;
 }
 
-.sidebar-settings-provider-select {
-  @apply min-w-0 max-w-40 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 outline-none transition-colors cursor-pointer;
+.sidebar-settings-provider-dropdown {
+  @apply min-w-0 max-w-40;
 }
 
-.sidebar-settings-provider-select:focus {
+.sidebar-settings-provider-dropdown :deep(.composer-dropdown-trigger) {
+  @apply h-auto rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700;
+}
+
+.sidebar-settings-provider-dropdown :deep(.composer-dropdown-value) {
+  @apply max-w-32;
+}
+
+.sidebar-settings-provider-dropdown :deep(.composer-dropdown-menu-wrap) {
+  @apply left-auto right-0;
+}
+
+.sidebar-settings-provider-dropdown :deep(.composer-dropdown-trigger:focus-visible) {
   @apply border-zinc-400 ring-2 ring-zinc-200;
 }
 
@@ -5118,11 +5255,11 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply text-xs text-blue-600 hover:text-blue-700 underline shrink-0;
 }
 
-:root.dark .sidebar-settings-provider-select {
+:root.dark .sidebar-settings-provider-dropdown :deep(.composer-dropdown-trigger) {
   @apply border-zinc-600 bg-zinc-800 text-zinc-200;
 }
 
-:root.dark .sidebar-settings-provider-select:focus {
+:root.dark .sidebar-settings-provider-dropdown :deep(.composer-dropdown-trigger:focus-visible) {
   @apply border-zinc-500 ring-zinc-700;
 }
 

@@ -75,13 +75,13 @@ const THREAD_TOKEN_USAGE_STORAGE_KEY = 'codex-web-local.thread-token-usage.v1'
 const THREAD_TERMINAL_OPEN_STORAGE_KEY = 'codex-web-local.thread-terminal-open.v1'
 const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
 const SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-model-by-context.v1'
-const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'codex-web-local.selected-model-id.v1'
 const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode-by-context.v1'
 const LEGACY_COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode.v1'
 const NEW_THREAD_COLLABORATION_MODE_CONTEXT = '__new-thread__'
 const NEW_THREAD_PROVIDER_MODEL_CONTEXT_PREFIX = '__new-thread-provider__::'
+const THREAD_PROVIDER_MODEL_CONTEXT_PREFIX = '__thread-provider__::'
 const EVENT_SYNC_DEBOUNCE_MS = 220
 const BACKGROUND_THREAD_PAGINATION_DELAY_MS = 10_000
 const RATE_LIMIT_REFRESH_DEBOUNCE_MS = 500
@@ -178,14 +178,26 @@ function omitStringKeyedRecordKey<T>(record: Record<string, T>, key: string): Re
 function pruneThreadContextStateMap<T>(
   stateMap: Record<string, T>,
   threadIds: Set<string>,
+  options: { preserveLegacyThreadContexts?: boolean; preserveNewThreadContext?: boolean } = {},
 ): Record<string, T> {
+  const preserveLegacyThreadContexts = options.preserveLegacyThreadContexts !== false
+  const preserveNewThreadContext = options.preserveNewThreadContext !== false
   let changed = false
   const next = createStringKeyedRecord<T>()
   for (const [contextId, value] of Object.entries(stateMap)) {
+    if (contextId.startsWith(THREAD_PROVIDER_MODEL_CONTEXT_PREFIX)) {
+      const providerThreadId = readThreadIdFromProviderModelContextId(contextId)
+      if (providerThreadId && threadIds.has(providerThreadId)) {
+        next[contextId] = value
+        continue
+      }
+      changed = true
+      continue
+    }
     if (
-      contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
+      (preserveNewThreadContext && contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT)
       || contextId.startsWith(NEW_THREAD_PROVIDER_MODEL_CONTEXT_PREFIX)
-      || threadIds.has(contextId)
+      || (preserveLegacyThreadContexts && threadIds.has(contextId))
     ) {
       next[contextId] = value
       continue
@@ -197,7 +209,11 @@ function pruneThreadContextStateMap<T>(
 
 function normalizeProviderContextId(providerId: string): string {
   const normalized = providerId.trim().toLowerCase()
-  return normalized || 'codex'
+  return !normalized || normalized === 'openai' ? 'codex' : normalized
+}
+
+function isCodexProviderContextId(providerId: string): boolean {
+  return normalizeProviderContextId(providerId) === 'codex'
 }
 
 function isNewThreadContextId(contextId: string): boolean {
@@ -208,6 +224,22 @@ function toProviderModelContextId(providerId: string): string {
   const normalizedProviderId = normalizeProviderContextId(providerId)
   if (!normalizedProviderId) return ''
   return `${NEW_THREAD_PROVIDER_MODEL_CONTEXT_PREFIX}${normalizedProviderId}`
+}
+
+function toThreadProviderModelContextId(threadId: string, providerId: string): string {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return ''
+  const normalizedProviderId = normalizeProviderContextId(providerId)
+  if (!normalizedProviderId) return ''
+  return `${THREAD_PROVIDER_MODEL_CONTEXT_PREFIX}${normalizedProviderId}::${normalizedThreadId}`
+}
+
+function readThreadIdFromProviderModelContextId(contextId: string): string {
+  if (!contextId.startsWith(THREAD_PROVIDER_MODEL_CONTEXT_PREFIX)) return ''
+  const remainder = contextId.slice(THREAD_PROVIDER_MODEL_CONTEXT_PREFIX.length)
+  const separatorIndex = remainder.indexOf('::')
+  if (separatorIndex < 0) return ''
+  return remainder.slice(separatorIndex + 2).trim()
 }
 
 function toThreadContextId(threadId: string): string {
@@ -235,25 +267,10 @@ function loadSelectedModelMap(): Record<string, string> {
       return next
     }
   } catch {
-    // Fall back to the legacy global preference below.
+    // Keep model selection empty when persisted state is invalid.
   }
 
-  const legacyModelId = normalizeStoredModelId(window.localStorage.getItem(LEGACY_SELECTED_MODEL_STORAGE_KEY))
-  const next = createStringKeyedRecord<string>()
-  if (legacyModelId) {
-    next[NEW_THREAD_COLLABORATION_MODE_CONTEXT] = legacyModelId
-  }
-  return next
-}
-
-function readSelectedModel(
-  state: Record<string, string>,
-  threadId: string,
-): string {
-  const contextId = toThreadContextId(threadId)
-  const contextModelId = normalizeStoredModelId(state[contextId])
-  if (contextModelId) return contextModelId
-  return normalizeStoredModelId(state[NEW_THREAD_COLLABORATION_MODE_CONTEXT])
+  return createStringKeyedRecord<string>()
 }
 
 function saveSelectedModelMap(state: Record<string, string>): void {
@@ -264,7 +281,6 @@ function saveSelectedModelMap(state: Record<string, string>): void {
     } else {
       window.localStorage.setItem(SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
     }
-    window.localStorage.removeItem(LEGACY_SELECTED_MODEL_STORAGE_KEY)
   } catch {
     // Keep in-memory selection working even if localStorage writes fail.
   }
@@ -1383,7 +1399,7 @@ export function useDesktopState() {
   const selectedCollaborationMode = ref<CollaborationModeKind>(
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
   )
-  const selectedModelId = ref(readSelectedModel(selectedModelIdByContext.value, selectedThreadId.value))
+  const selectedModelId = ref('')
   const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
   const selectedSpeedMode = ref<SpeedMode>('standard')
   const activeProviderId = ref('')
@@ -1545,13 +1561,24 @@ export function useDesktopState() {
   function readModelIdForThread(threadId: string): string {
     const contextId = toThreadContextId(threadId)
     if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
-      const providerContextId = toProviderModelContextId(activeProviderId.value)
-      const providerModelId = providerContextId
-        ? normalizeStoredModelId(selectedModelIdByContext.value[providerContextId])
-        : ''
-      if (providerModelId) return providerModelId
+      return readProviderModelId()
     }
-    return readSelectedModel(selectedModelIdByContext.value, threadId).trim()
+
+    const providerThreadContextId = toThreadProviderModelContextId(contextId, activeProviderId.value)
+    return providerThreadContextId
+      ? normalizeStoredModelId(selectedModelIdByContext.value[providerThreadContextId])
+      : ''
+  }
+
+  function readProviderModelId(): string {
+    const providerContextId = toProviderModelContextId(activeProviderId.value)
+    return providerContextId
+      ? normalizeStoredModelId(selectedModelIdByContext.value[providerContextId])
+      : ''
+  }
+
+  function readModelIdForActiveThreadSelection(threadId: string): string {
+    return readModelIdForThread(threadId) || readProviderModelId()
   }
 
   function ensureAvailableModelIds(...modelIds: string[]): void {
@@ -1571,7 +1598,7 @@ export function useDesktopState() {
     if (selectedThreadId.value === nextThreadId) return
     selectedThreadId.value = nextThreadId
     saveSelectedThreadId(nextThreadId)
-    selectedModelId.value = readModelIdForThread(nextThreadId)
+    selectedModelId.value = readModelIdForActiveThreadSelection(nextThreadId)
     ensureAvailableModelIds(selectedModelId.value)
     selectedCollaborationMode.value = readSelectedCollaborationMode(
       selectedCollaborationModeByContext.value,
@@ -1581,23 +1608,35 @@ export function useDesktopState() {
     shouldAutoScrollOnNextAgentEvent = false
   }
 
+  function previewProviderModelSelection(providerId: string): void {
+    activeProviderId.value = normalizeProviderContextId(providerId)
+    const nextSelectedModelId = readModelIdForActiveThreadSelection(selectedThreadId.value).trim()
+    selectedModelId.value = nextSelectedModelId
+    availableModelIds.value = nextSelectedModelId ? [nextSelectedModelId] : []
+  }
+
   function setSelectedModelIdForThread(threadId: string, modelId: string): void {
     const normalizedModelId = modelId.trim()
     const contextId = toThreadContextId(threadId)
+    const isNewThreadContext = contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
+    const providerScopedContextId = isNewThreadContext
+      ? toProviderModelContextId(activeProviderId.value)
+      : toThreadProviderModelContextId(contextId, activeProviderId.value)
+    const primaryContextId = providerScopedContextId || contextId
     if (normalizedModelId) {
       const nextModelMap = cloneStringKeyedRecord(selectedModelIdByContext.value)
-      nextModelMap[contextId] = normalizedModelId
+      nextModelMap[primaryContextId] = normalizedModelId
       selectedModelIdByContext.value = nextModelMap
     } else {
-      selectedModelIdByContext.value = omitStringKeyedRecordKey(selectedModelIdByContext.value, contextId)
+      selectedModelIdByContext.value = omitStringKeyedRecordKey(selectedModelIdByContext.value, primaryContextId)
     }
     if (threadId.trim() === selectedThreadId.value) {
-      selectedModelId.value = readModelIdForThread(selectedThreadId.value)
+      selectedModelId.value = readModelIdForActiveThreadSelection(selectedThreadId.value)
       ensureAvailableModelIds(selectedModelId.value)
     } else {
       ensureAvailableModelIds(normalizedModelId)
     }
-    if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
+    if (isNewThreadContext) {
       const providerContextId = toProviderModelContextId(activeProviderId.value)
       if (providerContextId) {
         if (normalizedModelId) {
@@ -1621,18 +1660,26 @@ export function useDesktopState() {
     if (!normalizedThreadId) return
 
     const normalizedModelId = modelId.trim()
+    const providerScopedContextId = toThreadProviderModelContextId(normalizedThreadId, activeProviderId.value)
+    const contextId = providerScopedContextId || normalizedThreadId
     if (normalizedModelId) {
       const nextModelMap = cloneStringKeyedRecord(selectedModelIdByContext.value)
-      nextModelMap[normalizedThreadId] = normalizedModelId
+      nextModelMap[contextId] = normalizedModelId
       selectedModelIdByContext.value = nextModelMap
     } else {
-      selectedModelIdByContext.value = omitStringKeyedRecordKey(selectedModelIdByContext.value, normalizedThreadId)
+      selectedModelIdByContext.value = omitStringKeyedRecordKey(selectedModelIdByContext.value, contextId)
     }
     ensureAvailableModelIds(normalizedModelId)
     if (selectedThreadId.value === normalizedThreadId) {
-      selectedModelId.value = readModelIdForThread(selectedThreadId.value)
+      selectedModelId.value = readModelIdForActiveThreadSelection(selectedThreadId.value)
     }
     saveSelectedModelMap(selectedModelIdByContext.value)
+  }
+
+  function setResumedThreadModelIdForActiveProvider(threadId: string, modelId: string): void {
+    const normalizedModelId = modelId.trim()
+    if (!normalizedModelId || !availableModelIds.value.includes(normalizedModelId)) return
+    setThreadModelId(threadId, normalizedModelId)
   }
 
   function setThreadTokenUsage(threadId: string, usage: UiThreadTokenUsage | null): void {
@@ -1833,15 +1880,20 @@ export function useDesktopState() {
 
   async function refreshModelPreferences(options?: { providerChanged?: boolean; includeProviderModels?: boolean }): Promise<void> {
     try {
-      const [modelIds, currentConfig] = await Promise.all([
-        getAvailableModelIds({ includeProviderModels: options?.includeProviderModels !== false }),
-        getCurrentModelConfig(),
-      ])
-
-      const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
+      const currentConfig = await getCurrentModelConfig()
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
+      const includeProviderModels =
+        options?.includeProviderModels !== false && !isCodexProviderContextId(normalizedProviderId)
+      const modelIds = await getAvailableModelIds({ includeProviderModels })
       activeProviderId.value = normalizedProviderId
+      if (options?.providerChanged) {
+        resumedThreadById.value = {}
+        loadedMessagesByThreadId.value = {}
+      }
+      const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
+      selectedModelId.value = normalizedSelectedModelId
+      ensureAvailableModelIds(normalizedSelectedModelId)
       const providerModelContextId = toProviderModelContextId(normalizedProviderId)
       const providerScopedModelId = providerModelContextId
         ? normalizeStoredModelId(selectedModelIdByContext.value[providerModelContextId])
@@ -1858,25 +1910,35 @@ export function useDesktopState() {
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
       if (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged) {
+        let nextSelectedModelId = ''
         if (options?.providerChanged && nextModelIds.length > 0) {
-          if (providerScopedModelId && nextModelIds.includes(providerScopedModelId)) {
-            setSelectedModelId(providerScopedModelId)
-          } else if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
-            setSelectedModelId(normalizedConfiguredModelId)
+          if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
+            nextSelectedModelId = normalizedConfiguredModelId
+          } else if (providerScopedModelId && nextModelIds.includes(providerScopedModelId)) {
+            nextSelectedModelId = providerScopedModelId
           } else {
-            setSelectedModelId(nextModelIds[0])
+            nextSelectedModelId = nextModelIds[0]
           }
         } else if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
-          setSelectedModelId(currentConfig.model)
+          nextSelectedModelId = currentConfig.model
         } else if (nextModelIds.length > 0) {
-          setSelectedModelId(nextModelIds[0])
+          nextSelectedModelId = nextModelIds[0]
+        }
+
+        setSelectedModelId(nextSelectedModelId)
+        if (options?.providerChanged) {
+          setSelectedModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT, nextSelectedModelId)
+        }
+      } else if (options?.providerChanged) {
+        if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
+          setSelectedModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT, normalizedConfiguredModelId)
         } else {
-          setSelectedModelId('')
+          setSelectedModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT, normalizedSelectedModelId)
         }
       }
-      if (providerModelContextId && selectedModelId.value.trim().length > 0) {
+      if (providerModelContextId && !providerScopedModelId && normalizedConfiguredModelId) {
         const nextModelMap = cloneStringKeyedRecord(selectedModelIdByContext.value)
-        nextModelMap[providerModelContextId] = selectedModelId.value.trim()
+        nextModelMap[providerModelContextId] = normalizedConfiguredModelId
         selectedModelIdByContext.value = nextModelMap
         saveSelectedModelMap(selectedModelIdByContext.value)
       }
@@ -2058,10 +2120,13 @@ export function useDesktopState() {
     if (currentThreadId) {
       activeThreadIds.add(currentThreadId)
     }
-    const nextSelectedModelMap = pruneThreadContextStateMap(selectedModelIdByContext.value, activeThreadIds)
+    const nextSelectedModelMap = pruneThreadContextStateMap(selectedModelIdByContext.value, activeThreadIds, {
+      preserveLegacyThreadContexts: false,
+      preserveNewThreadContext: false,
+    })
     if (nextSelectedModelMap !== selectedModelIdByContext.value) {
       selectedModelIdByContext.value = nextSelectedModelMap
-      selectedModelId.value = readModelIdForThread(selectedThreadId.value)
+      selectedModelId.value = readModelIdForActiveThreadSelection(selectedThreadId.value)
       ensureAvailableModelIds(selectedModelId.value)
       saveSelectedModelMap(nextSelectedModelMap)
     }
@@ -4191,7 +4256,7 @@ export function useDesktopState() {
       const detail = resumedThread ?? await getThreadDetail(threadId)
 
       if (resumedThread) {
-        setThreadModelId(threadId, resumedThread.model)
+        setResumedThreadModelIdForActiveProvider(threadId, resumedThread.model)
         resumedThreadById.value = {
           ...resumedThreadById.value,
           [threadId]: true,
@@ -4322,6 +4387,10 @@ export function useDesktopState() {
       await loadPersistedQueueStateIfNeeded()
       await loadThreads()
       if (includeSelectedThreadMessages) {
+        await refreshModelPreferences({
+          providerChanged: options.providerChanged,
+          includeProviderModels: options.providerChanged === true || awaitAncillaryRefreshes,
+        })
         await loadMessages(selectedThreadId.value)
       }
       if (awaitAncillaryRefreshes) {
@@ -4332,7 +4401,7 @@ export function useDesktopState() {
       } else {
         scheduleAncillaryStateRefresh({
           providerChanged: options.providerChanged,
-          includeProviderModels: false,
+          includeProviderModels: true,
         })
       }
     } catch (unknownError) {
@@ -4536,6 +4605,7 @@ export function useDesktopState() {
     fileAttachments: FileAttachment[] = [],
     queueInsertIndex?: number,
     collaborationModeOverride?: CollaborationModeKind,
+    selectedModelOverride?: string,
   ): Promise<void> {
     if (isUpdatingSpeedMode.value) return
 
@@ -4585,6 +4655,7 @@ export function useDesktopState() {
         skills,
         fileAttachments,
         collaborationModeOverride,
+        selectedModelOverride,
       ).catch((unknownError) => {
         const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
         setTurnErrorForThread(threadId, errorMessage)
@@ -4601,7 +4672,7 @@ export function useDesktopState() {
       {
         label: 'Thinking',
         details: buildPendingTurnDetails(
-          readModelIdForThread(threadId),
+          selectedModelOverride?.trim() || selectedModelId.value.trim() || readModelIdForActiveThreadSelection(threadId),
           selectedReasoningEffort.value,
           collaborationModeOverride === 'plan'
             ? 'plan'
@@ -4622,6 +4693,7 @@ export function useDesktopState() {
         skills,
         fileAttachments,
         collaborationModeOverride,
+        selectedModelOverride,
       )
     } catch (unknownError) {
       shouldAutoScrollOnNextAgentEvent = false
@@ -4734,6 +4806,7 @@ export function useDesktopState() {
     skills: Array<{ name: string; path: string }> = [],
     fileAttachments: FileAttachment[] = [],
     collaborationModeOverride?: CollaborationModeKind,
+    selectedModelOverride?: string,
   ): Promise<void> {
     const reasoningEffort = selectedReasoningEffort.value
     const collaborationMode = collaborationModeOverride === 'plan' ? 'plan' : collaborationModeOverride === 'default'
@@ -4766,9 +4839,9 @@ export function useDesktopState() {
     try {
       if (resumedThreadById.value[threadId] !== true) {
         const resumedThread = await resumeThread(threadId)
-        setThreadModelId(threadId, resumedThread.model)
+        setResumedThreadModelIdForActiveProvider(threadId, resumedThread.model)
       }
-      const modelId = readModelIdForThread(threadId)
+      const modelId = selectedModelOverride?.trim() || selectedModelId.value.trim() || readModelIdForActiveThreadSelection(threadId)
 
       let startedTurnId = ''
       try {
@@ -5393,6 +5466,7 @@ export function useDesktopState() {
     steerQueuedMessage,
     setSelectedCollaborationMode,
     readModelIdForThread,
+    previewProviderModelSelection,
     setSelectedModelIdForThread,
     setSelectedModelId,
 

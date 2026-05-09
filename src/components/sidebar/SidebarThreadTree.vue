@@ -735,15 +735,12 @@
                 step="1"
                 @input="syncAutomationRruleFromScheduleDraft"
               />
-              <select
-                v-model="automationScheduleDraft.intervalUnit"
+              <ComposerDropdown
                 class="automation-schedule-unit"
-                @change="syncAutomationRruleFromScheduleDraft"
-              >
-                <option value="minutes">minutes</option>
-                <option value="hours">hours</option>
-                <option value="days">days</option>
-              </select>
+                :model-value="automationScheduleDraft.intervalUnit"
+                :options="automationIntervalUnitOptions"
+                @update:model-value="onAutomationIntervalUnitChange"
+              />
             </div>
 
             <input
@@ -759,10 +756,12 @@
 
           <label class="automation-thread-field">
             <span class="automation-thread-label">Status</span>
-            <select v-model="automationDraft.status" class="automation-thread-select">
-              <option value="ACTIVE">{{ t('Active') }}</option>
-              <option value="PAUSED">{{ t('Paused') }}</option>
-            </select>
+            <ComposerDropdown
+              class="automation-thread-select"
+              :model-value="automationDraft.status"
+              :options="automationStatusOptions"
+              @update:model-value="automationDraft.status = $event as UiThreadAutomationStatus"
+            />
           </label>
 
           <p v-if="automationDialogError" class="rename-thread-subtitle automation-thread-error">{{ automationDialogError }}</p>
@@ -823,6 +822,7 @@ import IconTablerTrash from '../icons/IconTablerTrash.vue'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getPathLeafName, getPathParent, isProjectlessChatPath } from '../../pathUtils.js'
 import SidebarMenuRow from './SidebarMenuRow.vue'
+import ComposerDropdown from '../content/ComposerDropdown.vue'
 
 const props = defineProps<{
   groups: UiProjectGroup[]
@@ -951,6 +951,15 @@ const automationScheduleDraft = ref<AutomationScheduleDraft>({
   interval: 1,
   intervalUnit: 'hours',
 })
+const automationIntervalUnitOptions: Array<{ value: AutomationIntervalUnit; label: string }> = [
+  { value: 'minutes', label: 'minutes' },
+  { value: 'hours', label: 'hours' },
+  { value: 'days', label: 'days' },
+]
+const automationStatusOptions = computed<Array<{ value: UiThreadAutomationStatus; label: string }>>(() => [
+  { value: 'ACTIVE', label: t('Active') },
+  { value: 'PAUSED', label: t('Paused') },
+])
 const automationDialogAutomations = computed(() => {
   const threadId = automationDialogThreadId.value
   return threadId ? (automationByThreadId.value[threadId] ?? []) : []
@@ -1461,6 +1470,12 @@ function syncAutomationRruleFromScheduleDraft(): void {
 
 function syncAutomationScheduleDraftFromRrule(): void {
   automationScheduleDraft.value = createScheduleDraftFromRrule(automationDraft.value.rrule)
+}
+
+function onAutomationIntervalUnitChange(value: string): void {
+  if (value !== 'minutes' && value !== 'hours' && value !== 'days') return
+  automationScheduleDraft.value.intervalUnit = value
+  syncAutomationRruleFromScheduleDraft()
 }
 
 function setAutomationScheduleMode(mode: AutomationScheduleMode): void {
@@ -3006,9 +3021,16 @@ onBeforeUnmount(() => {
   @apply text-xs font-medium uppercase tracking-wide text-zinc-500;
 }
 
-.automation-thread-textarea,
-.automation-thread-select {
+.automation-thread-textarea {
   @apply w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500;
+}
+
+.automation-thread-select {
+  @apply w-full;
+}
+
+.automation-thread-select :deep(.composer-dropdown-trigger) {
+  @apply rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-500;
 }
 
 .automation-schedule-mode-group {
@@ -3032,9 +3054,12 @@ onBeforeUnmount(() => {
 }
 
 .automation-schedule-time,
-.automation-schedule-number,
-.automation-schedule-unit {
+.automation-schedule-number {
   @apply rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500;
+}
+
+.automation-schedule-unit :deep(.composer-dropdown-trigger) {
+  @apply rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 focus:border-zinc-500;
 }
 
 .automation-schedule-number {

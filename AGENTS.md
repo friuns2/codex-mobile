@@ -158,6 +158,12 @@
 - For shared route surfaces and large feature UIs, prefer putting the decisive dark-theme overrides in the global theme stylesheet (`src/style.css`) instead of relying only on component-scoped `:global(:root.dark)` blocks.
 - Scoped dark overrides are fine for truly local elements, but if a full route still looks like light theme in dark mode, add or strengthen the global selectors for that surface.
 
+## UI Interaction Component Rule
+
+- Never add a normal HTML `<select>` for app UI. Use `ComposerDropdown` by default, or another existing app dropdown component when it is already the established pattern for that surface.
+- Never use browser-native `prompt()` for app UI. Use an existing modal, inline editor, drawer, or app-styled form flow instead.
+- When replacing legacy `<select>` or `prompt()` usage, preserve the existing behavior and state wiring while moving the interaction into the app component system.
+
 ## NPX Testing Rule
 
 - For any `npx` package behavior test, **publish first**, then test the published `@latest` package.

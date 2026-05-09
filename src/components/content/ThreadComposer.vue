@@ -454,6 +454,7 @@ export type SubmitPayload = {
   imageUrls: string[]
   fileAttachments: FileAttachment[]
   skills: Array<{ name: string; path: string }>
+  selectedModel: string
   mode: 'steer' | 'queue'
 }
 
@@ -936,6 +937,7 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
     imageUrls: selectedImages.value.map((image) => image.url),
     fileAttachments: [...fileAttachments.value],
     skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
+    selectedModel: props.selectedModel,
     mode,
   })
   clearPersistedDraftForThread(props.activeThreadId)

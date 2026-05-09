@@ -15,12 +15,14 @@ const spaEntryFile = join(distDir, 'index.html')
 
 export type ServerOptions = {
   password?: string
+  deferBridgeBackgroundServices?: boolean
 }
 
 export type ServerInstance = {
   app: Express
   dispose: () => void
   attachWebSocket: (server: HttpServer) => void
+  startBridgeBackgroundServices: () => void
 }
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
@@ -74,7 +76,9 @@ function readWildcardPathParam(value: unknown): string {
 
 export function createServer(options: ServerOptions = {}): ServerInstance {
   const app = express()
-  const bridge = createCodexBridgeMiddleware()
+  const bridge = createCodexBridgeMiddleware({
+    startBackgroundServices: options.deferBridgeBackgroundServices !== true,
+  })
   const authSession = options.password ? createAuthSession(options.password) : null
 
   // 1. Auth middleware (if password is set)
@@ -252,6 +256,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
   return {
     app,
     dispose: () => bridge.dispose(),
+    startBridgeBackgroundServices: () => bridge.startBackgroundServices(),
     attachWebSocket: (server: HttpServer) => {
       const wss = new WebSocketServer({ noServer: true })
 

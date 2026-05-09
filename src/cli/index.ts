@@ -533,10 +533,15 @@ async function startServer(options: {
   const generatedPasswordPath = password && passwordResolution.generated
     ? await persistGeneratedPassword(password)
     : null
-  const { app, dispose, attachWebSocket } = createApp({ password })
+  const { app, dispose, attachWebSocket, startBridgeBackgroundServices } = createApp({
+    password,
+    deferBridgeBackgroundServices: true,
+  })
   const server = createServer(app)
   attachWebSocket(server)
   const port = await listenWithFallback(server, requestedPort)
+  process.env.CODEXUI_SERVER_PORT = String(port)
+  startBridgeBackgroundServices()
   let tunnelChild: ReturnType<typeof spawn> | null = null
   let tunnelUrl: string | null = null
 

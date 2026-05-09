@@ -271,6 +271,176 @@ This file tracks manual regression and feature verification steps.
 
 ---
 
+### Provider status hydrates active model after provider switches
+
+#### Feature/Change Name
+Free-mode provider status seeds the provider-scoped composer model so switching from OpenRouter to OpenCode Zen does not leave the model dropdown on the `Model` placeholder.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 5174` or equivalent)
+2. At least one existing thread available for OpenRouter testing
+3. At least two existing threads available for OpenCode Zen testing
+4. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, open an existing thread and set Provider to OpenRouter.
+2. Wait for the composer model dropdown to show `openrouter/free`.
+3. Send a unique test message and confirm the `/codex-api/rpc` `turn/start` payload uses `model: "openrouter/free"`.
+4. Open a different existing thread and set Provider to OpenCode Zen.
+5. Wait for the composer model dropdown to show `big-pickle`.
+6. Send a unique test message and confirm the `turn/start` payload uses `model: "big-pickle"`.
+7. Open another existing thread while Provider remains OpenCode Zen.
+8. Confirm the composer model dropdown still shows `big-pickle`, then send a unique test message and confirm the payload uses `model: "big-pickle"`.
+9. Switch to dark theme and repeat steps 1-8.
+
+#### Expected Results
+- Switching from OpenRouter to OpenCode Zen never leaves the composer model dropdown on the `Model` placeholder after provider status loads.
+- Existing per-thread/provider model selections are not overwritten by the provider's new-thread default when switching providers.
+- A stalled or failing `/codex-api/free-mode/status` request is bounded and falls back without blocking startup/model refresh indefinitely.
+- OpenRouter sends `openrouter/free` for the tested thread.
+- OpenCode Zen sends `big-pickle` for both tested threads.
+- The model dropdown remains readable and usable in light and dark themes.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred default after testing.
+- Archive or delete test messages if they were only created for this validation.
+
+---
+
+### Provider model list loads on normal refresh
+
+#### Feature/Change Name
+The composer model dropdown loads provider-specific models during normal background refresh, not only after explicit provider switches.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Provider set to `OpenCode Zen`
+3. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, open an existing thread while `OpenCode Zen` is selected.
+2. Refresh the browser tab and wait for the model control to finish loading.
+3. Confirm the selected model is `big-pickle`.
+4. Open the model dropdown.
+5. Confirm Zen models such as `big-pickle`, `minimax-m2.5-free`, and other `*-free` entries can be found in the dropdown search.
+6. Confirm paid GPT-labelled Zen models are not shown in the built-in OpenCode Zen dropdown.
+7. Switch to dark theme and repeat steps 1-6.
+
+#### Expected Results
+- Normal page load fetches provider models for the active provider.
+- The dropdown is not limited to stale Codex RPC model results plus `big-pickle`.
+- The built-in OpenCode Zen provider shows only no-key-compatible/default models, even if a key is saved locally.
+- Startup uses enabled free-mode provider/model status instead of stale Codex `config/read` model values.
+- Model dropdown remains usable in light and dark themes.
+
+#### Rollback/Cleanup
+- Switch Provider/model settings back to preferred defaults if needed.
+
+---
+
+### Provider switching preserves selected thread
+
+#### Feature/Change Name
+Switching the API provider from an existing thread keeps the user on that thread and updates the thread's provider-scoped model.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. An existing TestChat thread is open
+3. Codex and OpenCode Zen providers are available
+4. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, open an existing TestChat thread and note the `/thread/<id>` URL.
+2. Open Settings and switch Provider to `OpenCode Zen`.
+3. Confirm the URL remains on the same `/thread/<id>` route while the provider refresh is in progress.
+4. Confirm the composer controls are disabled during the refresh and do not expose the previous provider's model list.
+5. Confirm the composer model changes to `big-pickle`.
+6. Send a short message and confirm the response appears in the same thread.
+7. Switch Provider back to `Codex`.
+8. Confirm the URL still remains on the same `/thread/<id>` route.
+9. Confirm the composer immediately previews a Codex model instead of keeping `big-pickle`, then sending still works after refresh.
+10. Switch to dark theme and repeat steps 1-9.
+
+#### Expected Results
+- Provider switching does not navigate to the home/new-thread composer.
+- Direct `/thread/<id>` routes remain open even when the thread is temporarily absent from the current provider-filtered sidebar.
+- The app resumes the selected thread against the newly selected provider before starting the next turn.
+- Messages sent after provider switching stay in the selected thread.
+- The composer model remains provider scoped for the selected thread.
+- The composer does not keep a stale model label or stale model menu visible while provider switching is still loading.
+
+#### Rollback/Cleanup
+- Switch Provider/model settings back to preferred defaults if needed.
+
+---
+
+### Qodo review fixes: automation dropdown dark theme and bridge startup ordering
+
+#### Feature/Change Name
+Automation ComposerDropdown controls use dark-theme overrides, and Codex bridge background services start only after the resolved web server port is recorded.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Light theme and dark theme both available from the appearance switcher
+3. OpenCode Zen provider selected when validating server startup behavior
+
+#### Steps
+1. In light theme, open an automation creation/editing surface that shows schedule/status dropdowns.
+2. Confirm automation dropdown triggers match the surrounding light automation form styling.
+3. Switch to dark theme.
+4. Reopen the same automation surface and confirm dropdown triggers use dark backgrounds, dark borders, and readable text.
+5. Start the CLI server on an available port with OpenCode Zen free mode enabled.
+6. Confirm `/codex-api/free-mode/status` reports `provider: opencode-zen`.
+7. Trigger a background skills refresh or open Skills and confirm the app-server still uses the local proxy port instead of falling back to direct Zen `chat` wiring.
+
+#### Expected Results
+- Automation dropdown triggers are not light boxes inside dark theme.
+- Bridge background startup cannot spawn app-server before `CODEXUI_SERVER_PORT` is set.
+- Zen/custom proxy config receives the resolved web server port before startup-triggered app-server RPC calls.
+
+#### Rollback/Cleanup
+- Switch theme/provider settings back to preferred defaults if changed.
+
+---
+
+### Existing thread models are provider scoped
+
+#### Feature/Change Name
+Model selection is saved per existing thread and per active provider, so switching providers does not leak the previous provider's selected model into that thread.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. At least one existing thread is selected
+3. Codex and OpenCode Zen providers are available
+4. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, select an existing thread.
+2. With Provider set to `Codex`, select a Codex model such as `GPT-5.5`.
+3. Open Settings and switch Provider to `OpenCode Zen`.
+4. Confirm the same thread's model dropdown does not reuse the previous Codex model.
+5. Select a Zen model such as `big-pickle`.
+6. Switch Provider back to `Codex`.
+7. Confirm the same thread's model dropdown restores the Codex model instead of keeping the Zen model.
+8. Switch Provider to `OpenRouter`.
+9. Select a Zen-created thread and confirm the composer model remains an OpenRouter model such as `openrouter/free`, not `big-pickle`.
+10. Switch to dark theme and repeat steps 1-9.
+
+#### Expected Results
+- Existing thread model selections are keyed by thread and provider.
+- Existing threads without a saved model for the active provider do not use a legacy thread/default localStorage fallback.
+- Existing threads without a saved model for the active provider show the active provider's current/default model in the composer.
+- Loading a thread whose persisted backend model belongs to another provider does not save that model under the active provider.
+- Provider-scoped model ids are accepted as-is for the active provider.
+- The Codex provider model dropdown shows only Codex models and does not include stale provider models such as `big-pickle`.
+- New-thread provider-scoped model behavior remains unchanged.
+- Model dropdown labels and menus remain readable in light and dark themes.
+
+#### Rollback/Cleanup
+- Switch Provider/model settings back to the preferred defaults.
+
+---
+
 ### Startup avoids duplicate setup probes
 
 #### Feature/Change Name
@@ -2927,20 +3097,25 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 1. Open Settings panel from the sidebar.
 2. Verify the settings panel is scrollable when content overflows.
 3. Verify the Accounts section does NOT have its own scrollbar — it flows naturally within the settings panel scroll.
-4. Locate the **Provider** dropdown (default: "Codex").
+4. Locate the **Provider** dropdown (default: "Codex") and confirm it uses the same ComposerDropdown trigger/menu styling as other app dropdowns.
 5. Change provider to **OpenRouter**.
 6. Verify a "Get API key" link appears next to the OpenRouter API key label, pointing to `https://openrouter.ai/keys`.
 7. Verify the API key input field is shown with placeholder `sk-or-v1-... (optional, uses free keys if empty)`.
 8. Optionally enter an OpenRouter API key and click Set.
-9. Change provider to **Custom endpoint**.
-10. Verify URL and API key input fields appear.
-11. Enter a valid endpoint URL and click Save.
-12. Change provider back to **Codex**.
-13. Verify the config is reset and no provider-specific fields are shown.
+9. Change provider to **OpenCode Zen**.
+10. Verify the OpenCode Zen API key row appears and the provider menu can still be reopened.
+11. Change provider to **Custom endpoint**.
+12. Verify URL and API key input fields appear.
+13. Enter a valid endpoint URL and click Save.
+14. Switch between light theme and dark theme, then reopen the Provider dropdown in each theme.
+15. Change provider back to **Codex**.
+16. Verify the config is reset and no provider-specific fields are shown.
 
 #### Expected Results
-- Provider dropdown shows three options: Codex, OpenRouter, Custom endpoint.
+- Provider dropdown shows four options: Codex, OpenRouter, OpenCode Zen, Custom endpoint.
+- Provider dropdown uses the shared ComposerDropdown menu, aligns inside the settings panel, and remains readable in light and dark themes.
 - Selecting OpenRouter enables free mode with community keys (or custom key if provided).
+- Selecting OpenCode Zen enables the built-in Zen provider with Chat Completions defaults.
 - Selecting Custom endpoint allows setting a custom API base URL and bearer token.
 - Selecting Codex disables external provider mode and uses the default Codex backend.
 - Settings panel scrolls as a whole; accounts section has no independent scrollbar.
@@ -3157,6 +3332,12 @@ When switching providers, the model dropdown should only show models from the ne
 - Model list shows only Codex models (e.g., `gpt-5.2-codex`, `gpt-5.2`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini`)
 - No OpenRouter models (e.g., `openrouter/free`) appear in the list
 - Selected model auto-switches to the first Codex model
+- If the backend reports the Codex provider as `openai`, the composer still uses the `Codex` provider selection and shows a real Codex model, not the `Model` placeholder
+- Existing threads without a provider-thread model still show the active provider's saved/default model in the composer rather than the `Model` placeholder
+- If `thread/resume` reports a model that is present in the active provider's model list, that thread shows and sends with the resumed model instead of the provider default
+- On direct `/thread/:id` startup, model preferences are loaded before thread resume so the resumed model is validated against the active provider list and is not dropped
+- If `thread/resume` reports a model outside the active provider's model list, the composer keeps the active provider default and does not save the invalid model for that provider
+- Sending from an existing Codex-started thread while the composer shows OpenRouter sends the visible OpenRouter model in `turn/start`, not the resumed Codex model
 - Switching back to OpenRouter shows only OpenRouter models again
 
 #### Rollback/Cleanup
@@ -4857,6 +5038,121 @@ Managed worktree threads remain visible under their matching canonical workspace
 
 #### Rollback/Cleanup
 - None.
+
+---
+
+### App dropdowns use ComposerDropdown
+
+#### Feature/Change Name
+Remaining app-native select controls were moved to `ComposerDropdown`, including UI language, pending request choices, review base branch, and thread automation schedule/status selectors.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Light theme and dark theme both available from the appearance switcher
+3. At least one Git-backed project is available for the review base-branch control
+
+#### Steps
+1. In light theme, open Settings and open the `UI language` dropdown.
+2. Confirm the dropdown uses app menu styling and switching between `English` and `简体中文` updates the UI language.
+3. Open a pending request or elicitation panel with a choice field and confirm the choice control opens as an app dropdown.
+4. Open Review for a Git-backed thread, switch comparison to `Base branch`, and confirm the branch picker opens as an app dropdown.
+5. Open a thread automation dialog, set schedule mode to `Interval`, open the interval unit dropdown, then open the status dropdown.
+6. Switch to dark theme and repeat steps 1, 4, and 5.
+
+#### Expected Results
+- No normal browser `<select>` controls are visible for these surfaces.
+- The dropdowns preserve their previous values and state updates.
+- Dropdown triggers and menus remain readable in light and dark themes.
+- Review, pending request, and automation controls still submit the selected values correctly.
+
+#### Rollback/Cleanup
+- Switch UI language and provider settings back to the preferred defaults after testing.
+
+---
+
+### Android Zen app-server uses local proxy
+
+#### Feature/Change Name
+The CLI records the selected web server port before the Codex app-server bridge starts, so OpenCode Zen is configured through the local Responses proxy instead of direct unsupported `wire_api="chat"` config on newer Codex CLI builds.
+
+#### Prerequisites/Setup
+1. Android/proot environment has Codex CLI `0.129.0` or newer.
+2. Published Android package is installed or runnable with `npx codexui-android@latest`.
+3. Free mode state is set to OpenCode Zen with model `big-pickle`.
+
+#### Steps
+1. Start Android package on a fixed port, for example `npx --yes codexui-android@latest --port 18923 --no-password --no-tunnel`.
+2. Request `GET /codex-api/free-mode/status` and confirm provider is `opencode-zen`.
+3. Request `GET /codex-api/provider-models` and confirm `big-pickle` appears.
+4. Request `POST /codex-api/rpc` with body `{"method":"model/list","params":{}}`.
+5. Request `POST /codex-api/rpc` with body `{"method":"config/read","params":{}}`.
+6. Send `hi` through `/codex-api/zen-proxy/v1/responses` using model `big-pickle`.
+
+#### Expected Results
+- Android startup does not configure Codex app-server with direct `wire_api="chat"`.
+- `model/list` and `config/read` do not return `codex app-server exited unexpectedly`.
+- Zen proxy request returns HTTP 200 with assistant output.
+- Model dropdown can load because both the Codex RPC model list and provider model list are available.
+
+#### Rollback/Cleanup
+- Stop the Android `codexui-android` process for the fixed test port.
+
+---
+
+### Provider switch selects provider default model
+
+#### Feature/Change Name
+Changing the Provider dropdown refreshes the model list and selects the provider configured model before any stale provider-scoped composer model.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Settings panel is available
+3. OpenCode Zen provider can fetch models
+
+#### Steps
+1. In light theme, set Provider to `Codex` and select `GPT-5.5` in the composer model dropdown.
+2. Open Settings and switch Provider to `OpenCode Zen`.
+3. Wait for settings/provider refresh to finish.
+4. Confirm the Start new thread composer model dropdown changes away from `GPT-5.5` to the configured Zen model, normally `big-pickle`.
+5. Open the model dropdown and confirm Zen provider models are shown.
+6. Switch to dark theme and repeat steps 1-5.
+
+#### Expected Results
+- Provider switch does not keep the stale Codex `GPT-5.5` selection in the Start new thread composer.
+- OpenCode Zen selects the configured/default model first.
+- The composer model dropdown remains readable and usable in light and dark themes.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred default after testing.
+
+---
+
+### Custom provider keeps gpt-prefixed model selections
+
+#### Feature/Change Name
+Custom endpoints can use provider-scoped `gpt-*` model IDs without being treated as stale Codex built-in selections.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A custom endpoint is configured whose `/models` response includes a `gpt-*` model ID
+3. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, open Settings and set Provider to `Custom endpoint`.
+2. Configure the custom endpoint URL/API key and confirm the composer model dropdown includes the custom `gpt-*` model.
+3. Select that custom `gpt-*` model on an existing thread.
+4. Switch to another thread, then return to the original thread.
+5. Confirm the original thread still shows the selected custom `gpt-*` model.
+6. Switch to dark theme and repeat steps 2-5.
+
+#### Expected Results
+- Provider-scoped custom endpoint thread model selections are preserved even when the model ID starts with `gpt-`.
+- Legacy non-provider-scoped model selections are not read for any provider.
+- The model dropdown remains readable and usable in light and dark themes.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred default after testing.
+- Clear custom endpoint credentials if they were only used for this test.
 
 ---
 
