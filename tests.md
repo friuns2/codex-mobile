@@ -4832,3 +4832,39 @@ The sidebar Chats section lists all projectless chats and no longer shows the pe
 
 #### Rollback/Cleanup
 - None.
+
+---
+
+### Browser notifications for completed and pending thread turns
+
+#### Feature/Change Name
+Browser notifications can be enabled for background thread completion and pending chat approvals or responses.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Browser notification permission is not blocked for the dev server origin
+3. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. In light theme, open the sidebar settings menu.
+2. Click `Browser notifications` and grant the browser permission prompt.
+3. Confirm the row shows `On`.
+4. Start or open a thread, send a prompt that completes after a short delay, then switch to another thread or hide the browser tab before completion.
+5. Confirm a browser notification appears with `Codex task complete` and the thread title or preview.
+6. Start a turn that asks for approval or user input, then switch to another thread or hide the browser tab.
+7. Confirm a browser notification appears with either `Codex needs approval` or `Codex needs a response`.
+8. Click the notification and confirm the app focuses and selects the relevant thread.
+9. Return to settings, click `Browser notifications` again, and confirm notifications turn off.
+10. Switch to dark theme and repeat steps 1-3, confirming the setting row and status remain readable.
+
+#### Expected Results
+- Notifications are opt-in and persisted after permission is granted.
+- Completed background turns show a `Codex task complete` notification.
+- Pending approval and response requests show a user-action notification.
+- Notifications are suppressed for the currently visible selected thread.
+- Clicking a notification focuses the app and selects the related thread.
+- The settings control is readable in light theme and dark theme.
+
+#### Rollback/Cleanup
+- Turn off `Browser notifications` in sidebar settings.
+- If needed, reset browser notification permission for the dev server origin in browser site settings.

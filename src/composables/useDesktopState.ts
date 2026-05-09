@@ -92,7 +92,11 @@ const RECENT_THREAD_MESSAGE_LOAD_REUSE_MS = 2000
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
+const BROWSER_NOTIFICATIONS_STORAGE_KEY = 'codex-web-local.browser-notifications-enabled.v1'
 export type ProjectSortMode = 'recent' | 'manual'
+
+type BrowserNotificationPermission = NotificationPermission | 'unsupported'
+const THREAD_NOTIFICATION_CLICK_EVENT = 'codex-thread-notification-click'
 
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -128,6 +132,25 @@ function loadUnreadCutoffIso(): string {
 function saveUnreadCutoffIso(cutoffIso: string): void {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(UNREAD_CUTOFF_STORAGE_KEY, cutoffIso)
+}
+
+function hasBrowserNotificationSupport(): boolean {
+  return typeof window !== 'undefined' && 'Notification' in window
+}
+
+function readBrowserNotificationPermission(): BrowserNotificationPermission {
+  if (!hasBrowserNotificationSupport()) return 'unsupported'
+  return window.Notification.permission
+}
+
+function loadBrowserNotificationsEnabled(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.localStorage.getItem(BROWSER_NOTIFICATIONS_STORAGE_KEY) === 'true'
+}
+
+function saveBrowserNotificationsEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(BROWSER_NOTIFICATIONS_STORAGE_KEY, enabled ? 'true' : 'false')
 }
 
 function isThreadUpdatedAfterCutoff(updatedAtIso: string, cutoffIso: string): boolean {
@@ -1505,6 +1528,8 @@ export function useDesktopState() {
   const codexRateLimit = ref<UiRateLimitSnapshot | null>(null)
   const threadTokenUsageByThreadId = ref<Record<string, UiThreadTokenUsage>>(loadThreadTokenUsageMap())
   const terminalOpenByThreadId = ref<Record<string, boolean>>(loadThreadTerminalOpenMap())
+  const browserNotificationsEnabled = ref(loadBrowserNotificationsEnabled())
+  const browserNotificationPermission = ref<BrowserNotificationPermission>(readBrowserNotificationPermission())
 
   const threadTitleById = ref<Record<string, string>>({})
 
@@ -2081,6 +2106,65 @@ export function useDesktopState() {
       return 'approval'
     }
     return requests.length > 0 ? 'response' : null
+  }
+
+  function findThreadById(threadId: string): UiThread | null {
+    return flattenThreads(projectGroups.value).find((thread) => thread.id === threadId) ??
+      flattenThreads(sourceGroups.value).find((thread) => thread.id === threadId) ??
+      null
+  }
+
+  function threadNotificationTitle(threadId: string): string {
+    const thread = findThreadById(threadId)
+    return threadTitleById.value[threadId] || thread?.title || thread?.preview || 'Codex thread'
+  }
+
+  function shouldSkipThreadBrowserNotification(threadId: string): boolean {
+    if (!threadId || threadId === GLOBAL_SERVER_REQUEST_SCOPE) return false
+    return selectedThreadId.value === threadId && typeof document !== 'undefined' && document.visibilityState === 'visible'
+  }
+
+  function showBrowserNotification(title: string, options: NotificationOptions & { threadId?: string } = {}): void {
+    browserNotificationPermission.value = readBrowserNotificationPermission()
+    if (!browserNotificationsEnabled.value || browserNotificationPermission.value !== 'granted') return
+    if (!hasBrowserNotificationSupport()) return
+
+    const { threadId, ...notificationOptions } = options
+    try {
+      const notification = new window.Notification(title, {
+        icon: '/icons/pwa-192x192.png',
+        ...notificationOptions,
+      })
+      notification.onclick = () => {
+        window.focus()
+        if (threadId && threadId !== GLOBAL_SERVER_REQUEST_SCOPE) {
+          window.dispatchEvent(new CustomEvent(THREAD_NOTIFICATION_CLICK_EVENT, { detail: { threadId } }))
+        }
+        notification.close()
+      }
+    } catch {
+      // Browser notification construction can still fail after permission checks.
+    }
+  }
+
+  function notifyPendingServerRequest(request: UiServerRequest): void {
+    if (shouldSkipThreadBrowserNotification(request.threadId)) return
+    const isApproval = isApprovalRequestMethod(request.method)
+    const title = isApproval ? 'Codex needs approval' : 'Codex needs a response'
+    showBrowserNotification(title, {
+      body: threadNotificationTitle(request.threadId),
+      tag: `codex-pending-${request.threadId || GLOBAL_SERVER_REQUEST_SCOPE}-${isApproval ? 'approval' : 'response'}`,
+      threadId: request.threadId,
+    })
+  }
+
+  function notifyTurnCompleted(turn: TurnCompletedInfo): void {
+    if (shouldSkipThreadBrowserNotification(turn.threadId)) return
+    showBrowserNotification('Codex task complete', {
+      body: threadNotificationTitle(turn.threadId),
+      tag: `codex-complete-${turn.threadId}`,
+      threadId: turn.threadId,
+    })
   }
 
   function applyThreadFlags(): void {
@@ -3061,6 +3145,7 @@ export function useDesktopState() {
       const request = normalizeServerRequest(notification.params)
       if (!request) return true
       upsertPendingServerRequest(request)
+      notifyPendingServerRequest(request)
       return true
     }
 
@@ -3733,6 +3818,7 @@ export function useDesktopState() {
       if (!shouldRetryWithFallback) {
         clearPendingTurnRequest(completedTurn.threadId)
         scheduleQueueStateRefresh(completedTurn.threadId)
+        notifyTurnCompleted(completedTurn)
       }
     }
 
@@ -5499,6 +5585,38 @@ export function useDesktopState() {
     threadTokenUsageByThreadId.value = {}
   }
 
+  async function setBrowserNotificationsEnabled(enabled: boolean): Promise<void> {
+    if (!enabled) {
+      browserNotificationsEnabled.value = false
+      saveBrowserNotificationsEnabled(false)
+      browserNotificationPermission.value = readBrowserNotificationPermission()
+      return
+    }
+
+    browserNotificationPermission.value = readBrowserNotificationPermission()
+    if (browserNotificationPermission.value === 'unsupported' || browserNotificationPermission.value === 'denied') {
+      browserNotificationsEnabled.value = false
+      saveBrowserNotificationsEnabled(false)
+      return
+    }
+
+    if (browserNotificationPermission.value !== 'granted') {
+      browserNotificationPermission.value = await window.Notification.requestPermission()
+    }
+
+    const canEnable = browserNotificationPermission.value === 'granted'
+    browserNotificationsEnabled.value = canEnable
+    saveBrowserNotificationsEnabled(canEnable)
+  }
+
+  function refreshBrowserNotificationPermission(): void {
+    browserNotificationPermission.value = readBrowserNotificationPermission()
+    if (browserNotificationPermission.value !== 'granted' && browserNotificationsEnabled.value) {
+      browserNotificationsEnabled.value = false
+      saveBrowserNotificationsEnabled(false)
+    }
+  }
+
   const selectedThreadQueuedMessages = computed<QueuedMessage[]>(() => {
     const threadId = selectedThreadId.value
     if (!threadId) return []
@@ -5572,6 +5690,8 @@ export function useDesktopState() {
     selectedModelId,
     selectedReasoningEffort,
     selectedSpeedMode,
+    browserNotificationsEnabled,
+    browserNotificationPermission,
     installedSkills,
     accountRateLimitSnapshots,
     messages,
@@ -5610,6 +5730,8 @@ export function useDesktopState() {
 
     setSelectedReasoningEffort,
     updateSelectedSpeedMode,
+    setBrowserNotificationsEnabled,
+    refreshBrowserNotificationPermission,
     respondToPendingServerRequest,
     renameProject,
     removeProject,

@@ -398,6 +398,23 @@
                   @update:model-value="onDictationLanguageChange"
                 />
               </div>
+              <button
+                class="sidebar-settings-row"
+                type="button"
+                :disabled="browserNotificationPermission === 'unsupported' || browserNotificationPermission === 'denied'"
+                :title="browserNotificationHelpText"
+                @click="onToggleBrowserNotifications"
+              >
+                <span class="sidebar-settings-label">{{ t('Browser notifications') }}</span>
+                <span class="sidebar-settings-notification-control">
+                  <span v-if="browserNotificationStatusText" class="sidebar-settings-value">{{ browserNotificationStatusText }}</span>
+                  <span
+                    class="sidebar-settings-toggle"
+                    :class="{ 'is-on': browserNotificationsEnabled }"
+                    aria-hidden="true"
+                  />
+                </span>
+              </button>
               <button class="sidebar-settings-row" type="button" aria-live="polite" @click="isTelegramConfigOpen = !isTelegramConfigOpen">
                 <span class="sidebar-settings-label">{{ t('Telegram') }}</span>
                 <span class="sidebar-settings-value">{{ telegramStatusText }}</span>
@@ -1199,6 +1216,8 @@ const {
   selectedModelId,
   selectedReasoningEffort,
   selectedSpeedMode,
+  browserNotificationsEnabled,
+  browserNotificationPermission,
   installedSkills,
   accountRateLimitSnapshots,
   messages,
@@ -1231,6 +1250,8 @@ const {
 
   setSelectedReasoningEffort,
   updateSelectedSpeedMode,
+  setBrowserNotificationsEnabled,
+  refreshBrowserNotificationPermission,
   respondToPendingServerRequest,
   renameProject,
   removeProject,
@@ -1334,6 +1355,7 @@ const DICTATION_LANGUAGE_KEY = 'codex-web-local.dictation-language.v1'
 
 const CHAT_WIDTH_KEY = 'codex-web-local.chat-width.v1'
 const MOBILE_RESUME_RELOAD_MIN_HIDDEN_MS = 400
+const THREAD_NOTIFICATION_CLICK_EVENT = 'codex-thread-notification-click'
 const sendWithEnter = ref(loadBoolPref(SEND_WITH_ENTER_KEY, true))
 const inProgressSendMode = ref<'steer' | 'queue'>(loadInProgressSendModePref())
 const darkMode = ref<'system' | 'light' | 'dark'>(loadDarkModePref())
@@ -1768,10 +1790,25 @@ const telegramStatusText = computed(() => {
   const error = telegramStatus.value.lastError ? `, ${t('error')}: ${telegramStatus.value.lastError}` : ''
   return `${base}, ${mapped}${error}`
 })
+const browserNotificationStatusText = computed(() => {
+  if (browserNotificationPermission.value === 'unsupported') return t('Unsupported')
+  if (browserNotificationPermission.value === 'denied') return t('Blocked')
+  if (browserNotificationsEnabled.value) return t('On')
+  return ''
+})
+const browserNotificationHelpText = computed(() => {
+  if (browserNotificationPermission.value === 'unsupported') return t('This browser does not support notifications.')
+  if (browserNotificationPermission.value === 'denied') return t('Notifications are blocked in browser settings.')
+  return browserNotificationsEnabled.value
+    ? t('Notify when background thread tasks finish or need action.')
+    : t('Enable notifications for completed tasks and pending chat actions.')
+})
 
 onMounted(() => {
+  refreshBrowserNotificationPermission()
   document.addEventListener('pointerdown', onDocumentPointerDown)
   window.addEventListener('keydown', onWindowKeyDown)
+  window.addEventListener(THREAD_NOTIFICATION_CLICK_EVENT, onThreadNotificationClick)
   document.addEventListener('visibilitychange', onDocumentVisibilityChange)
   window.addEventListener('pageshow', onWindowPageShow)
   window.addEventListener('focus', onWindowFocus)
@@ -1796,6 +1833,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown)
   window.removeEventListener('keydown', onWindowKeyDown)
+  window.removeEventListener(THREAD_NOTIFICATION_CLICK_EVENT, onThreadNotificationClick)
   document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   window.removeEventListener('pageshow', onWindowPageShow)
   window.removeEventListener('focus', onWindowFocus)
@@ -2760,6 +2798,7 @@ function onSettingsAreaClick(event: MouseEvent): void {
 
 function onDocumentVisibilityChange(): void {
   if (typeof document === 'undefined') return
+  refreshBrowserNotificationPermission()
   if (!isMobile.value) return
 
   if (document.visibilityState === 'hidden') {
@@ -2777,6 +2816,7 @@ function onWindowPageShow(event: PageTransitionEvent): void {
 }
 
 function onWindowFocus(): void {
+  refreshBrowserNotificationPermission()
   if (route.name === 'home') {
     void loadWorkspaceRootOptionsState()
     void refreshDefaultProjectName()
@@ -3758,6 +3798,10 @@ function onDictationLanguageChange(nextValue: string): void {
   window.localStorage.setItem(DICTATION_LANGUAGE_KEY, value)
 }
 
+function onToggleBrowserNotifications(): void {
+  void setBrowserNotificationsEnabled(!browserNotificationsEnabled.value)
+}
+
 function loadDictationLanguagePref(): string {
   if (typeof window === 'undefined') return 'auto'
   const value = window.localStorage.getItem(DICTATION_LANGUAGE_KEY)?.trim() || 'auto'
@@ -3883,6 +3927,23 @@ async function initialize(): Promise<void> {
 function threadExistsInSidebar(threadId: string): boolean {
   if (!threadId) return false
   return projectGroups.value.some((group) => group.threads.some((thread) => thread.id === threadId))
+}
+
+function readThreadIdFromNotificationEvent(event: Event): string {
+  if (!(event instanceof CustomEvent)) return ''
+  const detail = event.detail
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return ''
+  const threadId = (detail as Record<string, unknown>).threadId
+  return typeof threadId === 'string' ? threadId.trim() : ''
+}
+
+function onThreadNotificationClick(event: Event): void {
+  const threadId = readThreadIdFromNotificationEvent(event)
+  if (!threadId) return
+  void (async () => {
+    await selectThread(threadId)
+    await router.replace({ name: 'thread', params: { threadId } })
+  })()
 }
 
 async function syncThreadSelectionWithRoute(): Promise<void> {
@@ -5046,6 +5107,13 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply text-xs text-zinc-500 bg-zinc-100 rounded px-1.5 py-0.5;
 }
 
+.sidebar-settings-notification-control {
+  @apply inline-flex items-center gap-2;
+}
+
+.sidebar-settings-row:disabled {
+  @apply cursor-not-allowed opacity-70;
+}
 
 .sidebar-settings-toggle {
   @apply relative w-9 h-5 rounded-full bg-zinc-300 transition-colors shrink-0;
