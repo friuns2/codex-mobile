@@ -768,12 +768,24 @@ async function ensurePrivateForkFromUpstream(token: string, username: string, re
     throw new Error(`Failed to check personal repo existence (${existing.status})`)
   }
 
-  await getGithubJson(
-    'https://api.github.com/user/repos',
-    token,
-    'POST',
-    { name: repoName, private: true, auto_init: false, description: 'Codex skills private mirror sync' },
-  )
+  const createRepo = await fetch('https://api.github.com/user/repos', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'codex-web-local',
+    },
+    body: JSON.stringify({ name: repoName, private: true, auto_init: false, description: 'Codex skills private mirror sync' }),
+  })
+  if (!createRepo.ok) {
+    const text = await createRepo.text()
+    if (createRepo.status === 403 && text.includes('Resource not accessible by integration')) {
+      throw new Error(`GitHub login cannot create the private ${repoName} sync repo with this token. Create an empty private repo named ${repoName} on GitHub, then retry Device Login, or use the regular GitHub login button with repo access.`)
+    }
+    throw new Error(`GitHub API POST https://api.github.com/user/repos failed (${createRepo.status}): ${text}`)
+  }
   created = true
 
   let ready = false
@@ -935,10 +947,18 @@ async function ensureSkillsWorkingTreeRepo(
   const hasLocalChangesBeforePull = await hasLocalUncommittedChanges(localDir)
   const localMtimesBeforePull = hasLocalChangesBeforePull ? await snapshotFileMtimes(localDir) : new Map<string, number>()
   let createdAutostash = false
+  let autostashRef = ''
   try {
     const stashOutput = await runCommandWithOutput('git', ['stash', 'push', '--include-untracked', '-m', 'codex-skills-autostash'], { cwd: localDir })
     createdAutostash = !stashOutput.includes('No local changes to save')
-  } catch {}
+    if (createdAutostash) {
+      autostashRef = (await runCommandWithOutput('git', ['rev-parse', 'stash@{0}'], { cwd: localDir })).trim()
+    }
+  } catch (error) {
+    if (hasLocalChangesBeforePull) {
+      throw new Error(`Refusing to reset skills repo because local changes could not be stashed first: ${getErrorMessage(error, 'git stash failed')}`)
+    }
+  }
   let pulledMtimes = new Map<string, number>()
   await runGitFetchWithRefLockRetry(localDir, ['fetch', 'origin', branch])
   await runCommand('git', ['reset', '--hard', `origin/${branch}`], { cwd: localDir })
@@ -948,6 +968,9 @@ async function ensureSkillsWorkingTreeRepo(
       await runCommand('git', ['stash', 'pop'], { cwd: localDir })
     } catch {
       await resolveStashPopConflictsByFileTime(localDir, localMtimesBeforePull, pulledMtimes)
+      if (autostashRef) {
+        await restoreMissingUntrackedFilesFromStash(localDir, autostashRef)
+      }
     }
   }
   return localDir
@@ -1071,6 +1094,22 @@ async function resolveStashPopConflictsByFileTime(
   }
 }
 
+async function restoreMissingUntrackedFilesFromStash(repoDir: string, stashRef: string): Promise<void> {
+  let untrackedFiles = ''
+  try {
+    untrackedFiles = await runCommandWithOutput('git', ['ls-tree', '-r', '--name-only', `${stashRef}^3`], { cwd: repoDir })
+  } catch {
+    return
+  }
+  for (const filePath of untrackedFiles.split(/\r?\n/).map((row) => row.trim()).filter(Boolean)) {
+    try {
+      await stat(join(repoDir, filePath))
+      continue
+    } catch {}
+    await runCommand('git', ['checkout', `${stashRef}^3`, '--', filePath], { cwd: repoDir })
+  }
+}
+
 async function snapshotFileMtimes(dir: string): Promise<Map<string, number>> {
   const mtimes = new Map<string, number>()
   await walkFileMtimes(dir, dir, mtimes)
@@ -1083,12 +1122,10 @@ async function hasLocalUncommittedChanges(repoDir: string): Promise<boolean> {
 }
 
 async function hasCommittableWorkingTreeChanges(repoDir: string): Promise<boolean> {
-  try {
-    await runCommand('git', ['diff', '--quiet', '--exit-code', '--ignore-submodules=dirty'], { cwd: repoDir })
-    await runCommand('git', ['diff', '--cached', '--quiet', '--exit-code', '--ignore-submodules=dirty'], { cwd: repoDir })
-  } catch {
-    return true
-  }
+  const unstaged = (await runCommandWithOutput('git', ['diff', '--name-only', '--ignore-submodules=dirty'], { cwd: repoDir })).trim()
+  if (unstaged.length > 0) return true
+  const staged = (await runCommandWithOutput('git', ['diff', '--cached', '--name-only', '--ignore-submodules=dirty'], { cwd: repoDir })).trim()
+  if (staged.length > 0) return true
   const untracked = (await runCommandWithOutput('git', ['ls-files', '--others', '--exclude-standard'], { cwd: repoDir })).trim()
   return untracked.length > 0
 }

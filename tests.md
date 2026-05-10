@@ -707,6 +707,98 @@ Skills Sync skips unchanged manifest writes and does not fail parent commits whe
 
 ---
 
+### Skills sync device login repo-create permission error
+
+#### Feature/Change Name
+Device Login shows an actionable message when GitHub rejects automatic private sync repo creation.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 5173`)
+2. GitHub account used for Device Login does not already have a `codexskills` repository
+3. GitHub returns `403 Resource not accessible by integration` for `POST /user/repos`
+4. Light theme and dark theme are available from the appearance switcher
+
+#### Steps
+1. In light theme, open `#/skills`.
+2. Click `Device Login`.
+3. Complete the GitHub device-code prompt.
+4. Wait for the sync panel to show the login failure.
+5. Confirm the error explains that the token cannot create the private `codexskills` repo and tells the user to create an empty private repo named `codexskills` or use regular GitHub login with repo access.
+6. Switch to dark theme and repeat steps 1 through 5.
+
+#### Expected Results
+- The raw `GitHub API POST https://api.github.com/user/repos failed (403)` payload is not shown as the primary error.
+- The user sees a clear recovery path for Device Login.
+- The error panel remains readable in light theme and dark theme.
+
+#### Rollback/Cleanup
+- Delete any test-only `codexskills` repository created during validation.
+
+---
+
+### Skills sync refuses hard reset when local checkpoint fails
+
+#### Feature/Change Name
+Skills Sync aborts before `reset --hard` if local changes cannot be stashed first.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 5173`)
+2. GitHub Skills Sync is configured and connected
+3. `/Users/igor/.codex/skills` has a local tracked or untracked test edit
+4. A stash failure can be simulated in the skills repo
+5. Light theme and dark theme are available from the appearance switcher
+
+#### Steps
+1. In light theme, open `#/skills`.
+2. Create a local test edit under `/Users/igor/.codex/skills`.
+3. Simulate `git stash push --include-untracked` failure for the skills repo.
+4. Click `Pull` or `Startup Sync`.
+5. Confirm sync fails before any hard reset and the local test edit is still present.
+6. Switch to dark theme and repeat steps 1 through 5.
+
+#### Expected Results
+- Sync reports that local changes could not be stashed.
+- Sync does not run the hard reset path after the failed stash.
+- Local test edits remain recoverable in the skills repo.
+- The error panel remains readable in light theme and dark theme.
+
+#### Rollback/Cleanup
+- Remove the local test edit and clear the simulated stash failure.
+
+---
+
+### Skills sync restores untracked files after stash-pop conflict
+
+#### Feature/Change Name
+Skills Sync restores untracked local skill files when `git stash pop` conflicts on tracked files.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 5173`)
+2. GitHub Skills Sync is configured and connected
+3. `/Users/igor/.codex/skills` has an untracked local skill folder such as `feedback-triage/SKILL.md`
+4. Remote sync has a conflicting tracked edit such as a changed `installed-skills.json`
+5. Light theme and dark theme are available from the appearance switcher
+
+#### Steps
+1. In light theme, open `#/skills`.
+2. Create an untracked local skill folder under `/Users/igor/.codex/skills`.
+3. Make remote `installed-skills.json` differ so `git stash pop` conflicts during pull/startup sync.
+4. Click `Pull` or `Startup Sync`.
+5. Confirm sync resolves the tracked conflict and restores the untracked skill file from the stash.
+6. Confirm the restored skill file is included in the later skills repo commit/push path.
+7. Switch to dark theme and repeat steps 1 through 5.
+
+#### Expected Results
+- Untracked local skill files do not remain stranded only in `refs/stash`.
+- Restored untracked skill files are present in `/Users/igor/.codex/skills` after sync.
+- The next parent repo commit can stage and push the restored skill files.
+- The sync panel remains readable in light theme and dark theme.
+
+#### Rollback/Cleanup
+- Remove any test-only skill folder and restore remote manifest test edits.
+
+---
+
 ### Header Git branch dropdown with commit reset
 
 #### Feature/Change Name
