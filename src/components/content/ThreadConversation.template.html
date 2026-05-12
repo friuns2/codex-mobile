@@ -1,0 +1,866 @@
+  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu">
+    <p v-if="isLoading" class="conversation-loading">Loading messages...</p>
+
+    <p
+      v-else-if="messages.length === 0 && pendingRequests.length === 0 && !liveOverlay"
+      class="conversation-empty"
+    >
+      No messages in this thread yet.
+    </p>
+
+    <ul v-else ref="conversationListRef" class="conversation-list" @scroll="onConversationScroll">
+      <li v-if="hasMoreAbove" class="conversation-load-more">
+        <button
+          type="button"
+          class="load-more-button"
+          :disabled="isLoadingMore || isLoadingPersistedAbove"
+          @click="loadMoreAbove"
+        >
+          {{ isLoadingMore || isLoadingPersistedAbove ? 'Loading…' : 'Load earlier messages' }}
+        </button>
+      </li>
+      <template v-for="message in visibleMessages" :key="message.id">
+      <li
+        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
+        class="conversation-item"
+        :data-role="message.role"
+        :data-message-type="message.messageType || ''"
+      >
+        <div v-if="isCommandMessage(message)" class="message-row" data-role="system">
+          <div class="message-stack" data-role="system">
+            <button
+              v-if="getGroupedCommandsForLatest(message).length > 0"
+              type="button"
+              class="cmd-row cmd-row-group cmd-compact"
+              :class="[commandStatusClass(message), { 'cmd-expanded': isCommandGroupExpanded(message) }]"
+              @click="toggleCommandGroup(message)"
+            >
+              <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandGroupExpanded(message) }">▶</span>
+              <span class="cmd-group-label">{{ commandGroupSummaryLabel(message) }}</span>
+              <span class="cmd-status">{{ commandGroupSummaryStatus(message) }}</span>
+            </button>
+            <div
+              v-if="getGroupedCommandsForLatest(message).length > 0"
+              class="cmd-group-wrap"
+              :class="{ 'cmd-group-visible': isCommandGroupExpanded(message) }"
+            >
+              <div class="cmd-group-inner">
+                <div
+                  v-for="cmd in getCommandBlockForLatest(message)"
+                  :key="`grouped-cmd-${cmd.id}`"
+                  class="worked-cmd-item"
+                >
+                  <button
+                    type="button"
+                    class="cmd-row"
+                    :class="[
+                      commandStatusClass(cmd),
+                      {
+                        'cmd-expanded': isCommandExpanded(cmd),
+                        'cmd-compact': true,
+                      },
+                    ]"
+                    @click="toggleCommandExpand(cmd)"
+                  >
+                    <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
+                    <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                    <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
+                  </button>
+                  <div
+                    class="cmd-output-wrap"
+                    :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
+                  >
+                    <div class="cmd-output-inner">
+                      <pre
+                        class="cmd-output"
+                        :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
+                        v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
+                      ></pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <template v-else>
+              <button
+                type="button"
+                class="cmd-row"
+                :class="[
+                  commandStatusClass(message),
+                  {
+                    'cmd-expanded': isCommandExpanded(message),
+                    'cmd-compact': isCommandCompact(message),
+                  },
+                ]"
+                @click="toggleCommandExpand(message)"
+              >
+                <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(message) }">▶</span>
+                <code class="cmd-label">{{ message.commandExecution?.command || '(command)' }}</code>
+                <span class="cmd-status">{{ commandStatusLabel(message) }}</span>
+              </button>
+              <div
+                class="cmd-output-wrap"
+                :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
+              >
+                <div class="cmd-output-inner">
+                  <pre
+                    class="cmd-output"
+                    :class="{ 'cmd-output-condensed': isCommandOutputCondensed(message) }"
+                    v-text="message.commandExecution?.aggregatedOutput || '(no output)'"
+                  ></pre>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div
+          v-else-if="isFileChangeMessage(message)"
+          class="message-row"
+          :data-role="message.role"
+          :data-message-type="message.messageType || ''"
+        >
+          <div class="message-stack" :data-role="message.role">
+            <article class="message-body" :data-role="message.role">
+              <section v-if="readStandaloneFileChangeSummary(message)" class="file-change-summary-block">
+                <button
+                  type="button"
+                  class="cmd-row cmd-row-group cmd-compact file-change-summary-row"
+                  :class="{ 'cmd-expanded': isFileChangeSummaryExpanded(message) }"
+                  @click="toggleFileChangeSummary(message)"
+                >
+                  <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isFileChangeSummaryExpanded(message) }">▶</span>
+                  <span class="file-change-summary-label">
+                    {{ fileChangeSummaryLabel(readStandaloneFileChangeSummary(message)) }}
+                  </span>
+                  <span class="file-change-summary-status">
+                    <span
+                      v-for="part in fileChangeSummaryStatusParts(readStandaloneFileChangeSummary(message))"
+                      :key="`summary-status:${message.id}:${part.tone}:${part.label}`"
+                      class="file-change-signed-count"
+                      :data-tone="part.tone"
+                    >
+                      {{ part.label }}
+                    </span>
+                  </span>
+                </button>
+                <div class="cmd-group-wrap" :class="{ 'cmd-group-visible': isFileChangeSummaryExpanded(message) }">
+                  <div class="file-change-panel-inner">
+                    <ul class="file-change-list">
+                      <li
+                        v-for="change in readStandaloneFileChangeSummary(message)?.changes ?? []"
+                        :key="`file-change:${message.id}:${change.path}:${change.movedToPath || ''}`"
+                        class="file-change-item"
+                      >
+                        <span class="file-change-badge" :data-operation="fileChangeOperationTone(change)">
+                          {{ fileChangeOperationLabel(change) }}
+                        </span>
+                        <button
+                          type="button"
+                          class="file-change-path-button"
+                          :title="change.path"
+                          @click="openDiffViewer(readStandaloneFileChangeSummary(message), change)"
+                        >
+                          {{ displayFileChangePath(change.path) }}
+                        </button>
+                        <span v-if="change.movedToPath" class="file-change-arrow">→</span>
+                        <button
+                          v-if="change.movedToPath"
+                          type="button"
+                          class="file-change-path-button"
+                          :title="change.movedToPath"
+                          @click="openDiffViewer(readStandaloneFileChangeSummary(message), change)"
+                        >
+                          {{ displayFileChangePath(change.movedToPath) }}
+                        </button>
+                        <span v-if="change.addedLineCount > 0 || change.removedLineCount > 0" class="file-change-delta">
+                          <span
+                            v-for="part in fileChangeDeltaParts(change)"
+                            :key="`change-delta:${message.id}:${change.path}:${part.tone}:${part.label}`"
+                            class="file-change-signed-count"
+                            :data-tone="part.tone"
+                          >
+                            {{ part.label }}
+                          </span>
+                        </span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+            </article>
+          </div>
+        </div>
+
+        <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
+          <div class="message-stack" :data-role="message.role">
+            <article class="message-body" :data-role="message.role">
+              <ul
+                v-if="message.images && message.images.length > 0"
+                class="message-image-list"
+                :class="{ 'message-generated-image-list': message.messageType === 'imageView' }"
+                :data-role="message.role"
+              >
+                <li v-for="imageUrl in message.images" :key="imageUrl" class="message-image-item">
+                  <button class="message-image-button" type="button" @click="openImageModal(imageUrl)">
+                    <img
+                      class="message-image-preview"
+                      :class="{ 'message-generated-image-preview': message.messageType === 'imageView' }"
+                      :src="imageUrl"
+                      :alt="message.messageType === 'imageView' ? 'Generated image' : 'Message image preview'"
+                      loading="lazy"
+                    />
+                  </button>
+                </li>
+              </ul>
+
+              <div v-if="message.fileAttachments && message.fileAttachments.length > 0" class="message-file-attachments">
+                <span v-for="att in message.fileAttachments" :key="`${message.id}:${att.path}`" class="message-file-chip">
+                  <span class="message-file-chip-icon">📄</span>
+                  <a
+                    class="message-file-link message-file-chip-name"
+                    :href="toBrowseUrl(att.path)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    :title="att.path"
+                  >
+                    {{ att.label }}
+                  </a>
+                </span>
+              </div>
+
+              <div v-if="message.skills && message.skills.length > 0" class="message-skill-attachments">
+                <a
+                  v-for="skill in message.skills"
+                  :key="`${message.id}:${skill.path}`"
+                  class="message-skill-chip"
+                  :href="toBrowseUrl(skill.path)"
+                  :title="skill.path"
+                >
+                  <span class="message-skill-chip-prefix">Skill</span>
+                  <span class="message-skill-chip-name">{{ skill.name }}</span>
+                </a>
+              </div>
+
+              <article v-if="message.text.length > 0" class="message-card" :data-role="message.role">
+                <div v-if="message.isAutomationRun" class="automation-message-label">
+                  <span>Sent via automation</span>
+                  <code v-if="message.automationDisplayName">{{ message.automationDisplayName }}</code>
+                </div>
+                <div v-if="message.messageType === 'worked'" class="worked-separator-wrap" aria-live="polite">
+                  <button type="button" class="worked-separator" @click="toggleWorkedExpand(message)">
+                    <span class="worked-separator-line" aria-hidden="true" />
+                    <span class="worked-chevron" :class="{ 'worked-chevron-open': isWorkedExpanded(message) }">▶</span>
+                    <p class="worked-separator-text">{{ message.text }}</p>
+                    <span class="worked-separator-line" aria-hidden="true" />
+                  </button>
+                  <div v-if="isWorkedExpanded(message)" class="worked-details">
+                    <div
+                      v-for="cmd in getCommandsForWorked(messages, messages.indexOf(message))"
+                      :key="`worked-cmd-${cmd.id}`"
+                      class="worked-cmd-item"
+                    >
+                      <button
+                        type="button"
+                        class="cmd-row"
+                        :class="[
+                          commandStatusClass(cmd),
+                          {
+                            'cmd-expanded': isCommandExpanded(cmd),
+                            'cmd-compact': isCommandCompact(cmd),
+                          },
+                        ]"
+                        @click="toggleCommandExpand(cmd)"
+                      >
+                        <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
+                        <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                        <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
+                      </button>
+                      <div
+                        class="cmd-output-wrap"
+                        :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
+                      >
+                        <div class="cmd-output-inner">
+                          <pre
+                            class="cmd-output"
+                            :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
+                            v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
+                          ></pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else-if="isPlanMessage(message)" class="plan-card" :data-streaming="message.messageType === 'plan.live'">
+                  <div class="plan-card-header">
+                    <p class="plan-card-title">Plan</p>
+                    <span v-if="message.messageType === 'plan.live'" class="plan-card-badge">Updating</span>
+                  </div>
+                  <div
+                    v-if="readPlanExplanation(message)"
+                    class="plan-card-explanation plan-card-markdown"
+                    v-html="renderMarkdownBlocksAsHtml(readPlanExplanation(message))"
+                  />
+                  <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
+                    <li
+                      v-for="(step, stepIndex) in readPlanSteps(message)"
+                      :key="`${message.id}:plan-step:${stepIndex}`"
+                      class="plan-step-item"
+                      :data-status="step.status"
+                    >
+                      <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
+                      <div class="plan-step-text plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(step.step)" />
+                    </li>
+                  </ol>
+                  <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                  <div v-if="showImplementPlanButton(message)" class="plan-card-actions">
+                    <button
+                      type="button"
+                      class="plan-card-implement-button"
+                      @click="implementPlan(message)"
+                    >
+                      Implement plan
+                    </button>
+                  </div>
+                </div>
+                <div
+                  v-else
+                  class="message-text-flow"
+                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownImageFailureVersion]"
+                >
+                  <template v-for="(block, blockIndex) in getMessageBlocks(message)" :key="`block-${blockIndex}`">
+                    <p v-if="block.kind === 'paragraph'" class="message-text">
+                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`seg-${blockIndex}-${segmentIndex}`">
+                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
+                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
+                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
+                        <a
+                          v-else-if="segment.kind === 'file'"
+                          class="message-file-link"
+                          :href="toBrowseUrl(segment.path)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          :title="segment.path"
+                        >
+                          {{ segment.displayPath }}
+                        </a>
+                        <a
+                          v-else-if="segment.kind === 'url'"
+                          class="message-file-link"
+                          :href="segment.href"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          :title="segment.href"
+                        >
+                          {{ segment.value }}
+                        </a>
+                        <code v-else class="message-inline-code">{{ segment.value }}</code>
+                      </template>
+                    </p>
+                    <component
+                      :is="headingTag(block.level)"
+                      v-else-if="block.kind === 'heading'"
+                      class="message-heading"
+                      :class="headingClass(block.level)"
+                    >
+                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`heading-seg-${blockIndex}-${segmentIndex}`">
+                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
+                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
+                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
+                        <a
+                          v-else-if="segment.kind === 'file'"
+                          class="message-file-link"
+                          :href="toBrowseUrl(segment.path)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          :title="segment.path"
+                        >
+                          {{ segment.displayPath }}
+                        </a>
+                        <a
+                          v-else-if="segment.kind === 'url'"
+                          class="message-file-link"
+                          :href="segment.href"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          :title="segment.href"
+                        >
+                          {{ segment.value }}
+                        </a>
+                        <code v-else class="message-inline-code">{{ segment.value }}</code>
+                      </template>
+                    </component>
+                    <blockquote v-else-if="block.kind === 'blockquote'" class="message-blockquote">
+                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`quote-seg-${blockIndex}-${segmentIndex}`">
+                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
+                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
+                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
+                        <a
+                          v-else-if="segment.kind === 'file'"
+                          class="message-file-link"
+                          :href="toBrowseUrl(segment.path)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          :title="segment.path"
+                        >
+                          {{ segment.displayPath }}
+                        </a>
+                        <a
+                          v-else-if="segment.kind === 'url'"
+                          class="message-file-link"
+                          :href="segment.href"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          :title="segment.href"
+                        >
+                          {{ segment.value }}
+                        </a>
+                        <code v-else class="message-inline-code">{{ segment.value }}</code>
+                      </template>
+                    </blockquote>
+                    <ul v-else-if="block.kind === 'unorderedList'" class="message-list message-list-unordered">
+                      <li v-for="(item, itemIndex) in block.items" :key="`ul-${blockIndex}-${itemIndex}`" class="message-list-item">
+                        <div class="message-list-item-content" v-html="renderListItemContentAsHtml(item)" />
+                      </li>
+                    </ul>
+                    <ul v-else-if="block.kind === 'taskList'" class="message-list message-task-list">
+                      <li v-for="(item, itemIndex) in block.items" :key="`task-${blockIndex}-${itemIndex}`" class="message-task-item">
+                        <span class="message-task-checkbox" :data-checked="item.checked">{{ item.checked ? '☑' : '☐' }}</span>
+                        <div class="message-list-item-text">
+                          <template v-for="(segment, segmentIndex) in getInlineSegments(item.text)" :key="`task-seg-${blockIndex}-${itemIndex}-${segmentIndex}`">
+                            <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                            <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
+                            <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
+                            <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
+                            <a
+                              v-else-if="segment.kind === 'file'"
+                              class="message-file-link"
+                              :href="toBrowseUrl(segment.path)"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              :title="segment.path"
+                            >
+                              {{ segment.displayPath }}
+                            </a>
+                            <a
+                              v-else-if="segment.kind === 'url'"
+                              class="message-file-link"
+                              :href="segment.href"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              :title="segment.href"
+                            >
+                              {{ segment.value }}
+                            </a>
+                            <code v-else class="message-inline-code">{{ segment.value }}</code>
+                          </template>
+                        </div>
+                      </li>
+                    </ul>
+                    <ol
+                      v-else-if="block.kind === 'orderedList'"
+                      class="message-list message-list-ordered"
+                      :start="block.start"
+                    >
+                      <li v-for="(item, itemIndex) in block.items" :key="`ol-${blockIndex}-${itemIndex}`" class="message-list-item">
+                        <div class="message-list-item-content" v-html="renderListItemContentAsHtml(item)" />
+                      </li>
+                    </ol>
+                    <div v-else-if="block.kind === 'table'" class="message-table-wrap">
+                      <table class="message-table">
+                        <thead>
+                          <tr>
+                            <th
+                              v-for="(cell, cellIndex) in block.headers"
+                              :key="`th-${blockIndex}-${cellIndex}`"
+                              class="message-table-head-cell"
+                              :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
+                            >
+                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`th-seg-${blockIndex}-${cellIndex}-${segmentIndex}`">
+                                <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                                <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
+                                <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
+                                <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
+                                <a
+                                  v-else-if="segment.kind === 'file'"
+                                  class="message-file-link"
+                                  :href="toBrowseUrl(segment.path)"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  :title="segment.path"
+                                >
+                                  {{ segment.displayPath }}
+                                </a>
+                                <a
+                                  v-else-if="segment.kind === 'url'"
+                                  class="message-file-link"
+                                  :href="segment.href"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  :title="segment.href"
+                                >
+                                  {{ segment.value }}
+                                </a>
+                                <code v-else class="message-inline-code">{{ segment.value }}</code>
+                              </template>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody v-if="block.rows.length > 0">
+                          <tr v-for="(row, rowIndex) in block.rows" :key="`tr-${blockIndex}-${rowIndex}`" class="message-table-body-row">
+                            <td
+                              v-for="(cell, cellIndex) in row"
+                              :key="`td-${blockIndex}-${rowIndex}-${cellIndex}`"
+                              class="message-table-cell"
+                              :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
+                            >
+                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`td-seg-${blockIndex}-${rowIndex}-${cellIndex}-${segmentIndex}`">
+                                <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                                <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
+                                <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
+                                <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
+                                <a
+                                  v-else-if="segment.kind === 'file'"
+                                  class="message-file-link"
+                                  :href="toBrowseUrl(segment.path)"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  :title="segment.path"
+                                >
+                                  {{ segment.displayPath }}
+                                </a>
+                                <a
+                                  v-else-if="segment.kind === 'url'"
+                                  class="message-file-link"
+                                  :href="segment.href"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  :title="segment.href"
+                                >
+                                  {{ segment.value }}
+                                </a>
+                                <code v-else class="message-inline-code">{{ segment.value }}</code>
+                              </template>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div v-else-if="block.kind === 'codeBlock'" class="message-code-block">
+                      <div v-if="block.language" class="message-code-language">{{ block.language }}</div>
+                      <pre class="message-code-pre"><code class="hljs" v-html="renderCachedHighlightedCodeAsHtml(block.language, block.value)"></code></pre>
+                    </div>
+                    <hr v-else-if="block.kind === 'thematicBreak'" class="message-divider" />
+                    <p v-else-if="isMarkdownImageFailed(message.id, blockIndex)" class="message-text">{{ block.markdown }}</p>
+                    <button
+                      v-else
+                      class="message-image-button"
+                      type="button"
+                      @click="openImageModal(block.url)"
+                    >
+                      <img
+                        class="message-image-preview message-markdown-image"
+                        :src="block.url"
+                        :alt="block.alt || 'Embedded message image'"
+                        loading="lazy"
+                        @error="onMarkdownImageError(message.id, blockIndex)"
+                      />
+                    </button>
+                  </template>
+                </div>
+              </article>
+
+              <section v-if="readAnchoredFileChangeSummary(message)" class="file-change-summary-block file-change-summary-block-inline">
+                <button
+                  type="button"
+                  class="cmd-row cmd-row-group cmd-compact file-change-summary-row"
+                  :class="{ 'cmd-expanded': isFileChangeSummaryExpanded(message) }"
+                  @click="toggleFileChangeSummary(message)"
+                >
+                  <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isFileChangeSummaryExpanded(message) }">▶</span>
+                  <span class="file-change-summary-label">
+                    {{ fileChangeSummaryLabel(readAnchoredFileChangeSummary(message)) }}
+                  </span>
+                  <span class="file-change-summary-status">
+                    <span
+                      v-for="part in fileChangeSummaryStatusParts(readAnchoredFileChangeSummary(message))"
+                      :key="`summary-status:${message.id}:${part.tone}:${part.label}`"
+                      class="file-change-signed-count"
+                      :data-tone="part.tone"
+                    >
+                      {{ part.label }}
+                    </span>
+                  </span>
+                </button>
+                <div class="cmd-group-wrap" :class="{ 'cmd-group-visible': isFileChangeSummaryExpanded(message) }">
+                  <div class="file-change-panel-inner">
+                    <ul class="file-change-list">
+                      <li
+                        v-for="change in readAnchoredFileChangeSummary(message)?.changes ?? []"
+                        :key="`file-change:inline:${message.id}:${change.path}:${change.movedToPath || ''}`"
+                        class="file-change-item"
+                      >
+                        <span class="file-change-badge" :data-operation="fileChangeOperationTone(change)">
+                          {{ fileChangeOperationLabel(change) }}
+                        </span>
+                        <button
+                          type="button"
+                          class="file-change-path-button"
+                          :title="change.path"
+                          @click="openDiffViewer(readAnchoredFileChangeSummary(message), change)"
+                        >
+                          {{ displayFileChangePath(change.path) }}
+                        </button>
+                        <span v-if="change.movedToPath" class="file-change-arrow">→</span>
+                        <button
+                          v-if="change.movedToPath"
+                          type="button"
+                          class="file-change-path-button"
+                          :title="change.movedToPath"
+                          @click="openDiffViewer(readAnchoredFileChangeSummary(message), change)"
+                        >
+                          {{ displayFileChangePath(change.movedToPath) }}
+                        </button>
+                        <span v-if="change.addedLineCount > 0 || change.removedLineCount > 0" class="file-change-delta">
+                          <span
+                            v-for="part in fileChangeDeltaParts(change)"
+                            :key="`change-delta:inline:${message.id}:${change.path}:${part.tone}:${part.label}`"
+                            class="file-change-signed-count"
+                            :data-tone="part.tone"
+                          >
+                            {{ part.label }}
+                          </span>
+                        </span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <div
+                v-if="showCopyResponseButton(message) || showEditMessageButton(message)"
+                class="message-toolbar"
+                :data-role="message.role"
+              >
+                <button
+                  v-if="showEditMessageButton(message)"
+                  type="button"
+                  class="message-edit-button"
+                  aria-label="Edit this message"
+                  title="Edit this message"
+                  @click="editMessage(message.id)"
+                >
+                  <IconTablerFilePencil class="icon-svg message-edit-icon" />
+                  <span class="message-edit-label">Edit message</span>
+                </button>
+                <button
+                  v-if="showForkResponseButton(message)"
+                  type="button"
+                  class="message-fork-button"
+                  aria-label="Fork thread from this response"
+                  title="Fork thread from this response"
+                  @click="forkResponse(message.id)"
+                >
+                  <IconTablerGitFork class="icon-svg message-fork-icon" />
+                  <span class="message-fork-label">Fork</span>
+                </button>
+                <button
+                  v-if="showCopyResponseButton(message)"
+                  type="button"
+                  class="message-copy-button"
+                  :data-copied="copiedResponseAnchorId === message.id"
+                  :aria-label="copiedResponseAnchorId === message.id ? 'Response copied' : 'Copy response'"
+                  :title="copiedResponseAnchorId === message.id ? 'Response copied' : 'Copy response'"
+                  @click="copyResponse(message.id)"
+                >
+                  <IconTablerCopy class="icon-svg message-copy-icon" />
+                  <span class="message-copy-label">{{ copiedResponseAnchorId === message.id ? 'Copied' : 'Copy' }}</span>
+                </button>
+              </div>
+            </article>
+          </div>
+        </div>
+      </li>
+      </template>
+      <li v-if="liveOverlay" class="conversation-item conversation-item-overlay">
+        <div class="message-row">
+          <div class="message-stack">
+            <article class="live-overlay-inline" aria-live="polite">
+              <p class="live-overlay-label">{{ liveOverlay.activityLabel }}</p>
+              <p
+                v-if="liveOverlay.reasoningText"
+                class="live-overlay-reasoning"
+              >
+                {{ liveOverlay.reasoningText }}
+              </p>
+              <p v-if="liveOverlay.errorText" class="live-overlay-error">{{ liveOverlay.errorText }}</p>
+            </article>
+          </div>
+        </div>
+      </li>
+      <li ref="bottomAnchorRef" class="conversation-bottom-anchor" />
+    </ul>
+
+    <button
+      v-if="showJumpToLatestButton"
+      type="button"
+      class="jump-to-latest-button"
+      title="Jump to latest"
+      aria-label="Jump to latest output"
+      @click="jumpToLatest"
+    >
+      <IconTablerArrowUp class="icon-svg jump-to-latest-icon" />
+    </button>
+
+    <div v-if="modalImageUrl.length > 0" class="image-modal-backdrop" @click="closeImageModal">
+      <div class="image-modal-content" @click.stop>
+        <button class="image-modal-close" type="button" aria-label="Close image preview" @click="closeImageModal">
+          <IconTablerX class="icon-svg" />
+        </button>
+        <img class="image-modal-image" :src="modalImageUrl" alt="Expanded message image" />
+      </div>
+    </div>
+
+    <div
+      v-if="isFileLinkContextMenuVisible"
+      ref="fileLinkContextMenuRef"
+      class="file-link-context-menu"
+      :style="fileLinkContextMenuStyle"
+      @click.stop
+    >
+      <button type="button" class="file-link-context-menu-item" @click="openFileLinkContextBrowse">
+        Open link
+      </button>
+      <button type="button" class="file-link-context-menu-item" @click="copyFileLinkContextLink">
+        Copy link
+      </button>
+      <button
+        v-if="fileLinkContextEditUrl"
+        type="button"
+        class="file-link-context-menu-item"
+        @click="openFileLinkContextEdit"
+      >
+        Edit file
+      </button>
+    </div>
+
+    <div v-if="activeDiffViewerChange" class="diff-viewer-backdrop" @click="closeDiffViewer">
+      <div class="diff-viewer-shell" @click.stop>
+        <aside v-if="!isMobile" class="diff-viewer-sidebar">
+          <div class="diff-viewer-sidebar-header">
+            <p class="diff-viewer-sidebar-title">Changed files</p>
+            <p class="diff-viewer-sidebar-count">{{ formatFileChangeCountLabel(diffViewerChanges.length) }}</p>
+          </div>
+          <div class="diff-viewer-sidebar-list">
+            <button
+              v-for="change in diffViewerChanges"
+              :key="`diff-viewer:${fileChangeKey(change)}`"
+              type="button"
+              class="diff-viewer-file-button"
+              :data-active="fileChangeKey(change) === fileChangeKey(activeDiffViewerChange)"
+              @click="selectDiffViewerChange(change)"
+            >
+              <span class="file-change-badge" :data-operation="fileChangeOperationTone(change)">
+                {{ fileChangeOperationLabel(change) }}
+              </span>
+              <span class="diff-viewer-file-label">
+                {{ displayFileChangePath(change.path) }}
+                <template v-if="change.movedToPath"> → {{ displayFileChangePath(change.movedToPath) }}</template>
+              </span>
+              <span v-if="formatFileChangeDelta(change)" class="diff-viewer-file-delta">{{ formatFileChangeDelta(change) }}</span>
+            </button>
+          </div>
+        </aside>
+
+        <section class="diff-viewer-main">
+          <div class="diff-viewer-toolbar">
+            <div class="diff-viewer-title-wrap">
+              <p class="diff-viewer-title">
+                {{ displayFileChangePath(activeDiffViewerChange.path) }}
+                <template v-if="activeDiffViewerChange.movedToPath"> → {{ displayFileChangePath(activeDiffViewerChange.movedToPath) }}</template>
+              </p>
+              <p class="diff-viewer-subtitle">
+                {{ fileChangeOperationLabel(activeDiffViewerChange) }}
+                <span v-if="formatFileChangeDelta(activeDiffViewerChange)"> · {{ formatFileChangeDelta(activeDiffViewerChange) }}</span>
+              </p>
+            </div>
+            <div class="diff-viewer-toolbar-actions">
+              <button
+                v-if="isMobile"
+                type="button"
+                class="diff-viewer-mobile-files-button"
+                @click="toggleDiffViewerFileList"
+              >
+                {{ formatFileChangeCountLabel(diffViewerChanges.length) }}
+              </button>
+              <button class="image-modal-close diff-viewer-close" type="button" aria-label="Close diff viewer" @click="closeDiffViewer">
+                <IconTablerX class="icon-svg" />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="!hasDiffViewerContent(activeDiffViewerChange)" class="diff-viewer-empty">
+            <p class="diff-viewer-empty-title">No diff available</p>
+            <p class="diff-viewer-empty-text">This summary was restored from the final answer text, but the thread history does not include patch diff content for this file.</p>
+          </div>
+
+          <div v-else class="diff-viewer-panel">
+            <div class="diff-viewer-meta">
+              <span class="diff-viewer-language">{{ inferDiffViewerLanguage(activeDiffViewerChange) || 'diff' }}</span>
+            </div>
+            <div class="diff-viewer-lines">
+              <div
+                v-for="line in activeDiffViewerLines"
+                :key="line.key"
+                class="diff-viewer-line"
+                :data-kind="line.kind"
+              >
+                <span class="diff-viewer-line-number">{{ line.oldLine ?? '' }}</span>
+                <span class="diff-viewer-line-number">{{ line.newLine ?? '' }}</span>
+                <span class="diff-viewer-line-marker">{{ diffViewerMarker(line) }}</span>
+                <code class="diff-viewer-line-code" v-html="escapeHtml(line.text) || '&nbsp;'"></code>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <Transition name="diff-viewer-sheet">
+          <div
+            v-if="isMobile && isDiffViewerFileListOpen"
+            class="diff-viewer-mobile-sheet-backdrop"
+            @click="closeDiffViewerFileList"
+          >
+            <div class="diff-viewer-mobile-sheet" @click.stop>
+              <div class="diff-viewer-mobile-sheet-handle" aria-hidden="true"></div>
+              <div class="diff-viewer-mobile-sheet-header">
+                <p class="diff-viewer-sidebar-title">Changed files</p>
+                <p class="diff-viewer-sidebar-count">{{ formatFileChangeCountLabel(diffViewerChanges.length) }}</p>
+              </div>
+              <div class="diff-viewer-mobile-sheet-list">
+                <button
+                  v-for="change in diffViewerChanges"
+                  :key="`diff-viewer-sheet:${fileChangeKey(change)}`"
+                  type="button"
+                  class="diff-viewer-file-button"
+                  :data-active="fileChangeKey(change) === fileChangeKey(activeDiffViewerChange)"
+                  @click="selectDiffViewerChange(change)"
+                >
+                  <span class="file-change-badge" :data-operation="fileChangeOperationTone(change)">
+                    {{ fileChangeOperationLabel(change) }}
+                  </span>
+                  <span class="diff-viewer-file-label">
+                    {{ displayFileChangePath(change.path) }}
+                    <template v-if="change.movedToPath"> → {{ displayFileChangePath(change.movedToPath) }}</template>
+                  </span>
+                  <span v-if="formatFileChangeDelta(change)" class="diff-viewer-file-delta">{{ formatFileChangeDelta(change) }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </div>
+    </div>
+  </section>

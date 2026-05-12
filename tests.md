@@ -303,6 +303,116 @@ Rollback/cleanup:
 
 ---
 
+### App chat export formatter split
+
+#### Feature/Change Name
+Root app markdown export formatter extraction.
+
+#### Prerequisites/Setup
+1. Dependencies installed with `pnpm install`
+2. Dev server available if doing a manual browser pass (`pnpm run dev --host 127.0.0.1 --port 4173`)
+3. A thread with user/assistant messages, command output, attachments, or images
+4. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. Run `pnpm run build:frontend`.
+2. In light theme, open a populated thread and trigger chat export.
+3. Open the downloaded markdown file and confirm the title, exported timestamp, thread ID, message roles, text, command output, attachments, and images are present.
+4. Switch to dark theme and repeat steps 2-3.
+
+#### Expected Results
+- Frontend typecheck/build passes.
+- Exported markdown content and filename format match the pre-extraction behavior.
+- Export behavior is unchanged in light theme and dark theme.
+
+#### Rollback/Cleanup
+- Delete downloaded markdown export files if they are no longer needed.
+
+---
+
+### Thread conversation file-change helper split
+
+#### Feature/Change Name
+Thread conversation file-change summary and diff-line helper extraction.
+
+#### Prerequisites/Setup
+1. Dependencies installed with `pnpm install`
+2. Dev server available if doing a manual browser pass (`pnpm run dev --host 127.0.0.1 --port 4173`)
+3. A thread with modified-file summaries or recovered apply-patch file changes
+4. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. Run `pnpm run build:frontend`.
+2. In light theme, open a thread with a modified-files summary.
+3. Open the file-change summary and confirm file labels, operation badges, and line deltas are correct.
+4. Open the diff viewer and confirm added, removed, hunk, and context lines render with stable line numbers.
+5. Switch to dark theme and repeat steps 2-4.
+
+#### Expected Results
+- Frontend typecheck/build passes.
+- File-change summaries are still grouped by assistant turn and standalone metadata message as before.
+- Diff viewer selection, labels, deltas, and line rendering remain stable in light theme and dark theme.
+
+#### Rollback/Cleanup
+- None.
+
+---
+
+### Server inline payload helper split
+
+#### Feature/Change Name
+Codex bridge inline payload and session-skill recovery extraction.
+
+#### Prerequisites/Setup
+1. Dependencies installed with `pnpm install`
+2. Existing Codex session fixtures covered by the server bridge unit tests
+
+#### Steps
+1. Run `pnpm run test:unit -- src/server/codexAppServerBridge.inlinePayload.test.ts src/server/codexAppServerBridge.archive.test.ts`.
+2. Run `pnpm run build:cli`.
+3. Manually open a thread that contains generated/inline image or file payload content.
+4. Confirm inline media still renders through local proxy URLs instead of huge inline payloads.
+5. Open a thread whose user message used skills and confirm skill chips remain associated with the correct turn.
+
+#### Expected Results
+- Inline payload sanitization tests pass.
+- Archive recovery tests continue to pass through the bridge re-export.
+- CLI build succeeds with the extracted server module.
+- Session skill inputs and local inline-media proxying behave the same after extraction.
+
+#### Rollback/Cleanup
+- Remove any temporary files created under the system temp `codex-web-inline-media` directory if manual media testing creates unwanted artifacts.
+
+---
+
+### Desktop state storage helper split
+
+#### Feature/Change Name
+Desktop state localStorage and context-key helper extraction.
+
+#### Prerequisites/Setup
+1. Dependencies installed with `pnpm install`
+2. Dev server available if doing a manual browser pass (`pnpm run dev --host 127.0.0.1 --port 4173`)
+3. Light theme and dark theme both available from the appearance switcher
+
+#### Steps
+1. Run `pnpm run test:unit -- src/composables/useDesktopState.test.ts`.
+2. Run `pnpm run build:frontend`.
+3. In light theme, open the app and switch between at least two existing threads.
+4. Change the selected model or collaboration mode for a thread, refresh the page, and confirm the selection persists.
+5. Switch to dark theme and repeat steps 3-4.
+
+#### Expected Results
+- Desktop-state unit tests pass.
+- Frontend typecheck/build passes.
+- Selected thread, per-thread model, collaboration mode, unread state, project order, token usage, and terminal-open persistence continue to work through the extracted helper module.
+- The behavior is theme-independent and works in light theme and dark theme.
+
+#### Rollback/Cleanup
+- None.
+
+---
+
 ### Composio logged-out connector preview
 
 #### Feature/Change Name

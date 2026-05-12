@@ -1,0 +1,1149 @@
+@reference "tailwindcss";
+
+.conversation-root {
+  @apply relative h-full min-h-0 min-w-0 p-0 flex flex-col overflow-y-hidden overflow-x-hidden bg-transparent border-none rounded-none;
+}
+
+.conversation-loading {
+  @apply m-0 px-6 text-sm text-slate-500;
+}
+
+.conversation-empty {
+  @apply m-0 px-6 text-sm text-slate-500;
+}
+
+.conversation-list {
+  @apply h-full min-h-0 list-none m-0 px-2 sm:px-6 py-0 overflow-y-auto overflow-x-visible flex flex-col gap-2 sm:gap-3;
+}
+
+.conversation-load-more {
+  @apply flex justify-center py-3 m-0;
+}
+
+.load-more-button {
+  @apply px-4 py-1.5 text-xs rounded-full border border-slate-300 dark:border-slate-600
+         text-slate-500 dark:text-slate-400 bg-transparent
+         hover:bg-slate-100 dark:hover:bg-slate-800
+         disabled:opacity-40 disabled:cursor-not-allowed
+         transition-colors cursor-pointer;
+}
+
+.conversation-item {
+  @apply m-0 w-full min-w-0 flex;
+}
+
+.conversation-item-request {
+  @apply justify-center;
+}
+
+.conversation-item-overlay {
+  @apply justify-center;
+}
+
+.message-row {
+  @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex;
+}
+
+.message-row[data-role='user'] {
+  @apply justify-end;
+}
+
+.message-row[data-role='assistant'],
+.message-row[data-role='system'] {
+  @apply justify-start;
+}
+
+.conversation-bottom-anchor {
+  @apply h-px;
+}
+
+.jump-to-latest-button {
+  @apply absolute left-1/2 bottom-4 z-20 inline-flex h-11 w-11 -translate-x-1/2 items-center justify-center rounded-full border border-slate-300 bg-white/96 text-slate-700 shadow-lg shadow-slate-900/10 transition hover:-translate-x-1/2 hover:-translate-y-0.5 hover:bg-white hover:text-slate-900;
+}
+
+.jump-to-latest-icon {
+  transform: rotate(180deg);
+}
+
+.message-stack {
+  @apply flex flex-col w-full min-w-0;
+}
+
+.request-card {
+  @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-col gap-2;
+}
+
+.request-title {
+  @apply m-0 text-sm leading-5 font-semibold text-amber-900;
+}
+
+.request-meta {
+  @apply m-0 text-xs leading-4 text-amber-700;
+}
+
+.request-reason {
+  @apply m-0 text-sm leading-5 text-amber-900 whitespace-pre-wrap break-words;
+  overflow-wrap: anywhere;
+}
+
+.request-actions {
+  @apply flex flex-wrap gap-2;
+}
+
+.request-button {
+  @apply rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs text-amber-900 hover:bg-amber-100 transition;
+}
+
+.request-button-primary {
+  @apply border-amber-500 bg-amber-500 text-white hover:bg-amber-600;
+}
+
+.request-user-input {
+  @apply flex flex-col gap-3;
+}
+
+.request-question {
+  @apply flex flex-col gap-1;
+}
+
+.request-question-title {
+  @apply m-0 text-sm leading-5 font-medium text-amber-900;
+}
+
+.request-question-text {
+  @apply m-0 text-xs leading-4 text-amber-800;
+}
+
+.request-question-option-description {
+  @apply m-0 text-xs leading-4 text-amber-700;
+}
+
+.request-link {
+  @apply inline-flex w-fit rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs text-amber-900 hover:bg-amber-100 transition;
+}
+
+.request-select {
+  @apply h-8 rounded-md border border-amber-300 bg-white px-2 text-sm text-amber-900;
+}
+
+.request-input {
+  @apply h-8 rounded-md border border-amber-300 bg-white px-2 text-sm text-amber-900 placeholder:text-amber-500;
+}
+
+.request-checkbox-list {
+  @apply flex flex-col gap-1.5;
+}
+
+.request-checkbox-row {
+  @apply flex items-center gap-2 text-sm text-amber-900;
+}
+
+.live-overlay-inline {
+  @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] px-0 py-1 flex flex-col gap-1;
+}
+
+.live-overlay-label {
+  @apply m-0 text-sm leading-5 font-medium text-zinc-600;
+}
+
+.live-overlay-reasoning {
+  @apply m-0 text-sm leading-5 text-zinc-500 whitespace-pre-wrap break-words;
+  display: block;
+  max-height: calc(1.25rem * 5);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to top, black 75%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, black 75%, transparent 100%);
+}
+
+.live-overlay-reasoning::-webkit-scrollbar {
+  display: none;
+}
+
+.live-overlay-error {
+  @apply m-0 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
+}
+
+.message-body {
+  @apply flex flex-col min-w-0 max-w-full;
+  width: fit-content;
+}
+
+.message-body[data-role='user'] {
+  @apply ml-auto items-end;
+  align-self: flex-end;
+}
+
+.message-toolbar {
+  @apply mt-1 self-start flex items-center gap-1 opacity-[0.01] transition-opacity duration-200;
+}
+
+.message-row:hover .message-toolbar {
+  @apply opacity-100;
+}
+
+.message-copy-button {
+  @apply inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/90 px-1.25 py-0.5 text-[9px] font-medium leading-none text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900;
+}
+
+.message-fork-button {
+  @apply inline-flex items-center gap-0.5 px-0.5 py-0 text-[9px] font-medium leading-none text-slate-500 transition hover:text-slate-900;
+}
+
+
+.message-copy-button[data-copied='true'] {
+  @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+}
+
+.message-edit-button {
+  @apply inline-flex items-center gap-0.5 px-0.5 py-0 text-[9px] font-medium leading-none text-amber-600/70 transition hover:text-amber-700;
+}
+
+.message-fork-icon,
+.message-copy-icon,
+.message-edit-icon {
+  @apply text-[10px];
+}
+
+.message-fork-label,
+.message-copy-label,
+.message-edit-label {
+  @apply leading-none;
+}
+
+.message-image-list {
+  @apply list-none m-0 mb-2 p-0 flex flex-wrap gap-2;
+}
+
+.message-image-list[data-role='user'] {
+  @apply ml-auto justify-end;
+}
+
+.message-generated-image-list {
+  @apply gap-3;
+}
+
+.message-image-item {
+  @apply m-0;
+}
+
+.message-image-button {
+  @apply block rounded-xl overflow-hidden border border-slate-300 bg-white p-0 transition hover:border-slate-400;
+}
+
+.message-image-preview {
+  @apply block w-16 h-16 object-cover;
+}
+
+.message-generated-image-preview {
+  @apply w-auto h-auto max-w-[min(560px,85vw)] max-h-[min(460px,62vh)] object-contain bg-white;
+}
+
+.message-file-attachments {
+  @apply mb-2 flex flex-wrap gap-1.5;
+}
+
+.message-skill-attachments {
+  @apply mb-2 flex flex-wrap justify-end gap-1.5;
+}
+
+.message-file-chip {
+  @apply inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-zinc-700;
+}
+
+.message-skill-chip {
+  @apply inline-flex max-w-full items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800 no-underline transition hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-900;
+}
+
+.message-skill-chip-prefix {
+  @apply shrink-0 font-medium text-emerald-700;
+}
+
+.message-skill-chip-name {
+  @apply min-w-0 max-w-48 truncate font-mono;
+}
+
+.message-file-chip-icon {
+  @apply text-[10px] leading-none;
+}
+
+.message-file-chip-name {
+  @apply truncate max-w-48 font-mono;
+}
+
+.message-card {
+  @apply max-w-[min(var(--chat-card-max,76ch),100%)] px-0 py-0 bg-transparent border-none rounded-none;
+}
+
+.message-text-flow {
+  @apply flex flex-col gap-2;
+}
+
+.plan-card {
+  @apply flex max-w-[min(var(--chat-card-max,76ch),100%)] flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-slate-900;
+}
+
+.plan-card-header {
+  @apply flex items-center justify-between gap-3;
+}
+
+.plan-card-title {
+  @apply m-0 text-sm font-semibold leading-5 text-sky-900;
+}
+
+.plan-card-badge {
+  @apply inline-flex items-center rounded-full bg-sky-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-sky-900;
+}
+
+.plan-card-explanation {
+  @apply text-slate-700;
+}
+
+.plan-card-markdown {
+  @apply flex flex-col gap-2;
+}
+
+.plan-card-markdown :deep(.message-text),
+.plan-card-markdown :deep(.message-heading),
+.plan-card-markdown :deep(.message-blockquote),
+.plan-card-markdown :deep(.message-list),
+.plan-card-markdown :deep(.message-table-wrap),
+.plan-card-markdown :deep(.message-code-block),
+.plan-card-markdown :deep(.message-divider) {
+  @apply m-0;
+}
+
+.plan-card-markdown :deep(.message-text) {
+  @apply text-sm leading-relaxed whitespace-pre-wrap text-slate-800;
+}
+
+.plan-card-markdown :deep(.message-heading) {
+  @apply text-slate-900 tracking-tight;
+}
+
+.plan-card-markdown :deep(.message-heading-h1) {
+  @apply text-2xl font-semibold leading-tight;
+}
+
+.plan-card-markdown :deep(.message-heading-h2) {
+  @apply text-xl font-semibold leading-tight;
+}
+
+.plan-card-markdown :deep(.message-heading-h3) {
+  @apply text-lg font-semibold leading-snug;
+}
+
+.plan-card-markdown :deep(.message-heading-h4) {
+  @apply text-base font-semibold leading-snug;
+}
+
+.plan-card-markdown :deep(.message-heading-h5) {
+  @apply text-sm font-semibold leading-snug uppercase tracking-[0.02em];
+}
+
+.plan-card-markdown :deep(.message-heading-h6) {
+  @apply text-xs font-semibold leading-snug uppercase tracking-[0.04em] text-slate-600;
+}
+
+.plan-card-markdown :deep(.message-blockquote) {
+  @apply border-l-4 border-slate-300 pl-4 py-1 text-sm leading-relaxed whitespace-pre-wrap text-slate-700 bg-slate-50/70 rounded-r-lg;
+}
+
+.plan-card-markdown :deep(.message-list) {
+  @apply pl-5 text-sm leading-relaxed text-slate-800 flex flex-col gap-1.5;
+}
+
+.plan-card-markdown :deep(.message-list-unordered) {
+  @apply list-disc;
+}
+
+.plan-card-markdown :deep(.message-list-ordered) {
+  @apply list-decimal;
+}
+
+.plan-card-markdown :deep(.message-list-item) {
+  @apply pl-1;
+}
+
+.plan-card-markdown :deep(.message-list-item-text) {
+  @apply whitespace-pre-wrap;
+}
+
+.plan-card-markdown :deep(.message-list-item-paragraph + .message-list-item-paragraph) {
+  @apply mt-2;
+}
+
+.plan-card-markdown :deep(.message-task-list) {
+  @apply list-none pl-0;
+}
+
+.plan-card-markdown :deep(.message-task-item) {
+  @apply flex items-start gap-2;
+}
+
+.plan-card-markdown :deep(.message-task-checkbox) {
+  @apply mt-0.5 text-sm leading-none text-slate-500 select-none;
+}
+
+.plan-card-markdown :deep(.message-code-block) {
+  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950/95 text-slate-100;
+}
+
+.plan-card-markdown :deep(.message-code-language) {
+  @apply border-b border-slate-800 bg-slate-900/90 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400;
+}
+
+.plan-card-markdown :deep(.message-code-pre) {
+  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-6;
+}
+
+.plan-card-markdown :deep(.message-inline-code) {
+  @apply rounded-md bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-900;
+}
+
+.plan-card-markdown :deep(.message-file-link) {
+  @apply text-sky-700 underline decoration-sky-300 underline-offset-2;
+}
+
+.plan-card-markdown :deep(.message-table) {
+  @apply bg-white/90;
+}
+
+.plan-step-list {
+  @apply m-0 flex list-none flex-col gap-2 p-0;
+}
+
+.plan-step-item {
+  @apply flex items-start gap-2 rounded-xl border border-white/70 bg-white/80 px-3 py-2 text-sm leading-relaxed text-slate-800;
+}
+
+.plan-step-item[data-status='completed'] {
+  @apply border-emerald-200 bg-emerald-50/80;
+}
+
+.plan-step-item[data-status='inProgress'] {
+  @apply border-amber-200 bg-amber-50/80;
+}
+
+.plan-step-status {
+  @apply mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700;
+}
+
+.plan-step-status[data-status='completed'] {
+  @apply bg-emerald-200 text-emerald-900;
+}
+
+.plan-step-status[data-status='inProgress'] {
+  @apply bg-amber-200 text-amber-900;
+}
+
+.plan-step-text {
+  @apply min-w-0 flex-1;
+}
+
+.plan-card-actions {
+  @apply mt-3 flex justify-end;
+}
+
+.plan-card-implement-button {
+  @apply inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50;
+}
+
+.message-text {
+  @apply m-0 text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-800;
+  overflow-wrap: anywhere;
+}
+
+.message-heading {
+  @apply m-0 text-slate-900 tracking-tight;
+}
+
+.message-heading-h1 {
+  @apply text-2xl font-semibold leading-tight;
+}
+
+.message-heading-h2 {
+  @apply text-xl font-semibold leading-tight;
+}
+
+.message-heading-h3 {
+  @apply text-lg font-semibold leading-snug;
+}
+
+.message-heading-h4 {
+  @apply text-base font-semibold leading-snug;
+}
+
+.message-heading-h5 {
+  @apply text-sm font-semibold leading-snug uppercase tracking-[0.02em];
+}
+
+.message-heading-h6 {
+  @apply text-xs font-semibold leading-snug uppercase tracking-[0.04em] text-slate-600;
+}
+
+.message-blockquote {
+  @apply m-0 border-l-4 border-slate-300 pl-4 py-1 text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-700 bg-slate-50/70 rounded-r-lg;
+  overflow-wrap: anywhere;
+}
+
+.message-list {
+  @apply m-0 pl-5 text-sm leading-relaxed text-slate-800 flex flex-col gap-1.5;
+}
+
+.message-list-unordered {
+  @apply list-disc;
+}
+
+.message-list-ordered {
+  @apply list-decimal;
+}
+
+.message-list-item {
+  @apply pl-1;
+}
+
+.message-list-item-content {
+  @apply flex flex-col gap-1.5;
+}
+
+.message-list-item-text {
+  @apply whitespace-pre-wrap break-words;
+  overflow-wrap: anywhere;
+}
+
+.message-list-item-paragraph + .message-list-item-paragraph {
+  @apply mt-2;
+}
+
+.message-task-list {
+  @apply list-none pl-0;
+}
+
+.message-task-item {
+  @apply flex items-start gap-2;
+}
+
+.message-task-checkbox {
+  @apply mt-0.5 text-sm leading-none text-slate-500 select-none;
+}
+
+.message-table-wrap {
+  @apply w-full overflow-x-auto;
+}
+
+.message-table {
+  @apply min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm text-slate-800;
+}
+
+.message-table-head-cell,
+.message-table-cell {
+  @apply border-b border-l border-slate-200 px-3 py-2 align-top whitespace-pre-wrap break-words;
+  overflow-wrap: anywhere;
+}
+
+.message-table-head-cell:first-child,
+.message-table-cell:first-child {
+  @apply border-l-0;
+}
+
+.message-table-head-cell {
+  @apply bg-slate-100 font-semibold text-slate-900;
+}
+
+.message-table-body-row:last-child .message-table-cell {
+  @apply border-b-0;
+}
+
+.message-bold-text {
+  @apply font-semibold text-slate-900;
+}
+
+.message-italic-text {
+  @apply italic;
+}
+
+.message-strikethrough-text {
+  @apply line-through text-slate-500;
+}
+
+.message-markdown-image {
+  @apply w-auto h-auto max-w-[min(560px,85vw)] max-h-[min(460px,62vh)] object-contain bg-white;
+}
+
+.message-inline-code {
+  @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
+}
+
+.message-code-block {
+  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+}
+
+.message-code-language {
+  @apply border-b border-slate-800 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em] text-slate-400;
+}
+
+.message-code-pre {
+  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed font-mono whitespace-pre;
+}
+
+.message-code-pre :deep(.hljs) {
+  @apply block bg-transparent p-0 text-inherit;
+}
+
+.message-file-link {
+  @apply text-sm leading-relaxed text-[#0969da] no-underline hover:text-[#1f6feb] hover:underline underline-offset-2;
+}
+
+.file-link-context-menu {
+  @apply fixed z-50 min-w-36 rounded-lg border border-zinc-200 bg-white p-1 shadow-xl;
+}
+
+.file-link-context-menu-item {
+  @apply block w-full rounded-md px-2 py-1.5 text-left text-xs text-zinc-700 hover:bg-zinc-100;
+}
+
+.message-divider {
+  @apply m-0 border-0 h-px bg-slate-300/80;
+}
+
+.message-stack[data-role='user'] {
+  @apply items-end;
+}
+
+.message-stack[data-role='assistant'],
+.message-stack[data-role='system'] {
+  @apply items-start;
+}
+
+.message-card[data-role='user'] {
+  @apply rounded-2xl bg-slate-200 px-4 py-3 max-w-[min(560px,100%)];
+  width: fit-content;
+  margin-left: auto;
+  align-self: flex-end;
+}
+
+.automation-message-label {
+  @apply mb-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500;
+}
+
+.automation-message-label code {
+  @apply rounded-full bg-white/70 px-2 py-0.5 text-[10px] normal-case tracking-normal text-slate-600;
+}
+
+.message-card[data-role='assistant'],
+.message-card[data-role='system'] {
+  @apply px-0 py-0 bg-transparent border-none rounded-none;
+}
+
+:global(.dark) .message-file-chip {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-200;
+}
+
+:global(.dark) .message-skill-chip {
+  @apply border-emerald-800/70 bg-emerald-950/50 text-emerald-100;
+}
+
+:global(.dark) .message-skill-chip-prefix {
+  @apply text-emerald-300;
+}
+
+.conversation-item[data-message-type='worked'] .message-stack,
+.conversation-item[data-message-type='worked'] .message-body,
+.conversation-item[data-message-type='worked'] .message-card {
+  @apply w-full max-w-full;
+}
+
+.worked-separator-wrap {
+  @apply w-full flex flex-col gap-0;
+}
+
+.worked-separator {
+  @apply w-full flex items-center gap-3 bg-transparent border-none cursor-pointer p-0;
+}
+
+.worked-chevron {
+  @apply text-[9px] text-zinc-400 transition-transform duration-200 flex-shrink-0;
+}
+
+.worked-chevron-open {
+  transform: rotate(90deg);
+}
+
+.worked-separator-line {
+  @apply h-px bg-zinc-300/80 flex-1;
+}
+
+.worked-separator-text {
+  @apply m-0 text-sm leading-relaxed font-normal text-slate-800;
+}
+
+.worked-details {
+  @apply flex flex-col gap-1.5 pt-2;
+}
+
+.worked-cmd-item {
+  @apply flex flex-col;
+}
+
+.image-modal-backdrop {
+  @apply fixed inset-0 z-50 bg-black/40 p-6 flex items-center justify-center;
+}
+
+.image-modal-content {
+  @apply relative max-w-[min(92vw,1100px)] max-h-[92vh];
+}
+
+.image-modal-close {
+  @apply absolute top-2 right-2 z-10 w-10 h-10 rounded-full bg-white/90 text-slate-900 border border-slate-300 flex items-center justify-center;
+}
+
+.image-modal-image {
+  @apply block max-w-full max-h-[90vh] rounded-2xl shadow-2xl bg-white;
+}
+
+.icon-svg {
+  @apply w-5 h-5;
+}
+
+.cmd-row {
+  @apply w-full flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 cursor-pointer transition text-left hover:bg-zinc-100;
+}
+
+.cmd-row.cmd-row-group {
+  @apply border-dashed border-zinc-300 bg-zinc-100/90 text-zinc-600;
+}
+
+.cmd-row.cmd-compact {
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.625rem;
+}
+
+.cmd-row.cmd-compact .cmd-chevron {
+  font-size: 9px;
+}
+
+.cmd-row.cmd-compact .cmd-label {
+  font-size: 0.75rem;
+}
+
+.cmd-row.cmd-compact .cmd-status {
+  max-width: 4.5rem;
+  font-size: 0.75rem;
+}
+
+.cmd-row.cmd-expanded {
+  @apply rounded-b-none;
+}
+
+.cmd-chevron {
+  @apply text-[10px] text-zinc-400 transition-transform duration-150 flex-shrink-0;
+}
+
+.cmd-chevron-open {
+  transform: rotate(90deg);
+}
+
+.cmd-label {
+  @apply flex-1 min-w-0 truncate text-xs font-mono text-zinc-700;
+}
+
+.cmd-group-label {
+  @apply flex-1 min-w-0 truncate text-xs font-medium text-zinc-600;
+}
+
+.cmd-status {
+  @apply max-w-24 truncate text-right text-[11px] font-medium flex-shrink-0;
+}
+
+.cmd-status-running .cmd-status {
+  @apply text-amber-600;
+}
+
+.cmd-status-ok .cmd-status {
+  @apply text-emerald-600;
+}
+
+.cmd-status-error .cmd-status {
+  @apply text-rose-600;
+}
+
+.cmd-output-wrap {
+  @apply rounded-b-lg bg-zinc-900;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 300ms ease-out, border-color 300ms ease-out;
+  border: 1px solid transparent;
+  border-top: none;
+}
+
+.cmd-output-wrap.cmd-output-visible {
+  grid-template-rows: 1fr;
+  border-color: #e4e4e7;
+}
+
+.cmd-group-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms ease-out;
+}
+
+.cmd-group-wrap.cmd-group-visible {
+  grid-template-rows: 1fr;
+}
+
+.cmd-group-inner {
+  @apply mb-1 flex min-h-0 flex-col gap-1 overflow-hidden pl-2;
+}
+
+.cmd-output-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.cmd-output {
+  @apply m-0 px-3 py-2 text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words max-h-60 overflow-y-auto;
+}
+
+.cmd-output.cmd-output-condensed {
+  max-height: 9rem;
+}
+
+.file-change-summary-block {
+  @apply mt-3 flex flex-col gap-0;
+}
+
+.file-change-summary-block-inline {
+  @apply mt-4;
+}
+
+.file-change-summary-row {
+  @apply border-dashed;
+}
+
+.file-change-summary-label {
+  @apply flex-1 min-w-0 truncate text-xs font-medium text-zinc-700;
+}
+
+.file-change-summary-status {
+  @apply inline-flex max-w-28 items-center justify-end gap-1.5 text-right text-[11px] font-semibold text-zinc-500 flex-shrink-0;
+}
+
+.file-change-panel-inner {
+  @apply mb-1 min-h-0 overflow-hidden pl-2;
+}
+
+.file-change-list {
+  @apply m-0 flex list-none flex-col gap-0.5 rounded-xl border border-zinc-200 bg-white/80 p-1.5;
+}
+
+.file-change-item {
+  @apply flex flex-wrap items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-zinc-700;
+}
+
+.file-change-badge {
+  @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em];
+}
+
+.file-change-badge[data-operation='add'] {
+  @apply bg-emerald-50 text-emerald-700;
+}
+
+.file-change-badge[data-operation='update'] {
+  @apply bg-sky-50 text-sky-700;
+}
+
+.file-change-badge[data-operation='delete'] {
+  @apply bg-rose-50 text-rose-700;
+}
+
+.file-change-badge[data-operation='move'] {
+  @apply bg-amber-50 text-amber-700;
+}
+
+.file-change-path {
+  @apply min-w-0 break-all font-mono text-[13px];
+}
+
+.file-change-path-button {
+  @apply min-w-0 border-0 bg-transparent p-0 text-left font-mono text-[13px] text-[#0969da] hover:text-[#1f6feb] hover:underline underline-offset-2;
+}
+
+.file-change-arrow {
+  @apply text-zinc-400;
+}
+
+.file-change-delta {
+  @apply ml-auto inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-600;
+}
+
+.file-change-signed-count {
+  @apply inline-flex items-center whitespace-nowrap;
+}
+
+.file-change-signed-count[data-tone='add'] {
+  @apply text-emerald-600;
+}
+
+.file-change-signed-count[data-tone='remove'] {
+  @apply text-rose-600;
+}
+
+.diff-viewer-backdrop {
+  @apply fixed inset-0 z-50 bg-black/45 p-3 sm:p-6 flex items-center justify-center;
+}
+
+.diff-viewer-shell {
+  @apply relative grid h-[min(88vh,920px)] w-[min(96vw,1320px)] grid-cols-1 overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-2xl lg:grid-cols-[320px_minmax(0,1fr)];
+}
+
+.diff-viewer-sidebar {
+  @apply flex min-h-0 flex-col border-b border-zinc-200 bg-zinc-50 lg:border-b-0 lg:border-r;
+}
+
+.diff-viewer-sidebar-header {
+  @apply flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-4;
+}
+
+.diff-viewer-sidebar-title {
+  @apply m-0 text-sm font-semibold text-zinc-900;
+}
+
+.diff-viewer-sidebar-count {
+  @apply m-0 text-xs font-medium text-zinc-500;
+}
+
+.diff-viewer-sidebar-list {
+  @apply flex min-h-0 flex-col gap-2 overflow-y-auto p-3;
+}
+
+.diff-viewer-file-button {
+  @apply flex w-full flex-col items-start gap-2 rounded-2xl border border-transparent bg-transparent px-3 py-3 text-left transition hover:border-zinc-200 hover:bg-white;
+}
+
+.diff-viewer-file-button[data-active='true'] {
+  @apply border-sky-200 bg-white shadow-sm;
+}
+
+.diff-viewer-file-label {
+  @apply break-all font-mono text-[13px] text-zinc-700;
+}
+
+.diff-viewer-file-delta {
+  @apply inline-flex items-center rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-600;
+}
+
+.diff-viewer-main {
+  @apply flex min-h-0 flex-col bg-white;
+}
+
+.diff-viewer-toolbar {
+  @apply flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4;
+}
+
+.diff-viewer-toolbar-actions {
+  @apply flex items-center gap-2 shrink-0;
+}
+
+.diff-viewer-title-wrap {
+  @apply min-w-0;
+}
+
+.diff-viewer-title {
+  @apply m-0 break-all text-base font-semibold text-zinc-900;
+}
+
+.diff-viewer-subtitle {
+  @apply mt-1 mb-0 text-sm text-zinc-500;
+}
+
+.diff-viewer-close {
+  @apply static shrink-0 border-zinc-200 bg-zinc-100 text-zinc-700;
+}
+
+.diff-viewer-mobile-files-button {
+  @apply inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700;
+}
+
+.diff-viewer-empty {
+  @apply flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center;
+}
+
+.diff-viewer-empty-title {
+  @apply m-0 text-base font-semibold text-zinc-900;
+}
+
+.diff-viewer-empty-text {
+  @apply mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500;
+}
+
+.diff-viewer-panel {
+  @apply flex min-h-0 flex-1 flex-col;
+}
+
+.diff-viewer-meta {
+  @apply border-b border-zinc-200 bg-zinc-50 px-5 py-2;
+}
+
+.diff-viewer-language {
+  @apply inline-flex items-center rounded-full bg-zinc-200 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-700;
+}
+
+.diff-viewer-lines {
+  @apply min-h-0 flex-1 overflow-auto bg-zinc-950;
+}
+
+.diff-viewer-line {
+  display: grid;
+  grid-template-columns: 4rem 4rem 2rem minmax(0, 1fr);
+  align-items: stretch;
+  min-width: fit-content;
+}
+
+.diff-viewer-line-number {
+  @apply border-r border-zinc-800 px-3 py-1.5 text-right font-mono text-xs text-zinc-500 select-none;
+}
+
+.diff-viewer-line-marker {
+  @apply border-r border-zinc-800 px-2 py-1.5 text-center font-mono text-xs text-zinc-500 select-none;
+}
+
+.diff-viewer-line-code {
+  @apply block whitespace-pre px-3 py-1.5 font-mono text-[12px] leading-5 text-zinc-100;
+}
+
+.diff-viewer-line[data-kind='meta'] {
+  @apply bg-zinc-900;
+}
+
+.diff-viewer-line[data-kind='meta'] .diff-viewer-line-code,
+.diff-viewer-line[data-kind='meta'] .diff-viewer-line-marker {
+  @apply text-sky-300;
+}
+
+.diff-viewer-line[data-kind='hunk'] {
+  @apply bg-sky-950/40;
+}
+
+.diff-viewer-line[data-kind='hunk'] .diff-viewer-line-code,
+.diff-viewer-line[data-kind='hunk'] .diff-viewer-line-marker {
+  @apply text-sky-300;
+}
+
+.diff-viewer-line[data-kind='add'] {
+  background: rgba(20, 83, 45, 0.38);
+}
+
+.diff-viewer-line[data-kind='add'] .diff-viewer-line-marker,
+.diff-viewer-line[data-kind='add'] .diff-viewer-line-code {
+  @apply text-emerald-200;
+}
+
+.diff-viewer-line[data-kind='remove'] {
+  background: rgba(127, 29, 29, 0.32);
+}
+
+.diff-viewer-line[data-kind='remove'] .diff-viewer-line-marker,
+.diff-viewer-line[data-kind='remove'] .diff-viewer-line-code {
+  @apply text-rose-200;
+}
+
+.diff-viewer-line[data-kind='context'] {
+  @apply bg-zinc-950;
+}
+
+.diff-viewer-line[data-kind='context'] .diff-viewer-line-code {
+  @apply text-zinc-100;
+}
+
+.diff-viewer-mobile-sheet-backdrop {
+  @apply absolute inset-0 z-20 bg-black/35 flex items-end;
+}
+
+.diff-viewer-mobile-sheet {
+  @apply w-full max-h-[70vh] rounded-t-3xl bg-white shadow-2xl border-t border-zinc-200 flex flex-col overflow-hidden;
+}
+
+.diff-viewer-mobile-sheet-handle {
+  @apply mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-300;
+}
+
+.diff-viewer-mobile-sheet-header {
+  @apply flex items-center justify-between gap-3 px-4 pt-3 pb-2 border-b border-zinc-200;
+}
+
+.diff-viewer-mobile-sheet-list {
+  @apply flex min-h-0 flex-col gap-2 overflow-y-auto px-3 py-3;
+}
+
+.diff-viewer-sheet-enter-active,
+.diff-viewer-sheet-leave-active {
+  @apply transition-opacity duration-200;
+}
+
+.diff-viewer-sheet-enter-active .diff-viewer-mobile-sheet,
+.diff-viewer-sheet-leave-active .diff-viewer-mobile-sheet {
+  transition: transform 200ms ease;
+}
+
+.diff-viewer-sheet-enter-from,
+.diff-viewer-sheet-leave-to {
+  @apply opacity-0;
+}
+
+.diff-viewer-sheet-enter-from .diff-viewer-mobile-sheet,
+.diff-viewer-sheet-leave-to .diff-viewer-mobile-sheet {
+  transform: translateY(100%);
+}
+
+@media (max-width: 767px) {
+  .diff-viewer-backdrop {
+    @apply p-0 items-stretch;
+  }
+
+  .diff-viewer-shell {
+    @apply h-[100dvh] w-screen rounded-none border-0 shadow-none;
+  }
+
+  .diff-viewer-main {
+    @apply min-w-0;
+  }
+
+  .diff-viewer-toolbar {
+    @apply sticky top-0 z-10 bg-white px-3 py-3;
+  }
+
+  .diff-viewer-title {
+    @apply text-sm leading-5;
+  }
+
+  .diff-viewer-subtitle {
+    @apply text-xs;
+  }
+
+  .diff-viewer-meta {
+    @apply px-3 py-2;
+  }
+
+  .diff-viewer-language {
+    @apply text-[10px];
+  }
+
+  .diff-viewer-line {
+    grid-template-columns: 2.75rem 2.75rem 1.5rem minmax(0, 1fr);
+  }
+
+  .diff-viewer-line-number {
+    @apply px-1.5 py-1 text-[10px];
+  }
+
+  .diff-viewer-line-marker {
+    @apply px-1 py-1 text-[10px];
+  }
+
+  .diff-viewer-line-code {
+    @apply px-2 py-1 text-[11px] leading-5;
+  }
+}
