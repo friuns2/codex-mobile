@@ -537,6 +537,10 @@
   @apply text-emerald-400;
 }
 
+:root.dark .thread-row-automation-chip {
+  @apply bg-amber-900/40 text-amber-200 ring-1 ring-amber-700/40;
+}
+
 :root.dark .rename-thread-button {
   @apply text-zinc-300 hover:bg-zinc-700;
 }

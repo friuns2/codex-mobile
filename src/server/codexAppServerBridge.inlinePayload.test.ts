@@ -1,6 +1,12 @@
 import { existsSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BackendQueueProcessor, mergeSessionSkillInputsIntoTurns, sanitizeThreadTurnsInlinePayloads } from './codexAppServerBridge'
+import {
+  BackendQueueProcessor,
+  mergeSessionSkillInputsIntoTurns,
+  parseAutomationToml,
+  sanitizeThreadTurnsInlinePayloads,
+  toAutomationApiRecord,
+} from './codexAppServerBridge'
 
 const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 const pngDataUrl = `data:image/png;base64,${pngBase64}`
@@ -368,5 +374,46 @@ describe('backend queue scheduling', () => {
     expect(processThreadQueue).toHaveBeenCalledTimes(1)
 
     processor.dispose()
+  })
+})
+
+describe('automation TOML handling', () => {
+  it('parses TOML string arrays without requiring JSON-only syntax', () => {
+    const automation = parseAutomationToml([
+      'version = 1',
+      'id = "cron-smoke"',
+      'kind = "cron"',
+      'name = "Cron Smoke"',
+      'prompt = "run"',
+      'status = "ACTIVE"',
+      'rrule = "FREQ=DAILY"',
+      "cwds = ['/tmp/project-one', '/tmp/project,two']",
+      'created_at = 111',
+      'updated_at = 222',
+      '[scheduler]',
+      'execution_environment = "local"',
+    ].join('\n'))
+
+    expect(automation?.cwds).toEqual(['/tmp/project-one', '/tmp/project,two'])
+    expect(automation?.createdAtMs).toBe(111)
+    expect(automation?.extraTomlLines).toContain('[scheduler]')
+  })
+
+  it('omits preserved TOML internals from automation API records', () => {
+    const automation = parseAutomationToml([
+      'version = 1',
+      'id = "cron-smoke"',
+      'kind = "cron"',
+      'name = "Cron Smoke"',
+      'prompt = "run"',
+      'status = "ACTIVE"',
+      'rrule = "FREQ=DAILY"',
+      'cwds = ["/tmp/project-one"]',
+      '[scheduler]',
+      'execution_environment = "local"',
+    ].join('\n'))
+
+    expect(automation).toBeTruthy()
+    expect(toAutomationApiRecord(automation as NonNullable<typeof automation>)).not.toHaveProperty('extraTomlLines')
   })
 })
