@@ -1144,6 +1144,10 @@ import {
   getThreadTerminalQuickCommands,
   getThreadTerminalStatus,
   getWorkspaceRootsState,
+  getDirectoryComposioStatus,
+  listDirectoryApps,
+  listDirectoryComposioConnectors,
+  listDirectoryPlugins,
   listLocalDirectories,
   openProjectRoot,
   persistFirstLaunchPluginsCardPreference,
@@ -1204,6 +1208,7 @@ type DirectoryTryItemPayload = {
   displayName: string
   skillPath?: string
   prompt?: string
+  tryKey?: string
   attachedSkills?: Array<{ name: string; path: string }>
 }
 
@@ -2010,6 +2015,9 @@ onMounted(() => {
   void loadFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
+  window.setTimeout(() => {
+    void preloadDirectoryCatalogs()
+  }, 1500)
 })
 
 watch(visibleFeedbackErrors, (values, oldValues) => {
@@ -4154,6 +4162,24 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
   setSelectedCollaborationMode(mode)
 }
 
+async function preloadDirectoryCatalogs(): Promise<void> {
+  const cwd = directoryCwd.value.trim()
+  const threadId = routeThreadId.value.trim()
+  try {
+    const composioStatusPromise = getDirectoryComposioStatus()
+    await Promise.allSettled([
+      listDirectoryPlugins(cwd ? [cwd] : undefined),
+      listDirectoryApps(threadId || undefined),
+      composioStatusPromise.then(async (status) => {
+        if (!status.available || !status.authenticated) return
+        await listDirectoryComposioConnectors('', null, 50)
+      }),
+    ])
+  } catch {
+    // Background preloading should never block normal navigation.
+  }
+}
+
 async function initialize(): Promise<void> {
   await router.isReady()
 
@@ -4453,7 +4479,7 @@ function buildDirectoryTryPrompt(payload: DirectoryTryItemPayload): string {
 }
 
 function getDirectoryTryItemKey(payload: DirectoryTryItemPayload): string {
-  return `${payload.kind}:${payload.name}:${payload.skillPath ?? ''}`
+  return payload.tryKey ?? `${payload.kind}:${payload.name}:${payload.skillPath ?? ''}:${payload.prompt ?? ''}`
 }
 
 async function onTryDirectoryItem(payload: DirectoryTryItemPayload): Promise<void> {

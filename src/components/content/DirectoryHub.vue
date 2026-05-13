@@ -72,13 +72,11 @@
       <div v-else-if="isLoadingPlugins" class="directory-loading">Loading plugins...</div>
       <div v-else-if="visiblePlugins.length === 0" class="directory-empty">No plugins found.</div>
       <div v-else class="directory-grid">
-        <button
+        <article
           v-for="plugin in visiblePlugins"
           :key="plugin.id"
           class="directory-card"
           :class="{ 'is-disabled': plugin.installed && !plugin.enabled }"
-          type="button"
-          @click="openPluginDetail(plugin)"
         >
           <div class="directory-card-top">
             <img
@@ -101,11 +99,41 @@
             </div>
           </div>
           <p v-if="plugin.description" class="directory-card-description">{{ plugin.description }}</p>
-          <div class="directory-chip-row">
-            <span v-if="plugin.category" class="directory-chip">{{ plugin.category }}</span>
-            <span v-for="capability in plugin.capabilities.slice(0, 2)" :key="capability" class="directory-chip">{{ capability }}</span>
+          <div class="directory-chip-row directory-example-chip-row" aria-label="Try example prompts">
+            <button
+              v-for="example in pluginExampleChips(plugin)"
+              :key="example"
+              class="directory-chip directory-example-chip"
+              type="button"
+              :disabled="!canTryPlugin(plugin) || isTryActionInFlight"
+              :title="canTryPlugin(plugin) ? `Start: ${example}` : 'Install and enable this plugin to run examples'"
+              @click.stop="tryPlugin(plugin, example)"
+            >
+              {{ props.tryInFlightKey === pluginTryKey(plugin, example) ? 'Starting...' : example }}
+            </button>
           </div>
-        </button>
+          <div class="directory-card-actions">
+            <button class="directory-action" type="button" @click="openPluginDetail(plugin)">
+              Details
+            </button>
+            <button
+              v-if="!plugin.installed"
+              class="directory-action primary"
+              type="button"
+              @click="openPluginDetail(plugin)"
+            >
+              Install to run
+            </button>
+            <button
+              v-else-if="!plugin.enabled"
+              class="directory-action"
+              type="button"
+              @click="openPluginDetail(plugin)"
+            >
+              Enable examples
+            </button>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -166,9 +194,18 @@
             </div>
           </div>
           <p v-if="app.description" class="directory-card-description">{{ app.description }}</p>
-          <div class="directory-chip-row">
-            <span v-if="app.category" class="directory-chip">{{ app.category }}</span>
-            <span v-for="name in app.pluginDisplayNames.slice(0, 2)" :key="name" class="directory-chip">{{ name }}</span>
+          <div class="directory-chip-row directory-example-chip-row" aria-label="Try example prompts">
+            <button
+              v-for="example in appExampleChips(app)"
+              :key="example"
+              class="directory-chip directory-example-chip"
+              type="button"
+              :disabled="!canTryApp(app) || isTryActionInFlight"
+              :title="canTryApp(app) ? `Start: ${example}` : 'Connect and enable this app to run examples'"
+              @click="tryApp(app, example)"
+            >
+              {{ props.tryInFlightKey === appTryKey(app, example) ? 'Starting...' : example }}
+            </button>
           </div>
           <div class="directory-card-actions">
             <button class="directory-action" type="button" :disabled="appActionId === app.id" @click="toggleApp(app)">
@@ -176,15 +213,6 @@
             </button>
             <button v-if="app.installUrl" class="directory-action-link" type="button" @click="openExternalUrl(app.installUrl)">
               {{ app.isAccessible ? 'Manage' : 'Login' }}
-            </button>
-            <button
-              v-if="app.isAccessible && app.isEnabled"
-              class="directory-action"
-              type="button"
-              :disabled="isTryActionInFlight"
-              @click="tryApp(app)"
-            >
-              {{ props.tryInFlightKey === appTryKey(app) ? 'Starting...' : 'Try it!' }}
             </button>
           </div>
         </article>
@@ -324,10 +352,18 @@
               </div>
             </div>
             <p v-if="connector.description" class="directory-card-description">{{ connector.description }}</p>
-            <div class="directory-chip-row">
-              <span class="directory-chip">{{ connector.toolsCount }} tools</span>
-              <span v-if="connector.triggersCount > 0" class="directory-chip">{{ connector.triggersCount }} triggers</span>
-              <span v-if="connector.authModes.length > 0" class="directory-chip">{{ connector.authModes.join(', ') }}</span>
+            <div class="directory-chip-row directory-example-chip-row" aria-label="Try example prompts">
+              <button
+                v-for="example in composioExampleChips(connector)"
+                :key="example"
+                class="directory-chip directory-example-chip"
+                type="button"
+                :disabled="!canTryComposio(connector) || isTryActionInFlight"
+                :title="canTryComposio(connector) ? `Start: ${example}` : 'Connect this connector to run examples'"
+                @click="tryComposio(connector, [], example)"
+              >
+                {{ props.tryInFlightKey === composioTryKey(connector.slug, example) ? 'Starting...' : example }}
+              </button>
             </div>
             <div class="directory-card-actions">
               <button class="directory-action" type="button" @click="openComposioDetail(connector.slug)">
@@ -341,15 +377,6 @@
                 @click="runComposioPrimaryAction(connector)"
               >
                 {{ composioActionSlug === connector.slug ? 'Opening...' : composioPrimaryActionLabel(connector) }}
-              </button>
-              <button
-                v-if="canTryComposio(connector)"
-                class="directory-action primary"
-                type="button"
-                :disabled="isTryActionInFlight"
-                @click="tryComposio(connector)"
-              >
-                {{ props.tryInFlightKey === composioTryKey(connector.slug) ? 'Starting...' : 'Try it!' }}
               </button>
             </div>
           </article>
@@ -449,6 +476,23 @@
             <template v-else-if="selectedPluginDetail">
               <p v-if="selectedPluginDescription" class="directory-detail-description">{{ selectedPluginDescription }}</p>
 
+              <div v-if="selectedPlugin" class="directory-detail-block">
+                <h4 class="directory-detail-heading">Examples</h4>
+                <div class="directory-chip-row directory-example-chip-row">
+                  <button
+                    v-for="example in pluginExampleChips(selectedPlugin)"
+                    :key="example"
+                    class="directory-chip directory-example-chip"
+                    type="button"
+                    :disabled="!canTryPlugin(selectedPlugin) || isTryActionInFlight"
+                    :title="canTryPlugin(selectedPlugin) ? `Start: ${example}` : 'Install and enable this plugin to run examples'"
+                    @click="tryPlugin(selectedPlugin, example)"
+                  >
+                    {{ props.tryInFlightKey === pluginTryKey(selectedPlugin, example) ? 'Starting...' : example }}
+                  </button>
+                </div>
+              </div>
+
               <div v-if="selectedPluginDetail.summary.capabilities.length > 0" class="directory-detail-block">
                 <h4 class="directory-detail-heading">Capabilities</h4>
                 <div class="directory-chip-row">
@@ -540,15 +584,6 @@
             >
               {{ selectedPlugin.enabled ? 'Disable' : 'Enable' }}
             </button>
-            <button
-              v-if="selectedPlugin && selectedPlugin.installed && selectedPlugin.enabled"
-              class="directory-action primary"
-              type="button"
-              :disabled="isPluginActionInFlight || isTryActionInFlight"
-              @click="tryPlugin(selectedPlugin)"
-            >
-              {{ props.tryInFlightKey === pluginTryKey(selectedPlugin) ? 'Starting...' : 'Try it!' }}
-            </button>
           </div>
         </article>
       </div>
@@ -582,6 +617,23 @@
               <p v-if="selectedComposioDetail.connector.description" class="directory-detail-description">
                 {{ selectedComposioDetail.connector.description }}
               </p>
+
+              <div class="directory-detail-block">
+                <h4 class="directory-detail-heading">Examples</h4>
+                <div class="directory-chip-row directory-example-chip-row">
+                  <button
+                    v-for="example in composioExampleChips(selectedComposioDetail.connector)"
+                    :key="example"
+                    class="directory-chip directory-example-chip"
+                    type="button"
+                    :disabled="!canTryComposio(selectedComposioDetail.connector) || isTryActionInFlight"
+                    :title="canTryComposio(selectedComposioDetail.connector) ? `Start: ${example}` : 'Connect this connector to run examples'"
+                    @click="tryComposio(selectedComposioDetail.connector, selectedComposioDetail.connections, example)"
+                  >
+                    {{ props.tryInFlightKey === composioTryKey(selectedComposioDetail.connector.slug, example) ? 'Starting...' : example }}
+                  </button>
+                </div>
+              </div>
 
               <div class="directory-detail-grid">
                 <div class="directory-detail-block">
@@ -641,15 +693,6 @@
             >
               {{ composioActionSlug === selectedComposioDetail?.connector.slug ? 'Opening...' : composioPrimaryActionLabel(selectedComposioDetail.connector) }}
             </button>
-            <button
-              v-if="selectedComposioDetail && canTryComposio(selectedComposioDetail.connector)"
-              class="directory-action primary"
-              type="button"
-              :disabled="isTryActionInFlight"
-              @click="tryComposio(selectedComposioDetail.connector, selectedComposioDetail.connections)"
-            >
-              {{ props.tryInFlightKey === composioTryKey(selectedComposioDetail.connector.slug) ? 'Starting...' : 'Try it!' }}
-            </button>
           </div>
         </article>
       </div>
@@ -696,6 +739,50 @@ const COMPOSIO_SKILL_PATH = '/Users/igor/.codex/skills/shared_skills/composio-cl
 const COMPOSIO_PAGE_LIMIT = 50
 
 const POPULAR_LIMIT = 100
+const POPULAR_PLUGIN_TOP_20: Array<[RegExp, number]> = [
+  [/^gmail$/i, 20],
+  [/^google calendar$/i, 19],
+  [/^google drive$/i, 18],
+  [/^google docs$/i, 17],
+  [/^google sheets$/i, 16],
+  [/^notion$/i, 15],
+  [/^obsidian$/i, 14],
+  [/^reddit$/i, 13],
+  [/^(x|twitter)$/i, 12],
+  [/^youtube$/i, 11],
+  [/^instagram$/i, 10],
+  [/^tiktok$/i, 9],
+  [/^facebook$/i, 8],
+  [/^linkedin$/i, 7],
+  [/^slack$/i, 6],
+  [/^canva$/i, 5],
+  [/^figma$/i, 4],
+  [/^dropbox$/i, 3],
+  [/^outlook email$/i, 2],
+  [/^spotify$/i, 1],
+]
+const POPULAR_APP_TOP_20: Array<[RegExp, number]> = [
+  [/^gmail$/i, 20],
+  [/^google calendar$/i, 19],
+  [/^google drive$/i, 18],
+  [/^google docs$/i, 17],
+  [/^google sheets$/i, 16],
+  [/^notion$/i, 15],
+  [/^obsidian$/i, 14],
+  [/^reddit$/i, 13],
+  [/^(x|twitter)$/i, 12],
+  [/^youtube$/i, 11],
+  [/^instagram$/i, 10],
+  [/^tiktok$/i, 9],
+  [/^facebook$/i, 8],
+  [/^linkedin$/i, 7],
+  [/^slack$/i, 6],
+  [/^canva$/i, 5],
+  [/^figma$/i, 4],
+  [/^dropbox$/i, 3],
+  [/^outlook email$/i, 2],
+  [/^spotify$/i, 1],
+]
 const POPULAR_APP_NAME_BONUSES: Array<[RegExp, number]> = [
   [/^gmail$/i, 30_000],
   [/^google calendar$/i, 29_500],
@@ -733,8 +820,86 @@ const POPULAR_APP_KEYWORD_BONUSES: Array<[RegExp, number]> = [
   [/(task|project|issue|repository|deploy|database|crm|sales|support)/i, 120],
 ]
 const POPULAR_PLUGIN_NAME_BONUSES: Array<[RegExp, number]> = [
-  [/(computer use|github|gitlab|linear|slack|notion|browser|web|filesystem|terminal)/i, 120],
-  [/(calendar|email|drive|docs|design|deploy|project|issue|search|database)/i, 55],
+  [/(browser|chrome|computer use|github|gitlab|linear|slack|notion|gmail|email|calendar|drive|figma|canva|cloudflare|terminal|filesystem)/i, 180],
+  [/(web|docs|design|deploy|project|issue|search|database|outlook|teams|sharepoint|jira|vercel|netlify)/i, 75],
+]
+const PLUGIN_EXAMPLE_RULES: Array<{ pattern: RegExp; examples: string[] }> = [
+  {
+    pattern: /(gmail|email|outlook|mail|inbox)/i,
+    examples: ['Make a VIP reply queue', 'Find invoices due this week', 'Draft no-thanks politely', 'List flight email changes', 'Archive promo clutter'],
+  },
+  {
+    pattern: /(calendar|event|availability|meeting)/i,
+    examples: ['Protect 3 focus blocks', 'Prep my 2pm meeting', 'Find lunch with Alex', 'Move double-booked calls', 'Show meetings without notes'],
+  },
+  {
+    pattern: /(google drive|drive|dropbox|box|sharepoint|file|storage)/i,
+    examples: ['Find Q4 budget files', 'Brief from client folder', 'Compare latest contract edits', 'List stale shared docs', 'Find deck with churn chart'],
+  },
+  {
+    pattern: /(google docs|docs|document)/i,
+    examples: ['Turn notes into PRD', 'Make a one-page brief', 'Extract decisions table', 'Rewrite as customer email', 'Add crisp section titles'],
+  },
+  {
+    pattern: /(google sheets|sheets|spreadsheet|excel)/i,
+    examples: ['Clean duplicate leads', 'Flag spend outliers', 'Build revenue pivot', 'Write margin formulas', 'Draft 3-line KPI readout'],
+  },
+  {
+    pattern: /(notion|wiki|page)/i,
+    examples: ['Make launch task board', 'Find stale onboarding pages', 'Turn meeting notes to tasks', 'Draft product spec page', 'Summarize open decisions'],
+  },
+  {
+    pattern: /(obsidian|vault|second brain|pkm|notes)/i,
+    examples: ['Roll up weekly daily notes', 'Link orphan notes to projects', 'Turn YouTube link into note', 'Extract task log entries', 'Create insight index'],
+  },
+  {
+    pattern: /(reddit|subreddit)/i,
+    examples: ['Find 10 SaaS complaints', 'Mine r/productivity questions', 'Spot pricing objections', 'Draft non-salesy reply', 'Track competitor pain posts'],
+  },
+  {
+    pattern: /(x|twitter)/i,
+    examples: ['Find angry launch replies', 'Draft 8-tweet teardown', 'Monitor brand mentions today', 'Turn blog into thread', 'Compare influencer takes'],
+  },
+  {
+    pattern: /(youtube|tiktok|instagram|facebook|linkedin|shorts|reels)/i,
+    examples: ['Turn video into X thread', 'Pull 20 comment hooks', 'Draft Reels caption set', 'Make LinkedIn carousel outline', 'Plan 7 Shorts ideas'],
+  },
+  {
+    pattern: /(browser|web)/i,
+    examples: ['Open a local URL', 'Click through a flow', 'Capture a screenshot', 'Inspect visible text', 'Verify mobile layout'],
+  },
+  {
+    pattern: /(chrome)/i,
+    examples: ['Use my Chrome session', 'Inspect current tab', 'Test logged-in page', 'Capture page state', 'Check extension UI'],
+  },
+  {
+    pattern: /(computer use|desktop)/i,
+    examples: ['Control a desktop app', 'Read window state', 'Click a toolbar', 'Fill a form', 'Verify a dialog'],
+  },
+  {
+    pattern: /(github|gitlab|repository|pull request|issue)/i,
+    examples: ['Review a pull request', 'Triage open issues', 'Check CI failures', 'Summarize commits', 'Draft a PR comment'],
+  },
+  {
+    pattern: /(linear|jira|asana|trello|clickup|project|task)/i,
+    examples: ['Find assigned issues', 'Summarize blockers', 'Create a task', 'Update issue status', 'Plan next sprint'],
+  },
+  {
+    pattern: /(slack|teams|chat|message)/i,
+    examples: ['Summarize a channel', 'Find mentions', 'Draft a reply', 'Search a thread', 'Post an update'],
+  },
+  {
+    pattern: /(figma|canva|design|image|slide|presentation)/i,
+    examples: ['Inspect a design', 'Create a mockup', 'Export assets', 'Compare variants', 'Draft presentation copy'],
+  },
+  {
+    pattern: /(cloudflare|vercel|netlify|deploy|worker|hosting)/i,
+    examples: ['Check deploy status', 'List recent builds', 'Inspect DNS records', 'Review logs', 'Publish an update'],
+  },
+  {
+    pattern: /(terminal|shell|filesystem|file system|database|postgres|sqlite)/i,
+    examples: ['Run a safe command', 'Search project files', 'Inspect database rows', 'Check disk usage', 'Summarize logs'],
+  },
 ]
 const POPULAR_MCP_NAME_BONUSES: Array<[RegExp, number]> = [
   [/(github|gitlab|linear|slack|notion|filesystem|browser|computer|web|postgres|sqlite|database)/i, 120],
@@ -752,6 +917,7 @@ export type DirectoryTryItemPayload = {
   displayName: string
   skillPath?: string
   prompt?: string
+  tryKey?: string
   attachedSkills?: Array<{ name: string; path: string }>
 }
 
@@ -877,6 +1043,10 @@ const toast = ref<{ text: string; type: 'success' | 'error' } | null>(null)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 let composioSearchTimer: ReturnType<typeof setTimeout> | null = null
 let isComposioLoadQueued = false
+let pluginsLoadPromise: Promise<void> | null = null
+let appsLoadPromise: Promise<void> | null = null
+let pluginsLoadedKey = ''
+let appsLoadedKey = ''
 
 const activeCopy = computed(() => tabs.find((tab) => tab.id === activeTab.value) ?? tabs[0])
 const supportsPlugins = computed(() =>
@@ -1002,8 +1172,98 @@ function includesSearch(parts: Array<string | null | undefined>, query: string):
   return parts.some((part) => part?.toLowerCase().includes(normalized))
 }
 
+function addExampleChip(chips: string[], seen: Set<string>, value: string): void {
+  const chip = value.trim()
+  if (!chip) return
+  const key = chip.toLowerCase()
+  if (seen.has(key)) return
+  seen.add(key)
+  chips.push(chip)
+}
+
+function pluginExampleSource(plugin: DirectoryPluginSummary): string {
+  return [
+    plugin.displayName,
+    plugin.name,
+    plugin.description,
+    plugin.longDescription,
+    plugin.category,
+    plugin.developerName,
+    plugin.capabilities.join(' '),
+  ].join(' ')
+}
+
+function exampleChipsFromSource(source: string, fallbackLabel: string, fallbackValues: string[] = []): string[] {
+  const chips: string[] = []
+  const seen = new Set<string>()
+
+  for (const rule of PLUGIN_EXAMPLE_RULES) {
+    if (!rule.pattern.test(source)) continue
+    for (const example of rule.examples) addExampleChip(chips, seen, example)
+    if (chips.length >= 5) return chips.slice(0, 5)
+  }
+
+  for (const value of fallbackValues) {
+    addExampleChip(chips, seen, value.replace(/[.!?]\s*$/u, ''))
+    if (chips.length >= 5) return chips.slice(0, 5)
+  }
+
+  addExampleChip(chips, seen, `Explore ${fallbackLabel}`)
+  addExampleChip(chips, seen, 'Show available actions')
+  addExampleChip(chips, seen, 'Run a safe check')
+  addExampleChip(chips, seen, 'Summarize current state')
+  addExampleChip(chips, seen, 'Suggest next steps')
+  return chips.slice(0, 5)
+}
+
+function pluginExampleChips(plugin: DirectoryPluginSummary): string[] {
+  const chips = exampleChipsFromSource(pluginExampleSource(plugin), plugin.displayName, plugin.defaultPrompt)
+  if (chips.length >= 5) return chips
+  const seen = new Set(chips.map((chip) => chip.toLowerCase()))
+  for (const capability of plugin.capabilities) {
+    addExampleChip(chips, seen, `Try ${capability}`)
+    if (chips.length >= 5) return chips.slice(0, 5)
+  }
+  return chips.slice(0, 5)
+}
+
+function appExampleChips(app: DirectoryAppInfo): string[] {
+  return exampleChipsFromSource([
+    app.name,
+    app.description,
+    app.category,
+    app.developer,
+    app.distributionChannel,
+    app.pluginDisplayNames.join(' '),
+  ].join(' '), app.name)
+}
+
+function composioExampleChips(connector: DirectoryComposioConnector): string[] {
+  return exampleChipsFromSource([
+    connector.name,
+    connector.slug,
+    connector.description,
+    connector.authModes.join(' '),
+    connector.connectionStatuses.join(' '),
+  ].join(' '), connector.name)
+}
+
 function bonusForName(name: string, rows: Array<[RegExp, number]>): number {
   return rows.reduce((score, [pattern, bonus]) => score + (pattern.test(name) ? bonus : 0), 0)
+}
+
+function normalizePopularRankName(name: string): string {
+  return normalizeAppNameForRanking(name)
+    .replace(/[-_]+/gu, ' ')
+    .replace(/\s+plugin$/iu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+function pinnedPopularRank(name: string, rows: Array<[RegExp, number]>): number {
+  const normalized = normalizePopularRankName(name)
+  const match = rows.find(([pattern]) => pattern.test(normalized))
+  return match?.[1] ?? 0
 }
 
 function normalizeAppNameForRanking(name: string): string {
@@ -1084,6 +1344,8 @@ function filterPlugins(rows: DirectoryPluginSummary[], query: string): Directory
     plugin.category,
     plugin.marketplaceDisplayName,
     ...plugin.capabilities,
+    ...plugin.defaultPrompt,
+    ...pluginExampleChips(plugin),
   ], query))
 }
 
@@ -1095,6 +1357,7 @@ function filterApps(rows: DirectoryAppInfo[], query: string): DirectoryAppInfo[]
     app.category,
     app.distributionChannel,
     ...app.pluginDisplayNames,
+    ...appExampleChips(app),
   ], query))
 }
 
@@ -1105,10 +1368,16 @@ function filterComposioConnectors(rows: DirectoryComposioConnector[], query: str
     connector.description,
     ...connector.authModes,
     ...connector.connectionStatuses,
+    ...composioExampleChips(connector),
   ], query))
 }
 
 function pluginPopularScore(plugin: DirectoryPluginSummary): number {
+  const pinnedRank = Math.max(
+    pinnedPopularRank(plugin.displayName, POPULAR_PLUGIN_TOP_20),
+    pinnedPopularRank(plugin.name, POPULAR_PLUGIN_TOP_20),
+  )
+  if (pinnedRank > 0) return 1_000_000 + pinnedRank
   return (
     (plugin.installed ? 500 : 0) +
     (plugin.enabled ? 40 : 0) +
@@ -1121,6 +1390,8 @@ function pluginPopularScore(plugin: DirectoryPluginSummary): number {
 
 function appPopularScore(app: DirectoryAppInfo): number {
   const normalizedName = normalizeAppNameForRanking(app.name)
+  const pinnedRank = pinnedPopularRank(normalizedName, POPULAR_APP_TOP_20)
+  if (pinnedRank > 0) return 1_000_000 + pinnedRank
   return (
     (app.isAccessible ? 10_000 : 0) +
     bonusForName(normalizedName, POPULAR_APP_NAME_BONUSES) +
@@ -1221,33 +1492,54 @@ function composioConnectionStatusClass(status: string): string {
   return 'is-muted'
 }
 
-function appTryKey(app: DirectoryAppInfo): string {
-  return `app:${app.id}:`
+function appTryKey(app: DirectoryAppInfo, example = ''): string {
+  return `app:${app.id}:${example}`
 }
 
-function tryApp(app: DirectoryAppInfo): void {
+function canTryApp(app: DirectoryAppInfo): boolean {
+  return app.isAccessible && app.isEnabled
+}
+
+function buildExamplePrompt(displayName: string, itemType: string, example: string): string {
+  const label = displayName.trim()
+  const task = example.trim()
+  if (!task) return `Test ${label} ${itemType}. Give me a list of what it can do and one useful example.`
+  return `Use ${label} ${itemType} to do this concrete task: ${task}. Do not ask me to fill in placeholders first; inspect what is available, make reasonable assumptions, and show the result or the exact next action you took.`
+}
+
+function tryApp(app: DirectoryAppInfo, example = ''): void {
   if (isTryActionInFlight.value) return
+  if (!canTryApp(app)) return
   emit('try-item', {
     kind: 'app',
     name: app.id,
     displayName: app.name,
+    prompt: buildExamplePrompt(app.name, 'app', example),
+    tryKey: appTryKey(app, example),
   })
 }
 
-function pluginTryKey(plugin: DirectoryPluginSummary): string {
-  return `plugin:${plugin.name}:`
+function pluginTryKey(plugin: DirectoryPluginSummary, example = ''): string {
+  return `plugin:${plugin.name}:${example}`
 }
 
-function composioTryKey(slug: string): string {
-  return `composio:${slug}:`
+function composioTryKey(slug: string, example = ''): string {
+  return `composio:${slug}:${example}`
 }
 
-function tryPlugin(plugin: DirectoryPluginSummary): void {
+function canTryPlugin(plugin: DirectoryPluginSummary): boolean {
+  return plugin.installed && plugin.enabled
+}
+
+function tryPlugin(plugin: DirectoryPluginSummary, example = ''): void {
   if (isTryActionInFlight.value) return
+  if (!canTryPlugin(plugin)) return
   emit('try-item', {
     kind: 'plugin',
     name: plugin.name,
     displayName: plugin.displayName,
+    prompt: buildExamplePrompt(plugin.displayName, 'plugin', example),
+    tryKey: pluginTryKey(plugin, example),
   })
 }
 
@@ -1255,21 +1547,27 @@ function canTryComposio(connector: DirectoryComposioConnector): boolean {
   return composioHasUsableConnection(connector)
 }
 
-function buildComposioTryPrompt(connector: DirectoryComposioConnector, connections: DirectoryComposioConnection[] = []): string {
+function buildComposioTryPrompt(connector: DirectoryComposioConnector, connections: DirectoryComposioConnection[] = [], example = ''): string {
   const firstActive = connections.find((connection) => connection.status === 'ACTIVE' && !connection.isDisabled)
   const accountHint = firstActive?.wordId
     ? ` If there are multiple accounts, prefer \`${firstActive.wordId}\`.`
     : ''
+  const task = example.trim()
+  if (task) {
+    return `Use the Composio CLI skill with the ${connector.name} connector (${connector.slug}) to do this concrete task: ${task}. Do not ask me to fill in placeholders first; inspect available tools/connections, make reasonable assumptions, and show the result or the exact next action you took.${accountHint}`
+  }
   return `Use the Composio CLI skill with the ${connector.name} connector (${connector.slug}). Start by listing what it can do here, mention the current connection status, and suggest one safe command I can run now.${accountHint}`
 }
 
-function tryComposio(connector: DirectoryComposioConnector, connections: DirectoryComposioConnection[] = []): void {
+function tryComposio(connector: DirectoryComposioConnector, connections: DirectoryComposioConnection[] = [], example = ''): void {
   if (isTryActionInFlight.value) return
+  if (!canTryComposio(connector)) return
   emit('try-item', {
     kind: 'composio',
     name: connector.slug,
     displayName: connector.name,
-    prompt: buildComposioTryPrompt(connector, connections),
+    prompt: buildComposioTryPrompt(connector, connections, example),
+    tryKey: composioTryKey(connector.slug, example),
     attachedSkills: [{ name: 'composio-cli', path: COMPOSIO_SKILL_PATH }],
   })
 }
@@ -1301,38 +1599,53 @@ async function loadMethods(): Promise<void> {
   }
 }
 
-async function loadPlugins(): Promise<void> {
+async function loadPlugins(force = false): Promise<void> {
   if (!supportsPlugins.value) return
-  isLoadingPlugins.value = true
-  pluginError.value = ''
-  try {
-    const cwd = props.cwd?.trim()
-    const [nextPlugins] = await Promise.all([
-      listDirectoryPlugins(cwd ? [cwd] : undefined),
-      supportsApps.value ? loadApps() : Promise.resolve(),
-    ])
-    plugins.value = nextPlugins
-  } catch (error) {
-    pluginError.value = error instanceof Error ? error.message : 'Failed to load plugins'
-  } finally {
-    isLoadingPlugins.value = false
-  }
+  const key = props.cwd?.trim() || ''
+  if (!force && pluginsLoadedKey === key && plugins.value.length > 0 && !pluginError.value) return
+  if (pluginsLoadPromise) return pluginsLoadPromise
+  pluginsLoadPromise = (async () => {
+    isLoadingPlugins.value = true
+    pluginError.value = ''
+    try {
+      const [nextPlugins] = await Promise.all([
+        listDirectoryPlugins(key ? [key] : undefined, { force }),
+        supportsApps.value ? loadApps(force) : Promise.resolve(),
+      ])
+      plugins.value = nextPlugins
+      pluginsLoadedKey = key
+    } catch (error) {
+      pluginError.value = error instanceof Error ? error.message : 'Failed to load plugins'
+    } finally {
+      isLoadingPlugins.value = false
+      pluginsLoadPromise = null
+    }
+  })()
+  return pluginsLoadPromise
 }
 
-async function loadApps(): Promise<void> {
+async function loadApps(force = false): Promise<void> {
   if (!supportsApps.value) return
-  isLoadingApps.value = true
-  appError.value = ''
-  try {
-    apps.value = await listDirectoryApps(props.threadId?.trim() || undefined)
-  } catch (error) {
-    appError.value = error instanceof Error ? error.message : 'Failed to load apps'
-  } finally {
-    isLoadingApps.value = false
-  }
+  const key = props.threadId?.trim() || ''
+  if (!force && appsLoadedKey === key && apps.value.length > 0 && !appError.value) return
+  if (appsLoadPromise) return appsLoadPromise
+  appsLoadPromise = (async () => {
+    isLoadingApps.value = true
+    appError.value = ''
+    try {
+      apps.value = await listDirectoryApps(key || undefined, { force })
+      appsLoadedKey = key
+    } catch (error) {
+      appError.value = error instanceof Error ? error.message : 'Failed to load apps'
+    } finally {
+      isLoadingApps.value = false
+      appsLoadPromise = null
+    }
+  })()
+  return appsLoadPromise
 }
 
-async function loadComposio(append = false): Promise<void> {
+async function loadComposio(append = false, force = false): Promise<void> {
   if (isLoadingComposio.value) {
     isComposioLoadQueued = true
     return
@@ -1341,7 +1654,7 @@ async function loadComposio(append = false): Promise<void> {
   isLoadingComposio.value = true
   composioError.value = ''
   try {
-    const status = await getDirectoryComposioStatus()
+    const status = await getDirectoryComposioStatus({ force })
     composioStatus.value = status
     if (!status.available || !status.authenticated) {
       composioConnectors.value = []
@@ -1350,7 +1663,7 @@ async function loadComposio(append = false): Promise<void> {
       return
     }
     const cursor = append ? composioNextCursor.value : null
-    const page = await listDirectoryComposioConnectors(composioSearchQuery.value, cursor, COMPOSIO_PAGE_LIMIT)
+    const page = await listDirectoryComposioConnectors(composioSearchQuery.value, cursor, COMPOSIO_PAGE_LIMIT, { force })
     composioConnectors.value = append ? [...composioConnectors.value, ...page.data] : page.data
     composioNextCursor.value = page.nextCursor
     composioTotal.value = page.total
@@ -1396,9 +1709,9 @@ async function refreshMcpStatusesForPluginDetail(): Promise<void> {
 }
 
 function refreshActiveTab(forceReload = false): void {
-  if (activeTab.value === 'plugins') void loadPlugins()
-  if (activeTab.value === 'apps') void loadApps()
-  if (activeTab.value === 'composio') void loadComposio()
+  if (activeTab.value === 'plugins') void loadPlugins(forceReload)
+  if (activeTab.value === 'apps') void loadApps(forceReload)
+  if (activeTab.value === 'composio') void loadComposio(false, forceReload)
   if (activeTab.value === 'skills') {
     if (forceReload && supportsMcpReload.value) void reloadMcps()
     else void loadMcps()
@@ -1408,9 +1721,9 @@ function refreshActiveTab(forceReload = false): void {
 async function manualRefreshActiveTab(): Promise<void> {
   isManualRefreshInFlight.value = true
   try {
-    if (activeTab.value === 'plugins') await loadPlugins()
-    else if (activeTab.value === 'apps') await loadApps()
-    else if (activeTab.value === 'composio') await loadComposio()
+    if (activeTab.value === 'plugins') await loadPlugins(true)
+    else if (activeTab.value === 'apps') await loadApps(true)
+    else if (activeTab.value === 'composio') await loadComposio(false, true)
     else if (activeTab.value === 'skills' && supportsMcpReload.value) await reloadMcps()
     else if (activeTab.value === 'skills') await loadMcps()
   } finally {
@@ -1496,7 +1809,7 @@ async function startComposioConnect(connector: DirectoryComposioConnector): Prom
     }
     openExternalUrl(result.redirectUrl)
     showToast(`Opened ${connector.name} authorization`)
-    await loadComposio()
+    await loadComposio(false, true)
     if (isComposioDetailOpen.value && selectedComposioDetail.value?.connector.slug === connector.slug) {
       await openComposioDetail(connector.slug)
     }
@@ -1561,7 +1874,7 @@ async function installSelectedPlugin(): Promise<void> {
     installAuthApps.value = result.appsNeedingAuth
     showToast(`${selectedPlugin.value.displayName} plugin installed`)
     const openedAppLogin = openFirstAppLoginIfNeeded(result.appsNeedingAuth)
-    await loadPlugins()
+    await loadPlugins(true)
     const updated = plugins.value.find((plugin) => plugin.id === selectedPlugin.value?.id)
     if (updated) {
       await openPluginDetail(updated)
@@ -1584,7 +1897,7 @@ async function uninstallSelectedPlugin(): Promise<void> {
     await uninstallDirectoryPlugin(selectedPlugin.value.id)
     showToast(`${name} plugin uninstalled`)
     closePluginDetail()
-    await loadPlugins()
+    await loadPlugins(true)
   } catch (error) {
     showToast(error instanceof Error ? error.message : 'Failed to uninstall plugin', 'error')
   } finally {
@@ -1606,7 +1919,7 @@ async function toggleSelectedPlugin(): Promise<void> {
       }
     }
     showToast(`${selectedPlugin.value.displayName} plugin ${next ? 'enabled' : 'disabled'}`)
-    await loadPlugins()
+    await loadPlugins(true)
   } catch (error) {
     showToast(error instanceof Error ? error.message : 'Failed to update plugin', 'error')
   } finally {
@@ -1672,7 +1985,7 @@ watch(composioSearchQuery, () => {
   }, 250)
 })
 watch(() => props.cwd, () => {
-  if (activeTab.value === 'plugins') void loadPlugins()
+  if (activeTab.value === 'plugins') void loadPlugins(true)
 })
 watch(() => props.threadId, () => {
   if (activeTab.value === 'apps' || activeTab.value === 'plugins') void loadApps()
@@ -1917,6 +2230,14 @@ button.directory-card {
 
 .directory-chip {
   @apply rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500;
+}
+
+.directory-example-chip-row {
+  @apply mt-auto;
+}
+
+.directory-example-chip {
+  @apply cursor-pointer border-blue-100 bg-blue-50 text-blue-700 transition hover:border-blue-200 hover:bg-blue-100 hover:text-blue-800 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-50 disabled:text-zinc-400 disabled:opacity-70;
 }
 
 .directory-card-actions {
@@ -2203,6 +2524,10 @@ button.directory-card {
 :global(:root.dark) .directory-auth-panel,
 :global(:root.dark) .directory-chip {
   @apply border-zinc-700 bg-zinc-800 text-zinc-100;
+}
+
+:global(:root.dark) .directory-example-chip {
+  @apply border-blue-900/60 bg-blue-950/40 text-blue-200;
 }
 
 :global(:root.dark) .directory-sort-group {

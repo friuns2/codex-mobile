@@ -2103,27 +2103,86 @@ function normalizeDirectoryMcpServer(value: unknown): DirectoryMcpServerStatus |
   }
 }
 
-export async function listDirectoryPlugins(cwds?: string[]): Promise<DirectoryPluginSummary[]> {
+type DirectoryCacheOptions = { force?: boolean }
+
+const directoryPluginCache = new Map<string, { promise: Promise<DirectoryPluginSummary[]> | null; value: DirectoryPluginSummary[] | null }>()
+const directoryAppCache = new Map<string, { promise: Promise<DirectoryAppInfo[]> | null; value: DirectoryAppInfo[] | null }>()
+const directoryComposioConnectorCache = new Map<string, { promise: Promise<DirectoryComposioConnectorPage> | null; value: DirectoryComposioConnectorPage | null }>()
+let directoryComposioStatusCache: { promise: Promise<DirectoryComposioStatus> | null; value: DirectoryComposioStatus | null } = { promise: null, value: null }
+
+function directoryPluginsCacheKey(cwds?: string[]): string {
+  return (cwds ?? []).map((cwd) => cwd.trim()).filter(Boolean).join('\n')
+}
+
+function cloneDirectoryPluginRows(rows: DirectoryPluginSummary[]): DirectoryPluginSummary[] {
+  return rows.map((row) => ({ ...row, capabilities: [...row.capabilities], defaultPrompt: [...row.defaultPrompt], screenshotUrls: [...row.screenshotUrls], screenshots: [...row.screenshots] }))
+}
+
+function cloneDirectoryAppRows(rows: DirectoryAppInfo[]): DirectoryAppInfo[] {
+  return rows.map((row) => ({ ...row, pluginDisplayNames: [...row.pluginDisplayNames] }))
+}
+
+function cloneDirectoryComposioConnectorRows(rows: DirectoryComposioConnector[]): DirectoryComposioConnector[] {
+  return rows.map((row) => ({
+    ...row,
+    authModes: [...row.authModes],
+    connectionStatuses: [...row.connectionStatuses],
+  }))
+}
+
+function cloneDirectoryComposioConnectorPage(page: DirectoryComposioConnectorPage): DirectoryComposioConnectorPage {
+  return {
+    data: cloneDirectoryComposioConnectorRows(page.data),
+    nextCursor: page.nextCursor,
+    total: page.total,
+  }
+}
+
+function clearDirectoryCatalogCaches(): void {
+  directoryPluginCache.clear()
+  directoryAppCache.clear()
+  directoryComposioConnectorCache.clear()
+  directoryComposioStatusCache = { promise: null, value: null }
+}
+
+export async function listDirectoryPlugins(cwds?: string[], options: DirectoryCacheOptions = {}): Promise<DirectoryPluginSummary[]> {
+  const cacheKey = directoryPluginsCacheKey(cwds)
+  const cached = directoryPluginCache.get(cacheKey)
+  if (!options.force && cached?.value) return cloneDirectoryPluginRows(cached.value)
+  if (!options.force && cached?.promise) return cloneDirectoryPluginRows(await cached.promise)
+
   const params: Record<string, unknown> = {}
   if (cwds && cwds.length > 0) params.cwds = cwds
-  const payload = await callRpc<{ marketplaces?: unknown[] }>('plugin/list', params)
-  const plugins: DirectoryPluginSummary[] = []
-  for (const marketplaceValue of payload.marketplaces ?? []) {
-    const marketplace = asRecord(marketplaceValue)
-    if (!marketplace) continue
-    const iface = asRecord(marketplace.interface)
-    const meta = {
-      name: readString(marketplace.name) ?? '',
-      displayName: readString(iface?.displayName ?? iface?.display_name) ?? '',
-      path: readString(marketplace.path),
+  const request = (async () => {
+    const payload = await callRpc<{ marketplaces?: unknown[] }>('plugin/list', params)
+    const plugins: DirectoryPluginSummary[] = []
+    for (const marketplaceValue of payload.marketplaces ?? []) {
+      const marketplace = asRecord(marketplaceValue)
+      if (!marketplace) continue
+      const iface = asRecord(marketplace.interface)
+      const meta = {
+        name: readString(marketplace.name) ?? '',
+        displayName: readString(iface?.displayName ?? iface?.display_name) ?? '',
+        path: readString(marketplace.path),
+      }
+      const rows = Array.isArray(marketplace.plugins) ? marketplace.plugins : []
+      for (const row of rows) {
+        const plugin = normalizeDirectoryPluginSummary(row, meta)
+        if (plugin) plugins.push(plugin)
+      }
     }
-    const rows = Array.isArray(marketplace.plugins) ? marketplace.plugins : []
-    for (const row of rows) {
-      const plugin = normalizeDirectoryPluginSummary(row, meta)
-      if (plugin) plugins.push(plugin)
+    directoryPluginCache.set(cacheKey, { promise: null, value: cloneDirectoryPluginRows(plugins) })
+    return plugins
+  })()
+  directoryPluginCache.set(cacheKey, { promise: request, value: options.force ? null : cached?.value ?? null })
+  try {
+    return cloneDirectoryPluginRows(await request)
+  } catch (error) {
+    if (directoryPluginCache.get(cacheKey)?.promise === request) {
+      directoryPluginCache.delete(cacheKey)
     }
+    throw error
   }
-  return plugins
 }
 
 export async function readDirectoryPlugin(plugin: DirectoryPluginSummary): Promise<DirectoryPluginDetail> {
@@ -2156,6 +2215,7 @@ export async function installDirectoryPlugin(plugin: DirectoryPluginSummary): Pr
   if (plugin.marketplacePath) params.marketplacePath = plugin.marketplacePath
   if (plugin.remoteMarketplaceName) params.remoteMarketplaceName = plugin.remoteMarketplaceName
   const payload = await callRpc<{ authPolicy?: string; auth_policy?: string; appsNeedingAuth?: unknown[]; apps_needing_auth?: unknown[] }>('plugin/install', params)
+  clearDirectoryCatalogCaches()
   const apps = payload.appsNeedingAuth ?? payload.apps_needing_auth ?? []
   return {
     authPolicy: readString(payload.authPolicy ?? payload.auth_policy) ?? '',
@@ -2165,6 +2225,7 @@ export async function installDirectoryPlugin(plugin: DirectoryPluginSummary): Pr
 
 export async function uninstallDirectoryPlugin(pluginId: string): Promise<void> {
   await callRpc('plugin/uninstall', { pluginId })
+  clearDirectoryCatalogCaches()
 }
 
 export async function setDirectoryPluginEnabled(pluginId: string, enabled: boolean): Promise<void> {
@@ -2174,25 +2235,43 @@ export async function setDirectoryPluginEnabled(pluginId: string, enabled: boole
     expectedVersion: null,
     reloadUserConfig: true,
   })
+  directoryPluginCache.clear()
 }
 
-export async function listDirectoryApps(threadId?: string): Promise<DirectoryAppInfo[]> {
-  const apps: DirectoryAppInfo[] = []
-  let cursor: string | null = null
-  let catalogRank = 0
-  do {
-    const params: Record<string, unknown> = { limit: 100 }
-    if (cursor) params.cursor = cursor
-    if (threadId) params.threadId = threadId
-    const payload = await callRpc<{ data?: unknown[]; nextCursor?: string | null; next_cursor?: string | null }>('app/list', params)
-    for (const item of payload.data ?? []) {
-      const app = normalizeDirectoryApp(item, catalogRank)
-      if (app) apps.push(app)
-      catalogRank += 1
+export async function listDirectoryApps(threadId?: string, options: DirectoryCacheOptions = {}): Promise<DirectoryAppInfo[]> {
+  const cacheKey = threadId?.trim() ?? ''
+  const cached = directoryAppCache.get(cacheKey)
+  if (!options.force && cached?.value) return cloneDirectoryAppRows(cached.value)
+  if (!options.force && cached?.promise) return cloneDirectoryAppRows(await cached.promise)
+
+  const request = (async () => {
+    const apps: DirectoryAppInfo[] = []
+    let cursor: string | null = null
+    let catalogRank = 0
+    do {
+      const params: Record<string, unknown> = { limit: 100 }
+      if (cursor) params.cursor = cursor
+      if (cacheKey) params.threadId = cacheKey
+      const payload = await callRpc<{ data?: unknown[]; nextCursor?: string | null; next_cursor?: string | null }>('app/list', params)
+      for (const item of payload.data ?? []) {
+        const app = normalizeDirectoryApp(item, catalogRank)
+        if (app) apps.push(app)
+        catalogRank += 1
+      }
+      cursor = readString(payload.nextCursor ?? payload.next_cursor)
+    } while (cursor)
+    directoryAppCache.set(cacheKey, { promise: null, value: cloneDirectoryAppRows(apps) })
+    return apps
+  })()
+  directoryAppCache.set(cacheKey, { promise: request, value: options.force ? null : cached?.value ?? null })
+  try {
+    return cloneDirectoryAppRows(await request)
+  } catch (error) {
+    if (directoryAppCache.get(cacheKey)?.promise === request) {
+      directoryAppCache.delete(cacheKey)
     }
-    cursor = readString(payload.nextCursor ?? payload.next_cursor)
-  } while (cursor)
-  return apps
+    throw error
+  }
 }
 
 export async function setDirectoryAppEnabled(appId: string, enabled: boolean): Promise<void> {
@@ -2202,6 +2281,7 @@ export async function setDirectoryAppEnabled(appId: string, enabled: boolean): P
     expectedVersion: null,
     reloadUserConfig: true,
   })
+  directoryAppCache.clear()
 }
 
 export async function listDirectoryMcpServers(): Promise<DirectoryMcpServerStatus[]> {
@@ -2231,33 +2311,70 @@ export async function startDirectoryMcpLogin(name: string): Promise<DirectoryMcp
   }
 }
 
-export async function getDirectoryComposioStatus(): Promise<DirectoryComposioStatus> {
-  const response = await fetch('/codex-api/composio/status')
-  if (!response.ok) {
-    throw new Error(`Failed to load Composio status (${response.status})`)
+export async function getDirectoryComposioStatus(options: DirectoryCacheOptions = {}): Promise<DirectoryComposioStatus> {
+  if (!options.force && directoryComposioStatusCache.value) return { ...directoryComposioStatusCache.value }
+  if (!options.force && directoryComposioStatusCache.promise) return { ...await directoryComposioStatusCache.promise }
+  const request = (async () => {
+    const response = await fetch('/codex-api/composio/status')
+    if (!response.ok) {
+      throw new Error(`Failed to load Composio status (${response.status})`)
+    }
+    const status = await response.json() as DirectoryComposioStatus
+    directoryComposioStatusCache = { promise: null, value: { ...status } }
+    return status
+  })()
+  directoryComposioStatusCache = { promise: request, value: options.force ? null : directoryComposioStatusCache.value }
+  try {
+    return { ...await request }
+  } catch (error) {
+    if (directoryComposioStatusCache.promise === request) {
+      directoryComposioStatusCache = { promise: null, value: null }
+    }
+    throw error
   }
-  return await response.json() as DirectoryComposioStatus
 }
 
 export async function listDirectoryComposioConnectors(
   query = '',
   cursor: string | null = null,
   limit = 50,
+  options: DirectoryCacheOptions = {},
 ): Promise<DirectoryComposioConnectorPage> {
+  const normalizedQuery = query.trim()
+  const normalizedCursor = cursor?.trim() || ''
+  const normalizedLimit = limit && Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50
+  const cacheKey = `${normalizedQuery}\n${normalizedCursor}\n${normalizedLimit}`
+  const cached = directoryComposioConnectorCache.get(cacheKey)
+  if (!options.force && cached?.value) return cloneDirectoryComposioConnectorPage(cached.value)
+  if (!options.force && cached?.promise) return cloneDirectoryComposioConnectorPage(await cached.promise)
+
+  const request = (async () => {
   const params = new URLSearchParams()
-  if (query.trim()) params.set('query', query.trim())
-  if (cursor) params.set('cursor', cursor)
-  if (limit && Number.isFinite(limit)) params.set('limit', String(Math.max(1, Math.floor(limit))))
+  if (normalizedQuery) params.set('query', normalizedQuery)
+  if (normalizedCursor) params.set('cursor', normalizedCursor)
+  params.set('limit', String(normalizedLimit))
   const suffix = params.toString()
   const response = await fetch(`/codex-api/composio/connectors${suffix ? `?${suffix}` : ''}`)
   if (!response.ok) {
     throw new Error(`Failed to list Composio connectors (${response.status})`)
   }
   const payload = await response.json() as DirectoryComposioConnectorPage | { data?: DirectoryComposioConnector[]; nextCursor?: string | null; total?: number }
-  return {
+  const page = {
     data: Array.isArray(payload.data) ? payload.data : [],
     nextCursor: typeof payload.nextCursor === 'string' && payload.nextCursor.length > 0 ? payload.nextCursor : null,
     total: typeof payload.total === 'number' && Number.isFinite(payload.total) ? Math.max(0, Math.floor(payload.total)) : 0,
+  }
+  directoryComposioConnectorCache.set(cacheKey, { promise: null, value: cloneDirectoryComposioConnectorPage(page) })
+  return page
+  })()
+  directoryComposioConnectorCache.set(cacheKey, { promise: request, value: options.force ? null : cached?.value ?? null })
+  try {
+    return cloneDirectoryComposioConnectorPage(await request)
+  } catch (error) {
+    if (directoryComposioConnectorCache.get(cacheKey)?.promise === request) {
+      directoryComposioConnectorCache.delete(cacheKey)
+    }
+    throw error
   }
 }
 
