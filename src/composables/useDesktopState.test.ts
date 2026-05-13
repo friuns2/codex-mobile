@@ -450,6 +450,98 @@ describe('Codex CLI availability', () => {
   })
 })
 
+describe('live error overlay', () => {
+  it('keeps a new live error visible when an older persisted turn error exists', async () => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [
+        {
+          id: 'old-error',
+          role: 'system',
+          text: 'old persisted failure',
+          messageType: 'turnError',
+        },
+      ],
+      inProgress: false,
+      activeTurnId: '',
+      turnIndexByTurnId: {},
+      hasMoreOlder: false,
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-with-errors')
+    await state.loadMessages('thread-with-errors')
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-with-errors',
+        turnId: 'new-turn',
+        turn: {
+          id: 'new-turn',
+          status: 'failed',
+          error: { message: 'new live failure' },
+        },
+      },
+    })
+
+    expect(state.selectedLiveOverlay.value?.errorText).toBe('new live failure')
+  })
+
+  it('suppresses a live error only after that same error has persisted', async () => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [
+        {
+          id: 'persisted-error',
+          role: 'system',
+          text: 'same failure',
+          messageType: 'turnError',
+        },
+      ],
+      inProgress: false,
+      activeTurnId: '',
+      turnIndexByTurnId: {},
+      hasMoreOlder: false,
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-with-persisted-error')
+    await state.loadMessages('thread-with-persisted-error')
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-with-persisted-error',
+        turnId: 'same-turn',
+        turn: {
+          id: 'same-turn',
+          status: 'failed',
+          error: { message: 'same failure' },
+        },
+      },
+    })
+
+    expect(state.selectedLiveOverlay.value).toBe(null)
+  })
+})
+
 describe('provider model selection', () => {
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
     installTestWindow({
@@ -489,7 +581,7 @@ describe('provider model selection', () => {
     expect(state.selectedModelId.value).toBe('big-pickle')
     expect(state.readModelIdForThread('').trim()).toBe('big-pickle')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
-      '__new-thread-provider__::opencode-zen': 'big-pickle',
+      '__new-thread-provider__::opencode-zen': { providerId: 'opencode-zen', modelId: 'big-pickle' },
     })
     expect(window.localStorage.getItem('codex-web-local.selected-model-id.v1')).toBe(null)
   })
@@ -527,8 +619,243 @@ describe('provider model selection', () => {
     expect(state.selectedModelId.value).toBe('ring-2.6-1t-free')
     expect(state.readModelIdForThread('').trim()).toBe('ring-2.6-1t-free')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
-      '__new-thread-provider__::opencode-zen': 'ring-2.6-1t-free',
+      '__new-thread-provider__::opencode-zen': { providerId: 'opencode-zen', modelId: 'ring-2.6-1t-free' },
     })
+  })
+
+  it('stores the new-thread Codex model in a provider-scoped slot', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::openrouter-free': 'openrouter/free',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: '',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'gpt-5.5',
+      'gpt-5.4-mini',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.selectedModelId.value).toBe('gpt-5.5')
+    expect(state.readModelIdForThread('').trim()).toBe('gpt-5.5')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::openrouter-free': 'openrouter/free',
+      '__new-thread-provider__::codex': { providerId: 'codex', modelId: 'gpt-5.5' },
+    })
+  })
+
+  it('ignores a legacy OpenCode Zen model when Codex is the active provider and rewrites to a Codex model', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread__': 'big-pickle',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: '',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'gpt-5.5',
+      'gpt-5.4-mini',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.availableModelIds.value).toEqual(['gpt-5.5', 'gpt-5.4-mini'])
+    expect(state.selectedModelId.value).toBe('gpt-5.5')
+    expect(state.readModelIdForThread('').trim()).toBe('gpt-5.5')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::codex': { providerId: 'codex', modelId: 'gpt-5.5' },
+    })
+  })
+
+  it('ignores an OpenCode Zen selection object when Codex is the active provider', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread__': { providerId: 'opencode-zen', modelId: 'big-pickle' },
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'codex',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-5.5', 'gpt-5.4-mini'])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.availableModelIds.value).toEqual(['gpt-5.5', 'gpt-5.4-mini'])
+    expect(state.selectedModelId.value).toBe('gpt-5.5')
+    expect(state.readModelIdForThread('').trim()).toBe('gpt-5.5')
+  })
+
+  it('restores a matching OpenCode Zen selection object when OpenCode Zen is active', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::opencode-zen': { providerId: 'opencode-zen', modelId: 'big-pickle' },
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'ring-2.6-1t-free',
+      providerId: 'opencode-zen',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'big-pickle',
+      'ring-2.6-1t-free',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.selectedModelId.value).toBe('big-pickle')
+    expect(state.readModelIdForThread('').trim()).toBe('big-pickle')
+  })
+
+  it('does not carry custom or OpenRouter models into the Codex dropdown during provider switches', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::custom': { providerId: 'custom', modelId: 'custom-model' },
+        '__new-thread-provider__::openrouter': { providerId: 'openrouter', modelId: 'openrouter-model' },
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig
+      .mockResolvedValueOnce({
+        model: 'custom-model',
+        providerId: 'custom',
+        reasoningEffort: 'medium',
+        speedMode: 'standard',
+      })
+      .mockResolvedValueOnce({
+        model: 'openrouter-model',
+        providerId: 'openrouter',
+        reasoningEffort: 'medium',
+        speedMode: 'standard',
+      })
+      .mockResolvedValueOnce({
+        model: 'gpt-5.5',
+        providerId: 'codex',
+        reasoningEffort: 'medium',
+        speedMode: 'standard',
+      })
+    gatewayMocks.getAvailableModelIds
+      .mockResolvedValueOnce(['custom-model'])
+      .mockResolvedValueOnce(['openrouter-model'])
+      .mockResolvedValueOnce(['gpt-5.5', 'gpt-5.4-mini'])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true, providerChanged: true })
+    expect(state.availableModelIds.value).toEqual(['custom-model'])
+    expect(state.selectedModelId.value).toBe('custom-model')
+
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true, providerChanged: true })
+    expect(state.availableModelIds.value).toEqual(['openrouter-model'])
+    expect(state.selectedModelId.value).toBe('openrouter-model')
+
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true, providerChanged: true })
+    expect(state.availableModelIds.value).toEqual(['gpt-5.5', 'gpt-5.4-mini'])
+    expect(state.availableModelIds.value).not.toContain('custom-model')
+    expect(state.availableModelIds.value).not.toContain('openrouter-model')
+    expect(state.selectedModelId.value).toBe('gpt-5.5')
+  })
+
+  it('does not append a stale configured OpenCode Zen model to OpenRouter models', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::opencode-zen': { providerId: 'opencode-zen', modelId: 'big-pickle' },
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'big-pickle',
+      providerId: 'openrouter',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'openrouter/free',
+      'inclusionai/ring-2.6-1t:free',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.availableModelIds.value).toEqual([
+      'openrouter/free',
+      'inclusionai/ring-2.6-1t:free',
+    ])
+    expect(state.availableModelIds.value).not.toContain('big-pickle')
+    expect(state.selectedModelId.value).toBe('openrouter/free')
+    expect(state.readModelIdForThread('').trim()).toBe('openrouter/free')
+  })
+
+  it('does not append a stale configured model to custom provider models', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::opencode-zen': { providerId: 'opencode-zen', modelId: 'big-pickle' },
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'big-pickle',
+      providerId: 'custom_endpoint',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      '01-ai/yi-large',
+      'abacusai/dracarys-llama-3.1-70b-instruct',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.availableModelIds.value).toEqual([
+      '01-ai/yi-large',
+      'abacusai/dracarys-llama-3.1-70b-instruct',
+    ])
+    expect(state.availableModelIds.value).not.toContain('big-pickle')
+    expect(state.selectedModelId.value).toBe('01-ai/yi-large')
+    expect(state.readModelIdForThread('').trim()).toBe('01-ai/yi-large')
   })
 })
 

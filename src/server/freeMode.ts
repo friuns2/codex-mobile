@@ -93,6 +93,7 @@ export function getFreeKeyCount(): number {
 
 export const FREE_MODE_PROVIDER_ID = 'openrouter-free'
 export const FREE_MODE_BASE_URL = 'https://openrouter.ai/api/v1'
+const FREE_MODE_RUNTIME_PROVIDER_ID = 'openrouter_free'
 
 const FALLBACK_FREE_MODELS = [
   'openrouter/free',
@@ -147,10 +148,12 @@ export function refreshFreeModelsInBackground(): void {
 
 export const FREE_MODE_DEFAULT_MODEL = 'openrouter/free'
 
-export const FREE_MODE_STATE_FILE = 'webui-free-mode.json'
+export const FREE_MODE_STATE_FILE = 'webui-custom-providers.json'
 
 export const CUSTOM_PROVIDER_ID = 'custom-endpoint'
 export const OPENCODE_ZEN_PROVIDER_ID = 'opencode-zen'
+const CUSTOM_RUNTIME_PROVIDER_ID = 'custom_endpoint'
+const OPENCODE_ZEN_RUNTIME_PROVIDER_ID = 'opencode_zen'
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1'
 export const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
 
@@ -202,6 +205,17 @@ export function shouldCreateDefaultFreeModeStateForMissingAuth(
   return current == null && !hasUsableCodexAuth
 }
 
+export function shouldSuppressCommunityFreeModeForCodexAuth(
+  current: FreeModeState | null,
+  hasUsableCodexAuth: boolean,
+): boolean {
+  if (!hasUsableCodexAuth || !current?.enabled) return false
+  if (current.provider === 'custom') return false
+  if (current.customKey === true) return false
+  if (current.provider === 'opencode-zen' && current.apiKey?.trim()) return false
+  return current.provider === 'openrouter' || current.provider === 'opencode-zen' || !current.provider
+}
+
 export function getFreeModeEnvVars(state: FreeModeState): Record<string, string> {
   if (!state.enabled) return {}
 
@@ -221,55 +235,58 @@ export function getFreeModeConfigArgs(state: FreeModeState, serverPort?: number)
 
   if (state.provider === 'opencode-zen') {
     const model = state.model?.trim() || OPENCODE_ZEN_DEFAULT_MODEL
+    const providerConfigKey = `model_providers.${OPENCODE_ZEN_RUNTIME_PROVIDER_ID}`
     const baseUrl = serverPort
       ? `http://127.0.0.1:${serverPort}/codex-api/zen-proxy/v1`
       : OPENCODE_ZEN_BASE_URL
     const wireApi = serverPort ? 'responses' : (state.wireApi || 'chat')
     const authArgs: string[] = serverPort
-      ? ['-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.experimental_bearer_token="zen-proxy-token"`]
-      : ['-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.env_key="OPENCODE_ZEN_API_KEY"`]
+      ? ['-c', `${providerConfigKey}.experimental_bearer_token="zen-proxy-token"`]
+      : ['-c', `${providerConfigKey}.env_key="OPENCODE_ZEN_API_KEY"`]
     return [
       '-c', `model="${model}"`,
-      '-c', `model_provider="${OPENCODE_ZEN_PROVIDER_ID}"`,
-      '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.name="OpenCode Zen"`,
-      '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.base_url="${baseUrl}"`,
-      '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.wire_api="${wireApi}"`,
+      '-c', `model_provider="${OPENCODE_ZEN_RUNTIME_PROVIDER_ID}"`,
+      '-c', `${providerConfigKey}.name="OpenCode Zen"`,
+      '-c', `${providerConfigKey}.base_url="${baseUrl}"`,
+      '-c', `${providerConfigKey}.wire_api="${wireApi}"`,
       ...authArgs,
     ]
   }
 
   if (state.provider === 'custom' && state.customBaseUrl) {
+    const providerConfigKey = `model_providers.${CUSTOM_RUNTIME_PROVIDER_ID}`
     const baseUrl = serverPort
       ? `http://127.0.0.1:${serverPort}/codex-api/custom-proxy/v1`
       : state.customBaseUrl
     const wireApi = serverPort ? 'responses' : (state.wireApi || 'responses')
     const authArgs: string[] = serverPort
-      ? ['-c', `model_providers.${CUSTOM_PROVIDER_ID}.experimental_bearer_token="custom-proxy-token"`]
-      : ['-c', `model_providers.${CUSTOM_PROVIDER_ID}.env_key="CUSTOM_ENDPOINT_API_KEY"`]
+      ? ['-c', `${providerConfigKey}.experimental_bearer_token="custom-proxy-token"`]
+      : ['-c', `${providerConfigKey}.env_key="CUSTOM_ENDPOINT_API_KEY"`]
     const modelArgs: string[] = state.model?.trim()
       ? ['-c', `model="${state.model.trim()}"`]
       : []
     return [
       ...modelArgs,
-      '-c', `model_provider="${CUSTOM_PROVIDER_ID}"`,
-      '-c', `model_providers.${CUSTOM_PROVIDER_ID}.name="Custom Endpoint"`,
-      '-c', `model_providers.${CUSTOM_PROVIDER_ID}.base_url="${baseUrl}"`,
-      '-c', `model_providers.${CUSTOM_PROVIDER_ID}.wire_api="${wireApi}"`,
+      '-c', `model_provider="${CUSTOM_RUNTIME_PROVIDER_ID}"`,
+      '-c', `${providerConfigKey}.name="Custom Endpoint"`,
+      '-c', `${providerConfigKey}.base_url="${baseUrl}"`,
+      '-c', `${providerConfigKey}.wire_api="${wireApi}"`,
       ...authArgs,
     ]
   }
 
   if (!state.apiKey) return []
+  const providerConfigKey = `model_providers.${FREE_MODE_RUNTIME_PROVIDER_ID}`
   const baseUrl = serverPort
     ? `http://127.0.0.1:${serverPort}/codex-api/openrouter-proxy/v1`
     : FREE_MODE_BASE_URL
   const bearerToken = serverPort ? 'openrouter-proxy-token' : state.apiKey
   return [
     '-c', `model="${state.model}"`,
-    '-c', `model_provider="${FREE_MODE_PROVIDER_ID}"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.name="OpenRouter Free"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.base_url="${baseUrl}"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.wire_api="responses"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.experimental_bearer_token="${bearerToken}"`,
+    '-c', `model_provider="${FREE_MODE_RUNTIME_PROVIDER_ID}"`,
+    '-c', `${providerConfigKey}.name="OpenRouter Free"`,
+    '-c', `${providerConfigKey}.base_url="${baseUrl}"`,
+    '-c', `${providerConfigKey}.wire_api="responses"`,
+    '-c', `${providerConfigKey}.experimental_bearer_token="${bearerToken}"`,
   ]
 }

@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rename, rm, mkdir, stat, cp, lstat, readlink, symlink } from 'node:fs/promises'
-import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -18,7 +18,6 @@ import { TelegramThreadBridge } from './telegramThreadBridge.js'
 import {
   getRandomFreeKey,
   getFreeKeyCount,
-  FREE_MODE_PROVIDER_ID,
   FREE_MODE_DEFAULT_MODEL,
   getCachedFreeModels,
   getFreeModels,
@@ -30,6 +29,7 @@ import {
   getFreeModeConfigArgs,
   getFreeModeEnvVars,
   shouldCreateDefaultFreeModeStateForMissingAuth,
+  shouldSuppressCommunityFreeModeForCodexAuth,
   type FreeModeState,
 } from './freeMode.js'
 import { handleOpenRouterProxyRequest } from './openRouterProxy.js'
@@ -911,6 +911,8 @@ function getErrorMessage(payload: unknown, fallback: string): string {
   const record = asRecord(payload)
   if (!record) return fallback
 
+  if (typeof record.message === 'string' && record.message.length > 0) return record.message
+
   const error = record.error
   if (typeof error === 'string' && error.length > 0) return error
 
@@ -930,6 +932,83 @@ export function isUnauthenticatedRateLimitError(error: unknown): boolean {
 export function isEmptyThreadReadError(error: unknown): boolean {
   const message = getErrorMessage(error, '').toLowerCase()
   return message.includes('failed to read thread') && message.includes('rollout') && message.includes('is empty')
+}
+
+export function isThreadMaterializationPendingError(error: unknown): boolean {
+  const message = getErrorMessage(error, '').toLowerCase()
+  return message.includes('not materialized yet') && message.includes('includeturns is unavailable before first user message')
+}
+
+function readStreamTurnId(params: Record<string, unknown>): string {
+  const directTurnId = readNonEmptyString(params.turnId) || readNonEmptyString(params.turn_id)
+  if (directTurnId) return directTurnId
+  const turn = asRecord(params.turn)
+  return readNonEmptyString(turn?.id)
+}
+
+function readStreamTurnErrorMessage(frame: StreamEventFrame): { turnId: string; message: string } | null {
+  const params = asRecord(frame.params)
+  if (!params) return null
+  const turnId = readStreamTurnId(params)
+  if (!turnId) return null
+
+  if (frame.method === 'turn/completed') {
+    const turn = asRecord(params.turn)
+    if (turn?.status !== 'failed') return null
+    const message = getErrorMessage(turn.error, '')
+    return message ? { turnId, message } : null
+  }
+
+  if (frame.method === 'error' && params.willRetry !== true) {
+    const message = getErrorMessage(params.error, '') || readNonEmptyString(params.message)
+    return message ? { turnId, message } : null
+  }
+
+  return null
+}
+
+function mergeStreamTurnErrorsIntoThreadResult(appServer: AppServerProcess, result: unknown): unknown {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const threadId = readNonEmptyString(thread?.id)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !threadId || !turns || turns.length === 0) return result
+
+  const errorsByTurnId = new Map<string, string>()
+  for (const frame of appServer.getStreamEvents(threadId, STREAM_EVENT_BUFFER_LIMIT)) {
+    const error = readStreamTurnErrorMessage(frame)
+    if (error) errorsByTurnId.set(error.turnId, error.message)
+  }
+  if (errorsByTurnId.size === 0) return result
+
+  let changed = false
+  const mergedTurns = turns.map((turn) => {
+    const turnRecord = asRecord(turn)
+    const turnId = readNonEmptyString(turnRecord?.id)
+    const message = turnId ? errorsByTurnId.get(turnId) : ''
+    if (!turnRecord || !turnId || !message) return turn
+    const existingErrorMessage = getErrorMessage(turnRecord.error, '')
+    if (turnRecord.status === 'failed' && existingErrorMessage) return turn
+    changed = true
+    return {
+      ...turnRecord,
+      status: 'failed',
+      error: {
+        message,
+        codexErrorInfo: null,
+        additionalDetails: null,
+      },
+    }
+  })
+
+  if (!changed) return result
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: mergedTurns,
+    },
+  }
 }
 
 const warnedCodexAuthReadFailures = new Set<string>()
@@ -3270,17 +3349,17 @@ function readFreeModeStateSync(statePath: string): FreeModeState | null {
   }
 }
 
-function ensureDefaultFreeModeStateForMissingAuthSync(statePath: string): FreeModeState | null {
+export function ensureDefaultFreeModeStateForMissingAuthSync(statePath: string): FreeModeState | null {
   const current = readFreeModeStateSync(statePath)
-  if (!shouldCreateDefaultFreeModeStateForMissingAuth(current, hasUsableCodexAuthSync())) {
+  const hasUsableCodexAuth = hasUsableCodexAuthSync()
+  if (shouldSuppressCommunityFreeModeForCodexAuth(current, hasUsableCodexAuth)) {
+    return null
+  }
+  if (!shouldCreateDefaultFreeModeStateForMissingAuth(current, hasUsableCodexAuth)) {
     return current
   }
 
-  const fallback = createDefaultOpenCodeZenFreeModeState()
-
-  mkdirSync(dirname(statePath), { recursive: true })
-  writeFileSync(statePath, JSON.stringify(fallback), { encoding: 'utf8', mode: 0o600 })
-  return fallback
+  return createDefaultOpenCodeZenFreeModeState()
 }
 
 function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
@@ -5819,9 +5898,9 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         let bearerToken = ''
         let wireApi: 'responses' | 'chat' = 'chat'
         try {
-          const state = JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState
-          bearerToken = state.apiKey ?? ''
-          wireApi = state.wireApi === 'responses' ? 'responses' : 'chat'
+          const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
+          bearerToken = state?.apiKey ?? ''
+          wireApi = state?.wireApi === 'responses' ? 'responses' : 'chat'
         } catch { /* use empty */ }
         handleZenProxyRequest(req, res, bearerToken, wireApi)
         return
@@ -5846,10 +5925,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         let wireApi: 'responses' | 'chat' = 'responses'
         let baseUrl = ''
         try {
-          const state = JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState
-          bearerToken = state.apiKey ?? ''
-          wireApi = state.wireApi === 'chat' ? 'chat' : 'responses'
-          baseUrl = state.customBaseUrl ?? ''
+          const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
+          bearerToken = state?.apiKey ?? ''
+          wireApi = state?.wireApi === 'chat' ? 'chat' : 'responses'
+          baseUrl = state?.customBaseUrl ?? ''
         } catch { /* use empty */ }
         handleCustomEndpointProxyRequest(req, res, { baseUrl, bearerToken, wireApi })
         return
@@ -5958,6 +6037,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             }
             setJson(res, 200, {
               enabled: state.enabled,
+              hasCodexAuth: hasUsableCodexAuthSync(),
               keyCount: getFreeKeyCount(),
               models,
               currentModel,
@@ -6246,7 +6326,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          throw error
 	        }
         const trimmedResult = trimThreadTurnsInRpcResult(body.method, rpcResult)
-        const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
+        const errorMergedResult = THREAD_METHODS_WITH_TURNS.has(body.method)
+          ? mergeStreamTurnErrorsIntoThreadResult(appServer, trimmedResult)
+          : trimmedResult
+        const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, errorMergedResult)
         const result = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
           : sanitizedResult
@@ -6275,7 +6358,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             return
           }
 
-          const threadReadResult = await appServer.readThreadForTurnPage(threadId)
+          const threadReadResult = mergeStreamTurnErrorsIntoThreadResult(appServer, await appServer.readThreadForTurnPage(threadId))
           const record = asRecord(threadReadResult)
           const thread = asRecord(record?.thread)
           if (!record || !thread) {
@@ -6375,10 +6458,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
-          const threadReadResult = await appServer.rpc('thread/read', {
+          const threadReadResult = mergeStreamTurnErrorsIntoThreadResult(appServer, await appServer.rpc('thread/read', {
             threadId,
             includeTurns: true,
-          })
+          }))
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', threadReadResult)
           appServer.storeThreadReadSnapshot(threadId, sanitized)
 
@@ -6431,6 +6514,17 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           setJson(res, 200, responseData)
         } catch (error) {
+          if (isThreadMaterializationPendingError(error)) {
+            setJson(res, 200, {
+              threadId,
+              conversationState: { turns: [] },
+              ownerClientId: null,
+              liveStateError: null,
+              isInProgress: true,
+            })
+            return
+          }
+
           const snapshot = appServer.getLastThreadReadSnapshot(threadId)
           if (snapshot) {
             const record = asRecord(snapshot)

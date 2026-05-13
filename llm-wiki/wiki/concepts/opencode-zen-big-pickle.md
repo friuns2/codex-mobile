@@ -45,6 +45,8 @@ model_provider = "opencode-zen"
 - Codex CLI deprecation warning for `wire_api = "chat"` is safe to ignore on v0.93.0
 - In Codex Web Local's Zen proxy, DeepSeek thinking-mode responses must round-trip `reasoning_content` into later Chat Completions messages. Missing this field can produce `The reasoning_content in the thinking mode must be passed back to the API`.
 - Chat-shaped Zen proxy payloads must be posted to `/v1/chat/completions`, even when the incoming local request uses the Responses-shaped `/responses` route.
+- In no-auth Docker mode, OpenCode Zen provider models are authoritative. Fetch `/codex-api/provider-models` before relying on Codex `model/list`, because `model/list` may return Codex catalog rows or fail independently.
+- During authenticated Docker first-turn startup, `thread ... is not materialized yet; includeTurns is unavailable before first user message` is a transient in-progress state, not a chat error.
 
 ## Codex Web Local Proxy Behavior
 
@@ -58,7 +60,52 @@ For thinking-mode models behind `big-pickle`, the proxy must preserve assistant 
 
 This behavior was fixed in commit `47d52c8c` after a Docker repro using an empty `CODEX_HOME`, no login, and no Zen API key.
 
+## Docker Auth and Model Loading
+
+Codex Web Local's unauthenticated Docker path should use OpenCode Zen only as a runtime fallback. It should not permanently write fallback provider configuration, and it should not depend on Codex `model/list` for the Zen selector.
+
+Validated Docker states:
+- Empty `CODEX_HOME`: `config/read` reports `model = "big-pickle"` and `model_provider = "opencode-zen"`, the app-server command includes local Zen proxy flags, and the model selector loads provider models from `/codex-api/provider-models`.
+- `auth.json` mounted into `CODEX_HOME`: `config/read` reports `model = null` and `model_provider = null`, the app-server command has no Zen flags, and sending `hi` uses the default Codex provider path.
+
+The first authenticated turn may briefly make `thread/read includeTurns=true` fail with `not materialized yet; includeTurns is unavailable before first user message`. The bridge maps that exact response to an in-progress empty live state with no `liveStateError`; real `thread/read` failures still surface as errors.
+
+## Copied Auth Promotion
+
+If a container starts without auth and later receives a valid `auth.json`, Codex auth should take precedence over community fallback provider state. This matters when a user starts in no-auth Zen mode, switches to OpenRouter, then copies auth into `CODEX_HOME`.
+
+Expected behavior after copying auth and reloading:
+- Community fallback provider state (`openrouter` or `opencode-zen` without a custom key) is suppressed.
+- Provider promotes to Codex.
+- Accounts imports the copied active auth file and the badge updates from `0` to at least `1`.
+- The new-thread composer shows a concrete Codex model, not a generic `Model` placeholder.
+- Stale historical diagnostics do not show a `Send feedback / Issue detected` row unless a current visible error remains.
+
+User-configured provider state is preserved: OpenRouter with `customKey: true`, OpenCode Zen with an explicit API key, and custom endpoint providers should not be suppressed merely because Codex auth exists.
+
+This behavior was fixed in commit `7ee94f83` and validated in a packaged Docker image by running: no-auth Zen startup, switch to OpenRouter, copy host `auth.json`, reload, verify Codex provider + Accounts `1`, send `hi`, and wait for a Codex reply.
+
+## Provider Selection Drift Docker Cycle
+
+Provider/model selection state now needs to be treated as provider-scoped data, not as a bare model string. Stored model selections use the object shape `{ providerId, modelId }`, while legacy string values are accepted only when compatible with the active provider's model list.
+
+Validated passing states from the packaged Docker cycle:
+- Empty `CODEX_HOME` on port `4191` selected OpenCode Zen, had Accounts `0`, loaded exclusive Zen provider models with `big-pickle`, and sent `hi` successfully.
+- Auth-mounted `CODEX_HOME` on port `4192` selected Codex, had Accounts `1`, loaded a Codex-only dropdown without `big-pickle`, and sent `hi` successfully.
+- Provider switching no longer forces navigation to home; the routed thread URL stayed stable after switching Codex to OpenCode Zen.
+
+Known unresolved provider-switch failures:
+- A historical Codex thread kept its URL after switching to Zen, but sending on it failed with `RPC turn/start failed with HTTP 502: thread not found`.
+- OpenRouter can appear selected while backend status remains `enabled=false` and the composer dropdown still shows Codex models.
+- A custom NVIDIA NIM provider can successfully expose 123 models through `/codex-api/provider-models`, but the UI dropdown can still show Codex models and sending can incorrectly hit `/codex-api/custom-proxy/v1/responses` despite `wireApi=chat`.
+- Groq custom-provider send validation still needs a Groq API key.
+
+These unresolved findings are tracked in `whatToTest.md` until fixed and revalidated.
+
 ## Related
 - Source: [opencode-zen-big-pickle-codex-cli.md](../../raw/fixes/opencode-zen-big-pickle-codex-cli.md)
 - Source: [opencode-zen-reasoning-content-proxy.md](../../raw/fixes/opencode-zen-reasoning-content-proxy.md)
+- Source: [opencode-zen-docker-auth-provider-models.md](../../raw/fixes/opencode-zen-docker-auth-provider-models.md)
+- Source: [copied-auth-provider-promotion.md](../../raw/fixes/copied-auth-provider-promotion.md)
+- Source: [provider-selection-drift-docker-cycle.md](../../raw/fixes/provider-selection-drift-docker-cycle.md)
 - [merge-to-main-workflow.md](./merge-to-main-workflow.md)
