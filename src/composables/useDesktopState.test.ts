@@ -450,6 +450,98 @@ describe('Codex CLI availability', () => {
   })
 })
 
+describe('live error overlay', () => {
+  it('keeps a new live error visible when an older persisted turn error exists', async () => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [
+        {
+          id: 'old-error',
+          role: 'system',
+          text: 'old persisted failure',
+          messageType: 'turnError',
+        },
+      ],
+      inProgress: false,
+      activeTurnId: '',
+      turnIndexByTurnId: {},
+      hasMoreOlder: false,
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-with-errors')
+    await state.loadMessages('thread-with-errors')
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-with-errors',
+        turnId: 'new-turn',
+        turn: {
+          id: 'new-turn',
+          status: 'failed',
+          error: { message: 'new live failure' },
+        },
+      },
+    })
+
+    expect(state.selectedLiveOverlay.value?.errorText).toBe('new live failure')
+  })
+
+  it('suppresses a live error only after that same error has persisted', async () => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [
+        {
+          id: 'persisted-error',
+          role: 'system',
+          text: 'same failure',
+          messageType: 'turnError',
+        },
+      ],
+      inProgress: false,
+      activeTurnId: '',
+      turnIndexByTurnId: {},
+      hasMoreOlder: false,
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-with-persisted-error')
+    await state.loadMessages('thread-with-persisted-error')
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-with-persisted-error',
+        turnId: 'same-turn',
+        turn: {
+          id: 'same-turn',
+          status: 'failed',
+          error: { message: 'same failure' },
+        },
+      },
+    })
+
+    expect(state.selectedLiveOverlay.value).toBe(null)
+  })
+})
+
 describe('provider model selection', () => {
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
     installTestWindow({
@@ -528,6 +620,38 @@ describe('provider model selection', () => {
     expect(state.readModelIdForThread('').trim()).toBe('ring-2.6-1t-free')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
       '__new-thread-provider__::opencode-zen': 'ring-2.6-1t-free',
+    })
+  })
+
+  it('stores the new-thread Codex model in a provider-scoped slot', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::openrouter-free': 'openrouter/free',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: '',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'gpt-5.5',
+      'gpt-5.4-mini',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.selectedModelId.value).toBe('gpt-5.5')
+    expect(state.readModelIdForThread('').trim()).toBe('gpt-5.5')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::openrouter-free': 'openrouter/free',
+      '__new-thread-provider__::codex': 'gpt-5.5',
     })
   })
 })

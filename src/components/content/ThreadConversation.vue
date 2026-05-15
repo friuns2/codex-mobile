@@ -572,6 +572,14 @@
                     </button>
                   </template>
                 </div>
+                <a
+                  v-if="isTurnErrorMessage(message)"
+                  class="turn-error-feedback"
+                  :href="feedbackMailto"
+                  @click="prepareTurnErrorFeedback($event, message.text)"
+                >
+                  Send feedback
+                </a>
               </article>
 
               <section v-if="readAnchoredFileChangeSummary(message)" class="file-change-summary-block file-change-summary-block-inline">
@@ -910,6 +918,14 @@ function prepareLiveErrorFeedback(event: MouseEvent, message: string): void {
   }
 }
 
+function prepareTurnErrorFeedback(event: MouseEvent, message: string): void {
+  recordVisibleFailure(message)
+  const target = event.currentTarget
+  if (target instanceof HTMLAnchorElement) {
+    target.href = buildFeedbackMailto()
+  }
+}
+
 function parsePlanFromMessageText(text: string): { explanation: string; steps: UiPlanStep[] } | null {
   const normalized = text.replace(/\r\n/g, '\n').trim()
   if (!normalized) return null
@@ -963,6 +979,10 @@ function isCommandMessage(message: UiMessage): boolean {
 
 function isPlanMessage(message: UiMessage): boolean {
   return message.messageType === 'plan' || message.messageType === 'plan.live'
+}
+
+function isTurnErrorMessage(message: UiMessage): boolean {
+  return message.messageType === 'turnError'
 }
 
 function buildPlanMessageText(explanation: string, steps: UiPlanStep[]): string {
@@ -4524,6 +4544,10 @@ onBeforeUnmount(() => {
 
 .live-overlay-feedback {
   @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold leading-none text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
+}
+
+.turn-error-feedback {
+  @apply mt-3 inline-flex w-fit rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold leading-none text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .message-body {

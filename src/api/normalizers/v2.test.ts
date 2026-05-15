@@ -105,4 +105,73 @@ Reply with &lt;/instructions&gt; and A &amp; B
       turnIndex: 12,
     })
   })
+
+  it('renders failed turn errors as chat system messages', () => {
+    const response = threadReadResponseWithContent([{
+      type: 'userMessage',
+      id: 'user-4',
+      content: [{ type: 'text', text: 'hi', text_elements: [] }],
+    }])
+    response.thread.turns[0].status = 'failed'
+    response.thread.turns[0].error = {
+      message: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
+      codexErrorInfo: null,
+      additionalDetails: null,
+    }
+
+    const messages = normalizeThreadMessagesV2(response)
+
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toMatchObject({
+      id: 'turn-1-error',
+      role: 'system',
+      text: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
+      messageType: 'turnError',
+      turnId: 'turn-1',
+      turnIndex: 0,
+    })
+  })
+
+  it('uses turn index fallback ids for failed turns with blank ids', () => {
+    const response = threadReadResponseWithContent([])
+    response.thread.turns = [
+      {
+        id: '',
+        status: 'failed',
+        error: {
+          message: 'first failed turn',
+          codexErrorInfo: null,
+          additionalDetails: null,
+        },
+        items: [],
+      },
+      {
+        id: '   ',
+        status: 'failed',
+        error: {
+          message: 'second failed turn',
+          codexErrorInfo: null,
+          additionalDetails: null,
+        },
+        items: [],
+      },
+    ]
+
+    const messages = normalizeThreadMessagesV2(response, 8)
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        id: 'turn-8-error',
+        text: 'first failed turn',
+        turnId: undefined,
+        turnIndex: 8,
+      }),
+      expect.objectContaining({
+        id: 'turn-9-error',
+        text: 'second failed turn',
+        turnId: undefined,
+        turnIndex: 9,
+      }),
+    ])
+  })
 })

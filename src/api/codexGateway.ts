@@ -248,6 +248,7 @@ type DirectoryComposioConnectorPage = {
 
 type ProviderModelsResponse = {
   data?: unknown
+  exclusive?: unknown
 }
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
@@ -1835,6 +1836,7 @@ export async function setCodexSpeedMode(mode: SpeedMode): Promise<void> {
 
 export interface FreeModeStatus {
   enabled: boolean
+  hasCodexAuth?: boolean
   keyCount: number
   models: string[]
   currentModel: string | null
@@ -1886,7 +1888,41 @@ export async function setCustomProvider(
   return await response.json() as { ok: boolean }
 }
 
+async function fetchProviderModelIds(): Promise<{ ids: string[], exclusive: boolean } | null> {
+  try {
+    const response = await fetch('/codex-api/provider-models', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    let providerPayload: ProviderModelsResponse | null = null
+    try {
+      providerPayload = await response.json() as ProviderModelsResponse
+    } catch {
+      providerPayload = null
+    }
+
+    if (response.ok && Array.isArray(providerPayload?.data)) {
+      return {
+        ids: providerPayload.data
+          .map((candidate) => typeof candidate === 'string' ? candidate.trim() : '')
+          .filter((candidate, index, candidates): candidate is string =>
+            candidate.length > 0 && candidates.indexOf(candidate) === index),
+        exclusive: providerPayload.exclusive === true,
+      }
+    }
+  } catch {
+    // Keep Codex usable when the provider-models endpoint is unavailable.
+  }
+  return null
+}
+
 export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean } = {}): Promise<string[]> {
+  const shouldIncludeProviderModels = options.includeProviderModels !== false
+  const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds() : null
+
+  if (providerModels?.exclusive || options.requireProviderModels) {
+    return providerModels?.ids ?? []
+  }
+
   const payload = await callRpc<ModelListResponse>('model/list', {})
   const ids: string[] = []
   for (const row of payload.data) {
@@ -1895,42 +1931,11 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
     ids.push(candidate)
   }
 
-  if (options.includeProviderModels === false) {
-    return ids
+  if (!shouldIncludeProviderModels || !providerModels) return ids
+
+  for (const candidate of providerModels.ids) {
+    if (!ids.includes(candidate)) ids.push(candidate)
   }
-
-  let sawProviderModels = false
-  try {
-    const response = await fetch('/codex-api/provider-models', {
-      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
-    })
-    let providerPayload: (ProviderModelsResponse & { exclusive?: boolean }) | null = null
-    try {
-      providerPayload = await response.json() as ProviderModelsResponse & { exclusive?: boolean }
-    } catch {
-      providerPayload = null
-    }
-
-    if (response.ok && Array.isArray(providerPayload?.data)) {
-      sawProviderModels = true
-      if (providerPayload.exclusive) {
-        return providerPayload.data.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-      }
-      for (const candidate of providerPayload.data) {
-        if (typeof candidate !== 'string') continue
-        const normalized = candidate.trim()
-        if (!normalized || ids.includes(normalized)) continue
-        ids.push(normalized)
-      }
-    }
-  } catch {
-    // Keep Codex usable when the provider-models endpoint is unavailable.
-  }
-
-  if (options.requireProviderModels && !sawProviderModels) {
-    return []
-  }
-
   return ids
 }
 

@@ -250,7 +250,7 @@
                 <span class="sidebar-settings-toggle" :class="{ 'is-on': dictationAutoSend }" />
               </button>
               <a
-                v-if="hasFeedbackDiagnostics"
+                v-if="hasVisibleFeedbackError"
                 class="sidebar-settings-row sidebar-settings-feedback-row"
                 :href="feedbackMailto"
                 @click="prepareFeedbackLink"
@@ -1418,7 +1418,6 @@ type AutomationEditRequest = {
 const sidebarThreadTreeRef = ref<SidebarThreadTreeExposed | null>(null)
 const automationsPanelRef = ref<AutomationsPanelExposed | null>(null)
 const {
-  hasFeedbackDiagnostics,
   buildFeedbackMailto,
   feedbackMailtoBase,
   recordVisibleFailure,
@@ -1584,6 +1583,7 @@ const visibleFeedbackErrors = [
   projectSetupError,
   existingFolderError,
 ]
+const hasVisibleFeedbackError = computed(() => visibleFeedbackErrors.some((entry) => entry.value.trim().length > 0))
 const telegramStatus = ref<TelegramStatus>({
   configured: false,
   active: false,
@@ -1601,6 +1601,8 @@ const visualViewportOffsetTop = ref(typeof window !== 'undefined' ? window.visua
 const layoutViewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
 let accountStatePollTimer: number | null = null
 let isAccountStatePollInFlight = false
+let externalCodexAuthAvailable = false
+let externalAuthImportAttempted = false
 let existingFolderBrowseRequestId = 0
 
 const routeThreadId = computed(() => {
@@ -2111,6 +2113,35 @@ watch(accounts, () => {
     })
   }, 1500)
 }, { deep: true })
+
+watch(accountRateLimitSnapshots, () => {
+  void maybeImportExternalCodexAuthAccount().then((imported) => {
+    if (!imported) return
+    void refreshAll({
+      includeSelectedThreadMessages: false,
+      providerChanged: true,
+      awaitAncillaryRefreshes: true,
+    })
+  })
+}, { deep: true })
+
+async function maybeImportExternalCodexAuthAccount(): Promise<boolean> {
+  if (!externalCodexAuthAvailable) return false
+  if (externalAuthImportAttempted) return false
+  if (selectedProvider.value !== 'codex') return false
+  if (accounts.value.length > 0) return false
+  if (accountRateLimitSnapshots.value.length === 0) return false
+  externalAuthImportAttempted = true
+  const previousAccountsJson = JSON.stringify(accounts.value.map((account) => account.accountId).sort())
+  try {
+    const result = await refreshAccountsFromAuth()
+    accounts.value = result.accounts
+  } catch {
+    await loadAccountsState({ silent: true })
+  }
+  const nextAccountsJson = JSON.stringify(accounts.value.map((account) => account.accountId).sort())
+  return previousAccountsJson !== nextAccountsJson
+}
 
 function onSkillsChanged(): void {
   void refreshSkills()
@@ -4031,6 +4062,7 @@ async function clearFreeModeCustomKey(): Promise<void> {
 
 async function loadFreeModeStatus(): Promise<void> {
   try {
+    const previousProvider = selectedProvider.value
     const status = await getFreeModeStatus()
     freeModeEnabled.value = status.enabled
     freeModeHasCustomKey.value = status.customKey ?? false
@@ -4048,6 +4080,26 @@ async function loadFreeModeStatus(): Promise<void> {
       }
     } else {
       selectedProvider.value = 'codex'
+    }
+    externalCodexAuthAvailable = status.hasCodexAuth === true
+    if (!externalCodexAuthAvailable) {
+      externalAuthImportAttempted = false
+    }
+    const providerChanged = selectedProvider.value !== previousProvider
+    if (providerChanged) {
+      await refreshAll({
+        includeSelectedThreadMessages: false,
+        providerChanged: true,
+        awaitAncillaryRefreshes: true,
+      })
+    }
+    const importedExternalAuth = await maybeImportExternalCodexAuthAccount()
+    if (importedExternalAuth) {
+      await refreshAll({
+        includeSelectedThreadMessages: false,
+        providerChanged: providerChanged || importedExternalAuth,
+        awaitAncillaryRefreshes: true,
+      })
     }
   } catch {
     // Ignore — free mode status unknown

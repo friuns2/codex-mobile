@@ -188,6 +188,29 @@
 - For UI work, include dark-theme evidence in addition to the default/light-theme evidence unless the task is explicitly light-only.
 - For refresh-persistence fixes, include a post-refresh screenshot that still shows the expected UI state.
 
+## Docker Provider/Auth Regression Workflow
+
+- Use this workflow when a change touches Docker startup, Codex auth detection, OpenCode Zen/OpenRouter/custom providers, provider model loading, app-server config, chat send/reply handling, or failed-turn error rendering.
+- Build and test a packaged Docker image, not only the Vite dev server:
+  1. Run `pnpm run build`.
+  2. Run `pnpm pack --pack-destination /tmp`.
+  3. Build a local image that installs the packed `codexapp` tarball plus `@openai/codex`, with `CODEX_HOME=/codex-home` and command `codexapp --port ${PORT:-4190} --no-password --no-open --no-tunnel --no-login`.
+  4. Use OrbStack/Docker CLI. Do not rely on Docker Desktop.
+- Start fresh isolated containers on unique localhost ports for at least these cases:
+  - no auth file: no `/codex-home/auth.json`; expect runtime OpenCode Zen fallback, `model_provider="opencode-zen"`, `model="big-pickle"`, send `hi`, wait for an assistant reply.
+  - invalid/expired auth file: mount an `auth.json` with token fields containing invalid/expired strings; expect Codex provider path, send `hi`, wait for final 401/auth error rendered in chat, verify `Send feedback`, reload the thread, verify the error persists, and verify no duplicate live `Thinking` overlay remains after persistence.
+  - malformed auth file: mount invalid JSON as `/codex-home/auth.json`; expect it to be treated as unusable auth and fall back to Zen, then send `hi` and wait for a reply.
+  - provider switch: start from OpenCode Zen, send `hi` and wait for a reply, switch the Provider settings selector to OpenRouter (do not change the model dropdown directly), send `hi` again and wait for a reply.
+- Browser assertions must inspect conversation rows, not sidebar previews. A test is not passing just because the sidebar contains the sent text.
+- Save screenshots under `output/playwright/` for all Docker browser cases and show them inline in the completion report.
+- Before reporting success, include:
+  - tested URLs/ports,
+  - provider/config summary for each container,
+  - exact build/test commands,
+  - screenshot absolute paths,
+  - whether invalid auth persisted after reload and whether duplicate live overlay count was zero.
+- If any Docker edge case fails, fix it before requesting PR review or merge.
+
 ## Mandatory CJS + TestChat Validation For Markdown/File-Link Features
 
 - For any markdown parsing, link parsing, file-link rendering, or browse-link encoding change, verification in `TestChat` is mandatory before reporting completion.

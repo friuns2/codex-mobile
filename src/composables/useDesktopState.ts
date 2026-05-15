@@ -1521,7 +1521,21 @@ export function useDesktopState() {
     const reasoningText = isInProgress
       ? (liveReasoningTextByThreadId.value[threadId] ?? '').trim()
       : ''
-    const errorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim()
+    const liveErrorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim()
+    let latestPersistedTurnErrorText = ''
+    if (!isInProgress && liveErrorText) {
+      const persistedMessages = persistedMessagesByThreadId.value[threadId] ?? []
+      for (let index = persistedMessages.length - 1; index >= 0; index -= 1) {
+        const message = persistedMessages[index]
+        if (message.messageType !== 'turnError') continue
+        latestPersistedTurnErrorText = normalizeMessageText(message.text)
+        break
+      }
+    }
+    const errorText =
+      !isInProgress && liveErrorText && latestPersistedTurnErrorText === liveErrorText
+        ? ''
+        : liveErrorText
 
     if (!activity && !reasoningText && !errorText) return null
     return {
@@ -1574,12 +1588,11 @@ export function useDesktopState() {
     const contextId = toThreadContextId(threadId)
     if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
       const normalizedProviderId = normalizeProviderContextId(activeProviderId.value)
-      if (normalizedProviderId !== 'codex') {
-        const providerContextId = toProviderModelContextId(normalizedProviderId)
-        return providerContextId
-          ? normalizeStoredModelId(selectedModelIdByContext.value[providerContextId])
-          : ''
-      }
+      const providerContextId = toProviderModelContextId(normalizedProviderId)
+      const providerModelId = providerContextId
+        ? normalizeStoredModelId(selectedModelIdByContext.value[providerContextId])
+        : ''
+      if (providerModelId) return providerModelId
     }
     return readSelectedModel(selectedModelIdByContext.value, threadId).trim()
   }
@@ -1616,7 +1629,7 @@ export function useDesktopState() {
     const contextId = toThreadContextId(threadId)
     const normalizedProviderId = normalizeProviderContextId(activeProviderId.value)
     const providerContextId =
-      contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT && normalizedProviderId !== 'codex'
+      contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
         ? toProviderModelContextId(normalizedProviderId)
         : ''
     const selectedContextId = providerContextId || contextId

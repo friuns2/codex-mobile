@@ -3142,7 +3142,7 @@ stays at `source: "NoValues"` permanently. Feature gate `505458` (worktree) retu
 ### Free Mode (OpenRouter)
 
 #### Feature
-Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI API key. Uses XOR-encrypted community keys that rotate randomly per request. Default model is `openrouter/free` — OpenRouter's meta-model that auto-routes to the least-loaded free model, avoiding per-model rate limits. Model selector shows only free models when free mode is on. Config is isolated from `~/.codex/config.toml` — state stored in `~/.codex/webui-free-mode.json` and passed to app-server via `-c` CLI args.
+Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI API key. Uses XOR-encrypted community keys that rotate randomly per request. Default model is `openrouter/free` — OpenRouter's meta-model that auto-routes to the least-loaded free model, avoiding per-model rate limits. Model selector shows only free models when free mode is on. Config is isolated from `~/.codex/config.toml` — state stored in `~/.codex/webui-custom-providers.json` and passed to app-server via `-c` CLI args.
 
 #### Prerequisites
 - Project built: `pnpm run build`.
@@ -3156,7 +3156,7 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 5. Verify the toggle turns on and model dropdown changes to `openrouter/free`.
 6. Click the model dropdown — verify it shows **only** free models (gemma, llama, qwen, etc.) and no GPT/OpenAI default models.
 7. Verify `~/.codex/config.toml` was NOT modified (no `model_provider` or `model` entries added).
-8. Verify `~/.codex/webui-free-mode.json` exists and contains `{"enabled":true,"apiKey":"sk-or-v1-...","model":"openrouter/free"}`.
+8. Verify `~/.codex/webui-custom-providers.json` exists and contains `{"enabled":true,"apiKey":"sk-or-v1-...","model":"openrouter/free"}`.
 9. Open a new thread and send a message (e.g. "Say hello").
 10. Verify a response comes back from a free OpenRouter model (may be rate-limited during high demand).
 11. Toggle **Free mode (OpenRouter)** OFF.
@@ -3197,7 +3197,7 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 
 #### Rollback/Cleanup
 - Remove `src/server/freeMode.ts`, revert changes in `codexAppServerBridge.ts`, `codexGateway.ts`, and `App.vue`.
-- Delete `~/.codex/webui-free-mode.json` to clear free mode state.
+- Delete `~/.codex/webui-custom-providers.json` to clear free mode state.
 
 ### Feature: Codex.app Thread Provider Filter Patch (fix-codex-thread-filter.sh)
 
@@ -3426,12 +3426,12 @@ OpenCode Zen as built-in provider + API format selector for custom endpoints
 - OpenCode Zen appears in provider dropdown alongside Codex/OpenRouter/Custom
 - OpenCode Zen defaults to `wire_api = "chat"` (Chat Completions API)
 - Custom endpoints show an API format selector; default is "Responses API"
-- Provider selection and wireApi are persisted in `~/.codex/webui-free-mode.json`
+- Provider selection and wireApi are persisted in `~/.codex/webui-custom-providers.json`
 - Model list for OpenCode Zen is fetched from `https://opencode.ai/zen/v1/models`
 
 #### Rollback/Cleanup
 - Switch provider back to "Codex" to disable free mode
-- No config files outside the project are modified (state stored in `~/.codex/webui-free-mode.json`)
+- Project config files are not modified; only user-level state is written to `~/.codex/webui-custom-providers.json`
 
 ### env_key Authentication for Custom Providers (codex CLI v0.93.0)
 
@@ -5330,6 +5330,9 @@ Android `codexui-android` startup passes the bound server port to app-server fre
 #### Expected Results
 - `config/read` returns `200` and includes `model_providers.opencode-zen.base_url` pointing at `http://127.0.0.1:17923/codex-api/zen-proxy/v1`.
 - `config/read` includes `model_providers.opencode-zen.wire_api` as `responses`, not `chat`.
+- Fresh no-auth startup uses OpenCode Zen as a runtime fallback without creating `~/.codex/webui-custom-providers.json`.
+- After a usable Codex `auth.json` is added and the server restarts with no saved free-mode state, startup does not keep forcing `model_provider="opencode-zen"`.
+- Existing `~/.codex/webui-free-mode.json` files are ignored and not migrated to `~/.codex/webui-custom-providers.json`.
 - `model/list` returns `200` with model data instead of `502 codex app-server exited unexpectedly`.
 - The model selector is usable in both light theme and dark theme.
 - A first home-composer message creates a thread and receives a response without visible startup RPC errors.
@@ -5401,3 +5404,165 @@ Thread conversation incremental older-turn loading.
 
 #### Rollback/Cleanup
 - None.
+
+---
+
+### Docker auth startup live-state pending read
+
+#### Feature/Change Name
+Docker authenticated first-turn live-state pending read handling.
+
+#### Prerequisites/Setup
+1. Build the project with `pnpm run build`.
+2. Build a fresh Docker image that installs `@openai/codex` and runs the packed `codexapp` artifact.
+3. Prepare two isolated `CODEX_HOME` states: one empty and one with only `auth.json` mounted.
+
+#### Steps
+1. Start the no-auth container and open the app in light theme.
+2. Confirm `config/read` uses `model_provider="opencode-zen"` and `model="big-pickle"`.
+3. Send `hi` and wait for the assistant reply.
+4. Start the auth-mounted container and open the app in light theme.
+5. Confirm `config/read` has `model_provider=null` and no Zen provider override.
+6. Send `hi` and poll `/codex-api/thread-live-state?threadId=<id>` while the first turn is starting.
+7. Confirm early live-state responses do not expose `liveStateError.kind="readFailed"` for `not materialized yet; includeTurns is unavailable before first user message`.
+8. Wait for the assistant reply, then switch to dark theme and repeat the visual checks for the composer/thread area.
+
+#### Expected Results
+- No-auth Docker startup falls back to Zen at runtime and returns a `hi` response.
+- Auth-mounted Docker startup uses the default Codex provider path without Zen flags and returns a `hi` response.
+- The transient first-turn materialization window is represented as an in-progress empty live state, not a visible chat error.
+- Real `thread/read` failures still surface through `liveStateError`.
+- Light theme and dark theme keep the chat/composer readable throughout the first-turn transition.
+
+#### Rollback/Cleanup
+- Stop temporary containers with `docker rm -f codexui-noauth-test codexui-auth-test` when finished.
+
+---
+
+### Provider models load without Codex model-list dependency
+
+#### Feature/Change Name
+Provider-backed model selector startup loading.
+
+#### Prerequisites/Setup
+1. Build the project with `pnpm run build`.
+2. Run a no-auth Docker container so Codex Web Local starts with OpenCode Zen fallback.
+3. Open `http://127.0.0.1:<port>/#/` in the browser.
+
+#### Steps
+1. In light theme, open the home screen and wait for initial model loading.
+2. Open the model selector.
+3. Confirm Zen provider models are visible even if Codex `model/list` is slow or unavailable.
+4. Confirm the selector starts with `big-pickle` and includes current Zen models such as `deepseek-v4-flash-free`.
+5. Switch to dark theme and repeat steps 2 through 4.
+
+#### Expected Results
+- Provider-backed model loading asks `/codex-api/provider-models` before depending on `model/list`.
+- OpenCode Zen models populate the selector without falling back to a blank list or stale Codex-only model list.
+- The selector remains readable and usable in light theme and dark theme.
+
+#### Rollback/Cleanup
+- Stop the temporary Docker container when finished.
+
+---
+
+### Invalid or expired auth errors appear in chat
+
+#### Feature/Change Name
+Invalid Codex auth failed-turn error rendering.
+
+#### Prerequisites/Setup
+1. Build the project with `pnpm run build`.
+2. Build a fresh Docker image from the packed artifact.
+3. Start a Docker container with an invalid or expired `auth.json` mounted into `CODEX_HOME`.
+4. Open the container URL in the browser.
+
+#### Steps
+1. Confirm `config/read` uses the default Codex provider path, not OpenCode Zen fallback.
+2. Send `hi` from the composer.
+3. Wait until the turn stops running.
+4. Reload or reopen the same thread.
+5. Repeat in dark theme and light theme.
+
+#### Expected Results
+- The failed turn displays the final auth error in the chat, including the HTTP 401/unauthorized message from Codex.
+- The failed turn includes a visible `Send feedback` button next to the persisted chat error.
+- Once the failed turn is persisted, the live `Thinking` error overlay is gone so the final auth error is not duplicated.
+- The conversation does not silently show only the user message after a failed turn.
+- Reloaded thread history preserves the failed-turn error message.
+- Transient retry messages may appear while reconnecting, but the final non-retry error remains visible after completion.
+- In dark theme and light theme, the feedback button remains readable and opens a feedback mailto with the visible auth error included in the diagnostic body.
+
+#### Rollback/Cleanup
+- Stop the invalid-auth Docker container after verification.
+
+---
+
+### Docker provider checklist and live error overlay regression
+
+#### Feature/Change Name
+Docker provider/auth checklist execution and live error overlay de-duplication.
+
+#### Prerequisites/Setup
+1. Run `pnpm run build`.
+2. Run `pnpm pack --pack-destination /tmp`.
+3. Build a Docker image from the packed `codexapp` tarball with `@openai/codex` installed.
+4. Start three isolated containers:
+   - no auth file
+   - invalid or expired `auth.json`
+   - malformed `auth.json`
+
+#### Steps
+1. In light theme, open the no-auth container, confirm the composer starts on `big-pickle`, send `hi`, and wait for an assistant reply.
+2. Switch the Settings provider selector to OpenRouter, send `hi` again, and wait for a reply or provider-scoped response.
+3. Open the invalid-auth container, send `hi`, wait for the final 401/auth error, and confirm `Send feedback` is visible.
+4. Reload the invalid-auth thread and confirm the persisted error remains without a duplicate live `Thinking` error overlay.
+5. Switch the invalid-auth thread to dark theme and confirm the persisted error and feedback button remain readable.
+6. Open the malformed-auth container, confirm it falls back to `big-pickle`, send `hi`, and wait for an assistant reply.
+
+#### Expected Results
+- No-auth startup uses the OpenCode Zen runtime fallback and sends successfully.
+- Runtime `-c` provider config uses underscore-safe provider ids, so Zen/OpenRouter/custom providers are actually registered with Codex app-server.
+- Provider switching is scoped to the selected provider and does not require changing the model dropdown directly.
+- Invalid/expired auth stays on the Codex provider path and renders the final auth failure as a persisted chat error.
+- A new live error is still visible when an older persisted turn error exists, but the same live error is suppressed after that exact error has persisted.
+- Feedback mailto diagnostics include recent diagnostics, visible page text, and the visible auth error.
+- Malformed auth is treated as unusable auth and falls back to Zen.
+
+#### Rollback/Cleanup
+- Stop temporary containers with `docker rm -f codexui-what-noauth codexui-what-invalid-auth codexui-what-malformed-auth`.
+
+---
+
+### Copied auth promotes community fallback to Codex
+
+#### Feature/Change Name
+Runtime auth detection after starting without auth.
+
+#### Prerequisites/Setup
+1. Run `pnpm run build`.
+2. Run `pnpm pack --pack-destination /tmp`.
+3. Build a Docker image from the packed `codexapp` tarball with `@openai/codex` installed.
+4. Start a fresh no-auth container with an empty mounted `CODEX_HOME`.
+5. Keep a valid host `auth.json` available to copy into that mounted `CODEX_HOME`.
+
+#### Steps
+1. Open the no-auth container and confirm the provider is OpenCode Zen with `big-pickle`.
+2. Switch the Settings provider selector to OpenRouter while still unauthenticated.
+3. Copy a valid `auth.json` into the mounted `CODEX_HOME`.
+4. Reload the page.
+5. Confirm the provider has moved to Codex, the composer shows a concrete Codex model instead of a generic `Model` placeholder, and the Accounts count imports the active auth account.
+6. Confirm the sidebar does not show a stale `Send feedback` / `Issue detected` row when there is no current visible error.
+7. Send `hi` on the Codex provider and wait for an assistant reply.
+
+#### Expected Results
+- Community fallback providers are suppressed once usable Codex auth appears.
+- User-configured providers with a custom key or custom endpoint remain available and are not suppressed.
+- The app refreshes model metadata after provider promotion so the composer does not stay on a generic `Model` label.
+- The copied auth file is imported into the accounts list without requiring a manual Reload click after Codex quota metadata loads successfully.
+- Invalid or expired copied auth is not imported during startup before a successful quota read, so the first failed send still renders a chat error instead of leaving the thread empty.
+- The Settings feedback row is hidden after provider/account recovery unless there is still a visible error.
+- The Codex provider can send a message successfully after auth promotion.
+
+#### Rollback/Cleanup
+- Stop the temporary container and remove its mounted `CODEX_HOME` directory.

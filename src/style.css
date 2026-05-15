@@ -315,6 +315,10 @@
   @apply border-rose-800/80 bg-rose-950 text-rose-100 hover:bg-rose-900 focus:ring-rose-700;
 }
 
+:root.dark .turn-error-feedback {
+  @apply border-rose-800/80 bg-rose-950 text-rose-100 hover:bg-rose-900 focus:ring-rose-700;
+}
+
 :root.dark .header-git-feedback {
   @apply border-rose-800/80 bg-rose-950 text-rose-100 hover:bg-rose-900 focus:ring-rose-700;
 }
