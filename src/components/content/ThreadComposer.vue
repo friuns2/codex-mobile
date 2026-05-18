@@ -295,6 +295,30 @@
             :disabled="isComposerConfigDisabled"
             @update:model-value="onReasoningEffortSelect"
           />
+
+          <div v-if="visibleComposioSuggestions.length > 0" class="thread-composer-composio-suggestions">
+            <button
+              v-for="connector in visibleComposioSuggestions"
+              :key="connector.slug"
+              class="thread-composer-composio-suggestion"
+              type="button"
+              :disabled="isInteractionDisabled"
+              @mousedown.prevent
+              @click="applyComposioSuggestion(connector)"
+            >
+              <span class="thread-composer-composio-suggestion-title">
+                {{ connector.name }}
+              </span>
+              <span
+                class="thread-composer-composio-suggestion-meta"
+                :class="statusIconClass(connector)"
+                :title="statusIconTitle(connector)"
+                :aria-label="statusIconTitle(connector)"
+              >
+                {{ statusIconText(connector) }}
+              </span>
+            </button>
+          </div>
         </template>
 
         <div
@@ -406,13 +430,27 @@ import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import {
   createComposerPrompt,
+  getDirectoryComposioStatus,
   getComposerPrompts,
+  listDirectoryComposioConnectors,
+  readDirectoryComposioConnector,
   removeComposerPrompt,
   searchComposerFiles,
   uploadFile,
   type ComposerFileSuggestion,
   type ComposerPromptInfo,
+  type DirectoryComposioConnector,
+  type DirectoryComposioConnectorDetail,
+  type DirectoryComposioStatus,
 } from '../../api/codexGateway'
+import { HARDCODED_COMPOSIO_CONNECTORS } from './composioConnectorCatalog'
+import {
+  buildComposioConnectorDocument,
+  composioConnectorDocumentFileName,
+  getComposioSuggestionQuery,
+  mergeComposioConnectors,
+  rankComposioSuggestions,
+} from './composioComposerSuggestions'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
@@ -455,9 +493,10 @@ const props = defineProps<{
   dictationClickToToggle?: boolean
   dictationAutoSend?: boolean
   dictationLanguage?: string
+  composioSuggestionsEnabled?: boolean
 }>()
 
-export type FileAttachment = { label: string; path: string; fsPath: string }
+export type FileAttachment = { label: string; path: string; fsPath: string; source?: 'composio-doc' }
 
 export type ComposerDraftPayload = {
   text: string
@@ -483,6 +522,7 @@ export type ThreadComposerExposed = {
 const emit = defineEmits<{
   submit: [payload: SubmitPayload]
   interrupt: []
+  'open-composio-connector': [slug: string]
   'update:selected-collaboration-mode': [mode: CollaborationModeKind]
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
@@ -514,6 +554,8 @@ type AttachmentBatchStats = {
 const CONTEXT_WINDOW_BASELINE_TOKENS = 12000
 const PASTED_TEXT_FILE_THRESHOLD = 2000
 const PROMPT_OPTION_PREFIX = 'prompt:'
+const COMPOSIO_SUGGESTION_LIMIT = 1
+const COMPOSIO_REFRESH_INTERVAL_MS = 30_000
 
 const draft = ref('')
 const selectedImages = ref<SelectedImage[]>([])
@@ -521,6 +563,9 @@ const selectedSkills = ref<SkillItem[]>([])
 const savedPrompts = ref<ComposerPromptInfo[]>([])
 const fileAttachments = ref<FileAttachment[]>([])
 const folderUploadGroups = ref<FolderUploadGroup[]>([])
+const composioStatus = ref<DirectoryComposioStatus | null>(null)
+const composioConnectors = ref<DirectoryComposioConnector[]>(HARDCODED_COMPOSIO_CONNECTORS)
+const dismissedComposioSuggestionSlug = ref<string | null>(null)
 
 const dictationFeedback = ref('')
 const pendingAttachmentCount = ref(0)
@@ -581,6 +626,7 @@ let fileMentionDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let isHoldPressActive = false
 let dragDepth = 0
 let attachmentSessionToken = 0
+let composioLoadStartedAt = 0
 const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 const DRAFT_STORAGE_PREFIX = 'codex-web-local.thread-draft.v1.'
 let lastActiveThreadId = ''
@@ -607,6 +653,16 @@ const isPlanModeWaitingForModel = computed(() =>
 )
 
 const selectedSkillPaths = computed(() => selectedSkills.value.map((s) => s.path))
+const visibleComposioSuggestions = computed(() => {
+  if (props.composioSuggestionsEnabled === false) return []
+  if (isFileMentionOpen.value) return []
+  const query = getComposioSuggestionQuery(draft.value)
+  if (query.length < 2) return []
+  const rows = composioConnectors.value.length > 0 ? composioConnectors.value : HARDCODED_COMPOSIO_CONNECTORS
+  return rankComposioSuggestions(rows, query)
+    .slice(0, COMPOSIO_SUGGESTION_LIMIT)
+    .filter((connector) => connector.slug !== dismissedComposioSuggestionSlug.value)
+})
 const skillDropdownOptions = computed(() =>
   [
     ...(props.skills ?? []).map((s) => {
@@ -1234,12 +1290,12 @@ function getFolderUploadPercent(group: FolderUploadGroup): number {
   return Math.round((group.processed / group.total) * 100)
 }
 
-function addFileAttachment(filePath: string, customLabel?: string): void {
+function addFileAttachment(filePath: string, customLabel?: string, source?: FileAttachment['source']): void {
   const normalized = filePath.replace(/\\/g, '/')
   if (fileAttachments.value.some((a) => a.fsPath === normalized)) return
   const parts = normalized.split('/').filter(Boolean)
   const label = customLabel?.trim() || parts[parts.length - 1] || normalized
-  fileAttachments.value = [...fileAttachments.value, { label, path: normalized, fsPath: normalized }]
+  fileAttachments.value = [...fileAttachments.value, { label, path: normalized, fsPath: normalized, source }]
 }
 
 function isImageFile(file: File): boolean {
@@ -1688,6 +1744,102 @@ async function reloadPrompts(): Promise<void> {
   savedPrompts.value = await getComposerPrompts()
 }
 
+async function refreshComposioSuggestions(force = false): Promise<void> {
+  if (props.composioSuggestionsEnabled === false) return
+  const now = Date.now()
+  if (!force && composioLoadStartedAt > 0 && now - composioLoadStartedAt < COMPOSIO_REFRESH_INTERVAL_MS) return
+  composioLoadStartedAt = now
+  try {
+    const status = await getDirectoryComposioStatus()
+    composioStatus.value = status
+    if (!status.available || !status.authenticated) {
+      composioConnectors.value = HARDCODED_COMPOSIO_CONNECTORS
+      return
+    }
+    const page = await listDirectoryComposioConnectors('', null, 1000)
+    composioConnectors.value = mergeComposioConnectors(HARDCODED_COMPOSIO_CONNECTORS, page.data)
+  } catch {
+    composioConnectors.value = HARDCODED_COMPOSIO_CONNECTORS
+  }
+}
+
+async function applyComposioSuggestion(connector: DirectoryComposioConnector): Promise<void> {
+  dismissedComposioSuggestionSlug.value = connector.slug
+  let resolvedConnector = connector
+  let resolvedDetail: DirectoryComposioConnectorDetail | null = null
+  if (connector.activeCount <= 0 && !connector.isNoAuth && composioStatus.value?.available && composioStatus.value.authenticated) {
+    try {
+      resolvedDetail = await readDirectoryComposioConnector(connector.slug, true)
+      resolvedConnector = resolvedDetail.connector
+      composioConnectors.value = mergeComposioConnectors(composioConnectors.value, [resolvedConnector])
+    } catch {
+      resolvedDetail = null
+    }
+  }
+
+  if (resolvedConnector.activeCount <= 0 && !resolvedConnector.isNoAuth) {
+    emit('open-composio-connector', connector.slug)
+    void nextTick(() => inputRef.value?.focus())
+    return
+  }
+
+  const fileName = composioConnectorDocumentFileName(resolvedConnector)
+  if (fileAttachments.value.some((attachment) => attachment.label === fileName && attachment.source === 'composio-doc')) {
+    void nextTick(() => inputRef.value?.focus())
+    return
+  }
+
+  beginAttachmentBatch(1)
+  const sessionToken = attachmentSessionToken
+  if (!beginAttachmentWork(sessionToken)) return
+  try {
+    let detail = resolvedDetail
+    try {
+      detail = detail ?? await readDirectoryComposioConnector(resolvedConnector.slug)
+    } catch {
+      detail = null
+    }
+    const document = buildComposioConnectorDocument(resolvedConnector, detail)
+    const file = new File([document], fileName, {
+      type: 'text/markdown',
+      lastModified: Date.now(),
+    })
+    const serverPath = await uploadFile(file)
+    if (sessionToken !== attachmentSessionToken) return
+    if (!serverPath) {
+      recordAttachmentBatchResult('failure')
+      return
+    }
+    addFileAttachment(serverPath, fileName, 'composio-doc')
+    recordAttachmentBatchResult('success')
+  } catch {
+    if (sessionToken === attachmentSessionToken) {
+      recordAttachmentBatchResult('failure')
+    }
+  } finally {
+    finishAttachmentWork(sessionToken)
+    void nextTick(() => inputRef.value?.focus())
+  }
+}
+
+function statusIconText(connector: DirectoryComposioConnector): string {
+  if (connector.activeCount > 0) return '●'
+  if (connector.isNoAuth) return '○'
+  return '+'
+}
+
+function statusIconTitle(connector: DirectoryComposioConnector): string {
+  if (connector.activeCount > 0) return `${connector.activeCount} connected`
+  if (connector.isNoAuth) return 'No auth'
+  return 'Connector available'
+}
+
+function statusIconClass(connector: DirectoryComposioConnector): string {
+  if (connector.activeCount > 0) return 'is-connected'
+  if (connector.isNoAuth) return 'is-no-auth'
+  return 'is-available'
+}
+
 function promptOptionValue(path: string): string {
   return `${PROMPT_OPTION_PREFIX}${path}`
 }
@@ -1857,7 +2009,11 @@ watch([draft, selectedImages, fileAttachments, selectedSkills], () => {
 }, { deep: true })
 
 watch(draft, () => {
+  dismissedComposioSuggestionSlug.value = null
   queueComposerOverflowMeasurement()
+  if (props.composioSuggestionsEnabled !== false && draft.value.trim().length >= 2) {
+    void refreshComposioSuggestions()
+  }
 })
 
 watch(
@@ -1980,6 +2136,34 @@ watch(
 
 .thread-composer-skill-chip-remove {
   @apply ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border-0 bg-transparent text-emerald-500 transition hover:bg-emerald-200 hover:text-emerald-700 text-xs leading-none p-0;
+}
+
+.thread-composer-composio-suggestions {
+  @apply flex min-w-0 max-w-[min(34rem,48vw)] flex-wrap items-center gap-1.5 overflow-visible;
+}
+
+.thread-composer-composio-suggestion {
+  @apply inline-flex max-w-full items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-left text-xs text-sky-800 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+.thread-composer-composio-suggestion-title {
+  @apply truncate font-medium;
+}
+
+.thread-composer-composio-suggestion-meta {
+  @apply inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold leading-none text-sky-600;
+}
+
+.thread-composer-composio-suggestion-meta.is-connected {
+  @apply bg-emerald-100 text-emerald-700;
+}
+
+.thread-composer-composio-suggestion-meta.is-no-auth {
+  @apply bg-zinc-100 text-zinc-500;
+}
+
+.thread-composer-composio-suggestion-meta.is-available {
+  @apply bg-sky-100 text-sky-700;
 }
 
 .thread-composer-rate-limit {

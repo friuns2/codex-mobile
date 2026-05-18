@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, logoutDirectoryComposioCli, resumeThread, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -85,6 +85,36 @@ describe('listDirectoryComposioConnectors', () => {
     await listDirectoryComposioConnectors('instagram', '50', 25)
 
     expect(requests).toEqual(['/codex-api/composio/connectors?query=instagram&cursor=50&limit=25'])
+  })
+})
+
+describe('logoutDirectoryComposioCli', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('posts to the logout endpoint', async () => {
+    const requests: Array<{ input: string, method: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({
+        input: String(input),
+        method: String(init?.method ?? 'GET'),
+      })
+      return new Response(JSON.stringify({
+        ok: true,
+        command: 'composio logout',
+        output: '',
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+    }))
+
+    await logoutDirectoryComposioCli()
+
+    expect(requests).toEqual([{ input: '/codex-api/composio/logout', method: 'POST' }])
   })
 })
 

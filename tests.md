@@ -336,6 +336,77 @@ Rollback/cleanup:
 
 ---
 
+### Composio panel shows hardcoded connector preview without install or login
+
+#### Feature/Change Name
+Composio connector catalog preview and live-status merge in the directory panel.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 4173`)
+2. Open the Skills and Apps directory route with the Composio tab available
+3. Be able to switch between light theme and dark theme
+4. For the unauthenticated preview path, either use an environment without the Composio CLI or log out of Composio before opening the tab
+
+#### Steps
+1. In light theme, open the Composio tab.
+2. If Composio is not installed, confirm the preview hero still renders, the Install Composio button is visible, and connector cards still load from the hardcoded catalog.
+3. If Composio is installed but logged out, confirm the preview hero renders, the Login to Composio button is visible, and the connector list is still searchable.
+4. Search for `gmail` and confirm Gmail appears with tool counts from the hardcoded catalog.
+5. Clear the search and click Load more; confirm more connector cards render without another server round-trip.
+6. Open a preview connector Details modal and confirm overview data renders even before install/login.
+7. Log into Composio, refresh the Composio tab, and confirm the same catalog now shows merged live connection badges and actions where applicable.
+8. Click the Logout button in the Composio workspace card or connector detail footer.
+9. Confirm the panel returns to preview mode while still showing the hardcoded connector catalog.
+10. Switch to dark theme and repeat steps 1-9.
+
+#### Expected Results
+- The Composio tab always renders connector cards from the hardcoded TypeScript catalog, even when the CLI is missing or logged out.
+- Install/login state changes only the hero/actions and any merged live status, not whether the catalog is visible.
+- Logout is available directly from the authenticated Composio panel and returns the UI to the logged-out preview state.
+- Search and Load more work client-side against the full hardcoded catalog.
+- Preview Details works before install/login, and live Details still works after authentication.
+- Light theme and dark theme both render the preview and authenticated states correctly.
+
+#### Rollback/Cleanup
+- If you logged into Composio only for this test, log out afterward if desired.
+
+---
+
+### Composer suggests matching Composio connectors while typing
+
+#### Feature/Change Name
+Realtime Composio connector suggestions in the chat composer.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 4173`)
+2. Open any thread with the normal composer visible
+3. Light theme and dark theme available
+4. For connected-state checks, have at least one active Composio connector such as Reddit
+
+#### Steps
+1. In light theme, focus the composer and type `reddit`.
+2. Confirm a single connector suggestion appears in the bottom controls row after Model, Skills, and Thinking.
+3. Confirm Reddit is shown and, if connected, the suggestion copy indicates it is connected.
+4. Click the Reddit suggestion.
+5. Confirm a `composio-reddit.md` file chip is attached, the composer text remains unchanged, and no `composio-cli` skill chip is added automatically.
+6. Clear the draft, type another connector name such as `gmail`, and confirm the matching suggestion updates while typing.
+7. Type `@` to open file mentions and confirm the Composio suggestion strip does not interfere with the file mention popup.
+8. Log out of Composio and repeat steps 1-7.
+9. Switch to dark theme and repeat steps 1-8.
+
+#### Expected Results
+- Connector suggestions appear in realtime from normal draft text without requiring `@` syntax.
+- Matching connected connectors show connected-state emphasis.
+- After Composio logout, matching suggestions still appear from the hardcoded catalog but without connected-state emphasis.
+- Clicking a suggestion attaches connector documentation as a file and does not auto-add the `composio-cli` skill or append instruction text to the draft.
+- File mention behavior remains intact and takes precedence when the `@` popup is open.
+- Light theme and dark theme both render the controls-row suggestion correctly.
+
+#### Rollback/Cleanup
+- Remove the generated `composio-*.md` attachment chip if you do not want to send it.
+
+---
+
 ### Automation editor scrolls on small viewports
 
 #### Feature/Change Name
@@ -4353,12 +4424,12 @@ The `#/skills` route shows a full Skills & Apps directory with Plugins, Apps, Co
 17. Search Apps and verify matching results are not capped to the Popular top 100 list
 18. Switch to `Composio` and verify the workspace summary card shows the current installed Composio CLI login state, or a clear not-installed / not-authenticated message appears
 19. If Composio CLI is not installed, click `Install Composio` and verify the app installs the CLI to `~/.composio/composio` using the official Composio installer
-20. If Composio is available but not authenticated, click `Login` and verify the app opens a new tab, starts the installed `composio login --no-browser -y`, captures the returned auth URL, and navigates the new tab to that URL
+20. If Composio is available but not authenticated, click `Login` and verify the app opens a new tab, starts the installed `composio login --no-browser -y`, captures the returned auth URL, navigates the new tab to that URL, and keeps the login action in a waiting state until the local status refresh reports authenticated or a timeout appears
 21. Verify Composio connector cards show real connector details such as tool counts, trigger counts, auth mode, and connection state instead of only aggregate totals
 22. In Composio search, type `instagram` and verify the Instagram connector appears first when it is returned by the connector source, ahead of description-only matches such as Meta Ads
-23. Open a disconnected Composio connector and click `Connect` or `Reconnect`; verify the returned `connect.composio.dev` authorization URL opens
+23. Open a disconnected Composio connector and click `Connect` or `Reconnect`; verify the returned `connect.composio.dev` authorization URL opens in a new tab and the Composio connector list/detail refreshes after the selected connector reports an active connection
 24. Open a connected Composio connector and verify connection rows show account identifiers and statuses such as `Active` or `Expired`
-25. Click `Try it!` on a connected or no-auth Composio connector and verify a new thread opens with a Composio-specific prompt and the `composio-cli` skill attached
+25. Click `Try it!` on a connected or no-auth Composio connector and verify a new thread opens with a Composio-specific prompt and a generated `composio-*.md` file attachment instead of the `composio-cli` skill chip
 26. On Composio, verify that if more than one page exists, `Load more` appears and appends additional connectors while keeping prior results visible
 27. In Composio search, verify the page state resets (the list returns to the first result page and stale pagination is cleared)
 28. Switch to `Skills` and verify the view shows an `MCPs(count)` collapsible section immediately before the `Installed skills (count)` section
@@ -4380,11 +4451,12 @@ The `#/skills` route shows a full Skills & Apps directory with Plugins, Apps, Co
 - Disconnected apps are labeled `Login`; connected apps are labeled `Manage`
 - The Composio tab uses the installed Composio CLI, preferring `CODEXUI_COMPOSIO_COMMAND` when set and otherwise `~/.composio/composio` or `composio` on `PATH`
 - The Composio install action uses the official installer and produces a working `~/.composio/composio` binary
-- The Composio login action opens a new tab from the click, starts the installed `composio login --no-browser -y`, then navigates that tab to the returned auth URL
+- The Composio login action opens a new tab from the click, starts the installed `composio login --no-browser -y`, navigates that tab to the returned auth URL, polls local status, and refreshes the Composio tab after login completes
+- Composio connector connect/reconnect opens the authorization URL in a new tab, polls until the selected connector has an active connection, then refreshes connector cards and the open detail modal
 - Composio connector cards and detail views show concrete connector details, connection rows, and useful tool samples
 - Composio search prioritizes exact slug/name matches above connectors that only mention the query in their description
 - Unit coverage verifies that Composio exact query matches outrank description-only matches and that gateway connector search sends `query`, `cursor`, and `limit` params expected by the server
-- Connected or no-auth Composio connectors expose `Try it!`, creating a new chat with the `composio-cli` skill attached
+- Connected or no-auth Composio connectors expose `Try it!`, creating a new chat with generated connector documentation attached as a file
 - Composio pagination supports page-by-page loading with a clear `Load more` path and cursor-based page continuation
 - Plugin install opens the first required app login/manage page before falling back to bundled MCP OAuth login
 - Plugin install is blocked with `ChatGPT Plus` when the plugin requires an app that is absent from the Apps catalog for the current account
@@ -6177,6 +6249,128 @@ Bold-wrapped plain URLs followed by punctuation render as clean links.
 - The bold asterisk wrapper is removed from the rendered URL.
 - Trailing punctuation is not included in the link target.
 - Light and dark themes both render the link and punctuation clearly.
+
+#### Rollback/Cleanup
+- Stop the temporary Vite server if it was only used for this check.
+
+---
+
+### Composio composer connector document attachment
+
+#### Feature/Change Name
+Composer Composio suggestion selection attaches connector documentation instead of inserting instruction text.
+
+#### Prerequisites/Setup
+1. Start local Vite: `pnpm run dev --host 127.0.0.1 --port 4173`.
+2. Composio may be logged in or logged out; logged-out mode should still use the hardcoded connector catalog.
+
+#### Steps
+1. In light theme, open `http://127.0.0.1:4173/#/` or an existing thread.
+2. Type a sentence with an exact connector mention followed by an active word, such as `lets make reddit bett`.
+3. Select one Composio suggestion chip.
+4. Confirm the composer text is not expanded with a copied instruction sentence.
+5. Confirm a file chip appears with a name like `composio-reddit.md`.
+6. Confirm the clicked connector word stays in the draft and the rest of the composer text remains unchanged.
+7. Confirm the `composio-cli` skill is not selected automatically.
+8. Type `gmail reddit butt` and confirm only one connector suggestion appears, it is Reddit, and Gmail plus the active `butt` word are ignored.
+9. Type `reddit ads butt` and confirm only one connector suggestion appears, it is Reddit Ads, because the full multi-word connector alias appears before the active word.
+10. Type `reddit` and confirm Reddit Ads is not suggested from the partial multi-word connector alias.
+11. Type `redditor` and confirm Reddit is not suggested from the partial larger word.
+12. Open Settings, turn off `Connector suggestions`, type `reddit ads butt`, and confirm no connector suggestion chip appears.
+13. Reload the page and confirm the disabled setting persists.
+14. Turn `Connector suggestions` back on and confirm `reddit ads butt` shows Reddit Ads again.
+15. For an unconnected connector, click its suggestion and confirm the app opens the Composio directory tab with that connector detail panel visible for install/login/connect.
+16. Confirm the single suggestion chip appears in the bottom controls row after Model, Skills, and Thinking controls, not before them and not over the text area.
+17. Repeat in dark theme and confirm the settings toggle, suggestion chips, directory panel, and file chip remain readable.
+
+#### Expected Results
+- Picking a Composio suggestion attaches a markdown file containing the connector instruction, description, metadata, available tools when detail fetch succeeds, and connection notes.
+- Suggestions are ranked from the connector alias suffix before the active word, so `gmail reddit butt` and `lets make reddit bett` show only the top Reddit connector while ignoring the current active word.
+- Exact matching is required for aliases, so `reddit` does not suggest Reddit Ads, but `reddit ads butt` suggests Reddit Ads because the full alias is complete before the active word.
+- The Settings `Connector suggestions` toggle disables composer suggestions immediately, persists across reloads, and does not hide the Composio connector catalog/panel.
+- Partial larger words do not match connector names, so `redditor` does not suggest Reddit.
+- The composer text remains unchanged after a connector file is attached or the connector panel opens.
+- Picking a suggestion does not automatically add the `composio-cli` skill chip.
+- Unconnected connectors open the Composio connector detail panel instead of attaching a docs file immediately.
+- Re-selecting the same connector does not attach duplicate connector files.
+- The flow still works when Composio is logged out by falling back to catalog documentation.
+- Light and dark themes both render the controls-row suggestion after Model, Skills, and Thinking plus attachment chips clearly.
+
+#### Rollback/Cleanup
+- Remove any generated `composio-*.md` attachment chips from the composer before continuing unrelated tests.
+- Turn `Connector suggestions` back on if the verification disabled it.
+- Stop the temporary Vite server if it was only used for this check.
+
+---
+
+### Composio panel connected connector document attachment
+
+#### Feature/Change Name
+Composio panel connected connector `Try it!` starts a thread with connector documentation as a file attachment.
+
+#### Prerequisites/Setup
+1. Start local Vite: `pnpm run dev --host 127.0.0.1 --port 4173`.
+2. Log in to Composio and ensure at least one connector is connected, or use a no-auth connector.
+
+#### Steps
+1. In light theme, open `http://127.0.0.1:4173/#/skills?tab=composio`.
+2. Click `Try it!` on a connected connector card.
+3. Confirm the created thread's first user message includes one `composio-*.md` file attachment chip.
+4. Confirm the first user message does not include an attached `composio-cli` skill chip.
+5. Open a connected connector detail modal and click `Try it!` there.
+6. Confirm the same file-attachment behavior.
+7. Repeat in dark theme and confirm the panel, starting state, and rendered file chip remain readable.
+
+#### Expected Results
+- Connected and no-auth Composio panel `Try it!` actions upload generated connector documentation and pass it as a file attachment to the new thread.
+- The prompt references the attached documentation instead of asking to use the `composio-cli` skill.
+- Disconnected connectors still use the existing connect/login panel actions instead of creating a docs attachment.
+- Light and dark themes both render the Composio panel action and resulting file attachment clearly.
+
+#### Rollback/Cleanup
+- Delete any test threads created only for this check if desired.
+- Stop the temporary Vite server if it was only used for this check.
+
+---
+
+### Composio directory load and detail performance
+
+#### Feature/Change Name
+Composio connector directory uses paged loading and short-lived server caches for status, connector pages, and connector detail.
+
+#### Prerequisites/Setup
+1. Start a fresh verification server: `pnpm run dev --host 127.0.0.1 --port 4173`.
+2. Use a Composio-authenticated local environment for live connector timings.
+3. Keep the persistent `5173` server running if it exists; only restart the `4173` verification server.
+
+#### Steps
+1. Measure `GET /codex-api/composio/status?force=1` and then `GET /codex-api/composio/status`.
+2. Measure `GET /codex-api/composio/connectors?limit=50` twice.
+3. Measure `GET /codex-api/composio/connectors?limit=50&cursor=50` and then another cursor page while the cache is warm.
+4. Measure `GET /codex-api/composio/connector?slug=reddit&force=1` and then `GET /codex-api/composio/connector?slug=reddit`.
+5. Open `http://127.0.0.1:4173/#/skills?tab=composio` in light theme and confirm the initial card list renders from the first page.
+6. Click `Load more` and confirm additional connectors appear while existing rows remain stable.
+7. Search `reddit` or `instagram` and confirm ranking still prefers direct slug/name matches.
+8. Open one connector detail twice and confirm the second open is visibly faster while still showing tool descriptions and connection rows.
+9. Repeat the visible Composio tab checks in dark theme.
+10. Run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser`.
+11. Connect a connector that is visible through search but not necessarily present in the first live page, such as YouTube, and confirm the waiting state stops and the same visible card changes from `Connect` to connected/manage state without refreshing the browser.
+12. After connecting YouTube, type `youtube` in the composer and click the `YouTube` suggestion; confirm the suggestion disappears immediately, then attaches `composio-youtube.md` without changing composer text and without redirecting to the Composio panel.
+13. Disable connector suggestions in settings, type a connector name, and confirm no Composio suggestion API requests are made while typing.
+14. Focus a visible connector suggestion and activate it with Enter or Space; confirm it performs one attachment/open action, not duplicate uploads.
+
+#### Expected Results
+- The initial connector endpoint returns 50 rows, not the full 1000-row catalog.
+- Repeated status, first-page connector list, cursor-page connector list, and connector detail calls return from cache within the configured TTL; connector list/detail repeats should stay warm long enough for normal manual re-open checks.
+- `Load more` fetches additional live connector pages instead of only revealing unhydrated preview rows.
+- Connector detail can still be force-refreshed during connect polling.
+- Connect polling updates the visible connector row from the fresh detail response, even when the connected connector is outside the currently loaded connector page.
+- Composer suggestion clicks force-check stale disconnected rows before deciding to open the Composio panel, so newly connected connectors attach documentation immediately.
+- The clicked composer suggestion hides immediately on click so there is visible feedback while detail refresh/upload work is in progress.
+- Disabling connector suggestions prevents both visible suggestions and background Composio suggestion refresh calls.
+- Native suggestion buttons rely on their built-in keyboard click behavior and do not run duplicate Enter/Space handlers.
+- Browser startup profile does not include Composio API fanout before the user opens or triggers Composio UI.
+- Light and dark themes render the paged connector list, detail modal, and loading states clearly.
 
 #### Rollback/Cleanup
 - Stop the temporary Vite server if it was only used for this check.

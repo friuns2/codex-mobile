@@ -445,6 +445,22 @@
   @apply border-zinc-600 bg-zinc-700 text-zinc-300;
 }
 
+:root.dark .thread-composer-composio-suggestion {
+  @apply border-sky-900/70 bg-sky-950/80 text-sky-200 hover:bg-sky-900/80;
+}
+
+:root.dark .thread-composer-composio-suggestion-meta.is-connected {
+  @apply bg-emerald-950 text-emerald-300;
+}
+
+:root.dark .thread-composer-composio-suggestion-meta.is-no-auth {
+  @apply bg-zinc-800 text-zinc-400;
+}
+
+:root.dark .thread-composer-composio-suggestion-meta.is-available {
+  @apply bg-sky-900 text-sky-200;
+}
+
 :root.dark .organize-menu-panel {
   @apply border-zinc-600 bg-zinc-800/95;
 }

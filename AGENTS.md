@@ -15,7 +15,8 @@
   1. commit task in feature worktree
   2. create/switch feature branch
   3. rebase feature branch on `main`
-  4. from main worktree: `git checkout main && git merge --no-ff <feature-branch>`
+  4. if a GitHub PR exists or GitHub merge is available, prefer updating/creating the PR, rebasing the branch, and merging the PR on GitHub instead of merging locally
+  5. if no PR/GitHub merge path is available, from main worktree: `git checkout main && git merge --no-ff <feature-branch>`
 - If user explicitly asks for a single merge commit, use:
   - `git checkout main`
   - `git reset --hard <pre-merge-main-commit>`

@@ -241,6 +241,12 @@ export type DirectoryComposioInstallResult = {
   output: string
 }
 
+export type DirectoryComposioLogoutResult = {
+  ok: boolean
+  command: string
+  output: string
+}
+
 type DirectoryComposioConnectorPage = {
   data: DirectoryComposioConnector[]
   nextCursor: string | null
@@ -2306,8 +2312,8 @@ export async function startDirectoryMcpLogin(name: string): Promise<DirectoryMcp
   }
 }
 
-export async function getDirectoryComposioStatus(): Promise<DirectoryComposioStatus> {
-  const response = await fetch('/codex-api/composio/status')
+export async function getDirectoryComposioStatus(force = false): Promise<DirectoryComposioStatus> {
+  const response = await fetch(`/codex-api/composio/status${force ? '?force=1' : ''}`)
   if (!response.ok) {
     throw new Error(`Failed to load Composio status (${response.status})`)
   }
@@ -2336,8 +2342,10 @@ export async function listDirectoryComposioConnectors(
   }
 }
 
-export async function readDirectoryComposioConnector(slug: string): Promise<DirectoryComposioConnectorDetail> {
-  const response = await fetch(`/codex-api/composio/connector?slug=${encodeURIComponent(slug)}`)
+export async function readDirectoryComposioConnector(slug: string, force = false): Promise<DirectoryComposioConnectorDetail> {
+  const params = new URLSearchParams({ slug })
+  if (force) params.set('force', '1')
+  const response = await fetch(`/codex-api/composio/connector?${params.toString()}`)
   if (!response.ok) {
     throw new Error(`Failed to load Composio connector (${response.status})`)
   }
@@ -2374,6 +2382,16 @@ export async function installDirectoryComposioCli(): Promise<DirectoryComposioIn
     throw new Error(`Failed to install Composio CLI (${response.status})`)
   }
   return await response.json() as DirectoryComposioInstallResult
+}
+
+export async function logoutDirectoryComposioCli(): Promise<DirectoryComposioLogoutResult> {
+  const response = await fetch('/codex-api/composio/logout', {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to logout Composio CLI (${response.status})`)
+  }
+  return await response.json() as DirectoryComposioLogoutResult
 }
 
 export async function getAccountRateLimitsResponse(): Promise<GetAccountRateLimitsResponse> {
