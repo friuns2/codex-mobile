@@ -299,6 +299,34 @@
   @apply bg-zinc-200 text-zinc-900 hover:bg-white;
 }
 
+:root.dark .thread-composer-context-ring {
+  --context-usage-track: rgb(63 63 70);
+}
+
+:root.dark .thread-composer-context-ring:focus-visible {
+  @apply ring-offset-zinc-800;
+}
+
+:root.dark .thread-composer-context-ring-core {
+  @apply bg-zinc-800 text-zinc-200;
+}
+
+:root.dark .thread-composer-context-tooltip {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-300 shadow-zinc-950/60;
+}
+
+:root.dark .thread-composer-context-tooltip::after {
+  @apply border-zinc-700 bg-zinc-900;
+}
+
+:root.dark .thread-composer-context-tooltip-title {
+  @apply text-zinc-100;
+}
+
+:root.dark .thread-composer-context-compact-button {
+  @apply border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 hover:text-white disabled:bg-zinc-800 disabled:text-zinc-500;
+}
+
 :root.dark .composer-runtime-error {
   @apply border-rose-800/70 bg-rose-950/70 text-rose-100 shadow-none;
 }

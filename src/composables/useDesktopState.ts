@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import {
 
   archiveThread,
+  compactThread,
   forkThread,
   getAvailableCollaborationModes,
   getAccountRateLimits,
@@ -1573,6 +1574,8 @@ export function useDesktopState() {
       ? (liveReasoningTextByThreadId.value[threadId] ?? '').trim()
       : ''
     const liveErrorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim()
+    const hasLiveContextCompaction = (liveAgentMessagesByThreadId.value[threadId] ?? [])
+      .some((message) => message.messageType === 'contextCompaction.live')
     let latestPersistedTurnErrorText = ''
     if (!isInProgress && liveErrorText) {
       const persistedMessages = persistedMessagesByThreadId.value[threadId] ?? []
@@ -1588,6 +1591,7 @@ export function useDesktopState() {
         ? ''
         : liveErrorText
 
+    if (hasLiveContextCompaction && !reasoningText && !errorText) return null
     if (!isInProgress && !activity && !reasoningText && !errorText) return null
     return {
       activityLabel: activity?.label || 'Thinking',
@@ -3225,6 +3229,15 @@ export function useDesktopState() {
           },
         }
       }
+      if (itemType === 'contextcompaction') {
+        return {
+          threadId,
+          activity: {
+            label: 'Compacting context',
+            details: [],
+          },
+        }
+      }
     }
 
     if (notification.method === 'item/commandExecution/outputDelta') {
@@ -3669,6 +3682,32 @@ export function useDesktopState() {
     }
   }
 
+  function readContextCompactionNotification(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/started' && notification.method !== 'item/completed') return null
+
+    const params = asRecord(notification.params)
+    const threadId = readString(params?.threadId)
+    const turnId = readString(params?.turnId)
+    const turnIndex = threadId && turnId
+      ? turnIndexByTurnIdByThreadId.value[threadId]?.[turnId]
+      : undefined
+
+    const item = asRecord(params?.item)
+    const itemType = readString(item?.type).toLowerCase()
+    if (itemType !== 'contextcompaction') return null
+
+    const id = readString(item?.id) || readString(params?.itemId) || `context-compaction:${turnId || Date.now()}`
+    const isCompleted = notification.method === 'item/completed'
+    return {
+      id,
+      role: 'system',
+      text: isCompleted ? 'Context compacted' : 'Compacting context…',
+      messageType: isCompleted ? 'contextCompaction' : 'contextCompaction.live',
+      turnId: turnId || undefined,
+      turnIndex: typeof turnIndex === 'number' ? turnIndex : undefined,
+    }
+  }
+
   function upsertLiveCommand(threadId: string, msg: UiMessage): void {
     const previous = liveCommandsByThreadId.value[threadId] ?? []
     const next = upsertMessage(previous, msg)
@@ -3973,6 +4012,17 @@ export function useDesktopState() {
     const completedFileChange = readCompletedFileChange(notification)
     if (completedFileChange) {
       upsertLiveFileChangeMessage(notificationThreadId, completedFileChange)
+    }
+
+    const contextCompactionMessage = readContextCompactionNotification(notification)
+    if (contextCompactionMessage && notificationThreadId) {
+      const pendingId = `context-compaction:pending:${notificationThreadId}`
+      const previousLiveAgent = liveAgentMessagesByThreadId.value[notificationThreadId] ?? []
+      const withoutPending = previousLiveAgent.filter((message) => message.id !== pendingId)
+      setLiveAgentMessagesForThread(
+        notificationThreadId,
+        upsertMessage(withoutPending, contextCompactionMessage),
+      )
     }
 
     if (isAgentContentEvent(notification)) {
@@ -4464,7 +4514,10 @@ export function useDesktopState() {
 
       const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
       if (inProgress) {
-        const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
+        const nextLiveAgent = removePersistedLiveMessages(
+          removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages),
+          nextMessages,
+        )
         setLiveAgentMessagesForThread(threadId, nextLiveAgent)
       } else {
         clearLiveAgentMessagesForThread(threadId)
@@ -4864,6 +4917,32 @@ export function useDesktopState() {
         },
       },
     })
+  }
+
+  async function compactSelectedThread(): Promise<void> {
+    const threadId = selectedThreadId.value
+    if (!threadId || inProgressById.value[threadId] === true) return
+
+    error.value = ''
+    try {
+      setThreadInProgress(threadId, true)
+      upsertLiveAgentMessage(threadId, {
+        id: `context-compaction:pending:${threadId}`,
+        role: 'system',
+        text: 'Compacting context…',
+        messageType: 'contextCompaction.live',
+      })
+      await compactThread(threadId)
+    } catch (unknownError) {
+      setThreadInProgress(threadId, false)
+      const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
+      setLiveAgentMessagesForThread(
+        threadId,
+        previousLiveAgent.filter((message) => message.id !== `context-compaction:pending:${threadId}`),
+      )
+      setTurnActivityForThread(threadId, null)
+      error.value = unknownError instanceof Error ? unknownError.message : 'Failed to compact context'
+    }
   }
 
   async function sendMessageToSelectedThread(
@@ -5736,6 +5815,7 @@ export function useDesktopState() {
     forkThreadFromTurn,
     rollbackSelectedThread,
 
+    compactSelectedThread,
     sendMessageToSelectedThread,
     sendMessageToNewThread,
     interruptSelectedThreadTurn,
