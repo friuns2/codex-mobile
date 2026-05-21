@@ -3752,6 +3752,14 @@ export function useDesktopState() {
       }
     }
 
+    if (notification.method === 'thread/archived') {
+      const threadId = extractThreadIdFromNotification(notification)
+      if (threadId) {
+        applyArchivedThreadNotification(threadId)
+      }
+      return
+    }
+
     if (notification.method === 'account/rateLimits/updated') {
       setCodexRateLimit(pickCodexRateLimitSnapshot(notification.params))
       return
@@ -4218,6 +4226,27 @@ export function useDesktopState() {
     sourceGroups.value = removeThreadFromGroups(sourceGroups.value, threadId)
     inProgressById.value = omitKey(inProgressById.value, threadId)
     applyThreadFlags()
+  }
+
+  function applyArchivedThreadNotification(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+
+    const wasSelectedThread = selectedThreadId.value === normalizedThreadId
+    const nextSelectedThreadId = wasSelectedThread
+      ? findAdjacentThreadId(flattenThreads(projectGroups.value), normalizedThreadId)
+      : selectedThreadId.value
+
+    if (wasSelectedThread) {
+      setSelectedThreadId(nextSelectedThreadId)
+    }
+
+    removeArchivedThreadFromLoadedLists(normalizedThreadId)
+    pruneThreadScopedState(flattenThreads(projectGroups.value))
+
+    if (wasSelectedThread && nextSelectedThreadId) {
+      void loadMessages(nextSelectedThreadId, { silent: true })
+    }
   }
 
   function mergeThreadGroupPages(previous: UiProjectGroup[], incoming: UiProjectGroup[]): UiProjectGroup[] {

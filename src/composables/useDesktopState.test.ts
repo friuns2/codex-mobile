@@ -598,6 +598,84 @@ describe('startup request deduplication', () => {
   })
 })
 
+describe('thread archive notifications', () => {
+  it('removes a remotely archived thread from the live thread list', async () => {
+    installTestWindow()
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'Project',
+        threads: [
+          thread('keep-thread', '/tmp/project'),
+          thread('archive-me', '/tmp/project'),
+        ],
+      }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'thread/archived',
+      params: { threadId: 'archive-me' },
+    })
+
+    expect(state.projectGroups.value.flatMap((group) => group.threads.map((row) => row.id))).toEqual([
+      'keep-thread',
+    ])
+  })
+
+  it('moves selection away when the selected thread is archived by another client', async () => {
+    installTestWindow()
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      turnIndexByTurnId: {},
+      hasMoreOlder: false,
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'Project',
+        threads: [
+          thread('archive-me', '/tmp/project'),
+          thread('next-thread', '/tmp/project'),
+        ],
+      }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    state.primeSelectedThread('archive-me')
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'thread/archived',
+      params: { threadId: 'archive-me' },
+    })
+
+    expect(state.selectedThreadId.value).toBe('next-thread')
+    expect(state.projectGroups.value.flatMap((group) => group.threads.map((row) => row.id))).toEqual([
+      'next-thread',
+    ])
+  })
+})
+
 describe('live error overlay', () => {
   it('shows the default thinking overlay while a selected thread is in progress without activity events', async () => {
     installTestWindow()
