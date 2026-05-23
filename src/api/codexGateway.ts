@@ -1547,18 +1547,57 @@ export async function rollbackThread(threadId: string, numTurns: number): Promis
   return normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload))
 }
 
-export async function revertThreadFileChanges(threadId: string, turnId: string, cwd: string): Promise<{ reverted: number; errors: string[] }> {
+export async function updateThreadFileChanges(
+  threadId: string,
+  turnId: string,
+  cwd: string,
+  action: 'undo' | 'redo',
+  patchIds?: string[],
+  scope?: 'single_turn' | 'turn_and_later',
+): Promise<{ changed: number; errors: string[]; message?: string; revertedPatchIds?: string[]; appliedPatchIds?: string[] }> {
   try {
     const response = await fetch('/codex-api/thread/rollback-files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ threadId, turnId, cwd }),
+      body: JSON.stringify({ threadId, turnId, cwd, action, patchIds, scope }),
     })
-    if (!response.ok) return { reverted: 0, errors: ['Server error'] }
-    return (await response.json()) as { reverted: number; errors: string[] }
-  } catch {
-    return { reverted: 0, errors: ['Network error'] }
+    const payload = (await response.json().catch(() => ({}))) as {
+      changed?: number
+      reverted?: number
+      applied?: number
+      errors?: string[]
+      message?: string
+      error?: string
+      revertedPatchIds?: string[]
+      appliedPatchIds?: string[]
+    }
+    if (!response.ok) {
+      const message = typeof payload.message === 'string' && payload.message.trim()
+        ? payload.message.trim()
+        : typeof payload.error === 'string' && payload.error.trim()
+          ? payload.error.trim()
+          : 'Server error'
+      return {
+        changed: 0,
+        errors: Array.isArray(payload.errors) && payload.errors.length > 0 ? payload.errors : [message],
+        message: payload.message,
+      }
+    }
+    return {
+      changed: payload.changed ?? payload.reverted ?? payload.applied ?? 0,
+      errors: Array.isArray(payload.errors) ? payload.errors : [],
+      message: payload.message,
+      revertedPatchIds: Array.isArray(payload.revertedPatchIds) ? payload.revertedPatchIds : [],
+      appliedPatchIds: Array.isArray(payload.appliedPatchIds) ? payload.appliedPatchIds : [],
+    }
+  } catch (error) {
+    return { changed: 0, errors: [error instanceof Error ? error.message : 'Network error'] }
   }
+}
+
+export async function revertThreadFileChanges(threadId: string, turnId: string, cwd: string): Promise<{ reverted: number; errors: string[] }> {
+  const result = await updateThreadFileChanges(threadId, turnId, cwd, 'undo')
+  return { reverted: result.changed, errors: result.errors }
 }
 
 function normalizeThreadIdFromPayload(payload: unknown): string {

@@ -1,274 +1,107 @@
 # AGENTS.md
 
-## Git Workflow (Compact)
+## Git Workflow
 
-- Keep both worktrees clean before merge/rebase:
-  - feature worktree: `git status --short`
+- Before any merge, rebase, sync, or continuation after interruption, re-check live state:
+  - feature worktree: `git status --short`, `git branch --show-current`
   - main worktree: `git status --short`
-- If any merge/rebase is already in progress, abort it first in that worktree:
-  - merge: `git merge --abort`
-  - rebase: `git rebase --abort`
-- Always checkpoint local changes in main worktree before merge/rebase:
-  - `git add -A && git commit -m "temp-before-merge-<branch>"`
-  - skip only if there are no local changes.
-- Standard merge path:
-  1. commit task in feature worktree
-  2. create/switch feature branch
-  3. rebase feature branch on `main`
-  4. if a GitHub PR exists or GitHub merge is available, prefer updating/creating the PR, rebasing the branch, and merging the PR on GitHub instead of merging locally
-  5. if no PR/GitHub merge path is available, from main worktree: `git checkout main && git merge --no-ff <feature-branch>`
-- If user explicitly asks for a single merge commit, use:
-  - `git checkout main`
-  - `git reset --hard <pre-merge-main-commit>`
-  - `git checkout <feature-branch>`
-  - `git rebase main`
-  - `git checkout main`
-  - `git merge --no-ff <feature-branch> -m "Merge branch '<feature-branch>' into main"`
+  - in-progress state: `git status`, `.git/MERGE_HEAD`, `.git/rebase-merge`, `.git/rebase-apply`
+  - remote/PR state: `git fetch origin`; when a PR may exist, `gh pr view --json number,state,mergeStateStatus,isDraft,headRefName,baseRefName,url`
+  - branch delta: `git diff --stat main...HEAD` and `git log --oneline main..HEAD`
+- Keep both worktrees clean before merge/rebase. Checkpoint local changes in main with `git add -A && git commit -m "temp-before-merge-<branch>"`; skip only if main is clean.
+- Prefer GitHub PR update/rebase/merge when a PR or GitHub merge path exists. Use local `main` merge only when no PR/GitHub path exists or the user explicitly asks for a local merge.
+- Standard path: commit task, create/switch feature branch, rebase on `main`, then use the chosen PR/local merge path.
+- Never use automatic conflict-bias strategies blindly (`-X theirs`, `-X ours`, `git checkout --theirs .`, `git checkout --ours .`). Inspect conflicts intentionally.
+- Avoid rebasing long-lived mixed-history branches if it pulls broad unrelated conflicts. Abort and use a fresh branch from `main` plus task-relevant cherry-picks.
+- If `package.json`, `tests.md`, or files under `tests/` conflict during merge/rebase, start from the local/checkpoint version, then explicitly compare incoming changes and reconcile required updates before continuing.
+- Before local `main` merge, diff-compare all branch changes against `main`.
+- After merge/sync, verify the target really contains the commit with `git branch --contains <commit>`, `git log --oneline origin/main -10`, or a file-level diff against `origin/main`.
 
-## Never Blindly Merge (MANDATORY)
+## Commits
 
-- Never use automatic conflict-bias strategies blindly (for example: `git merge -X theirs`, `git merge -X ours`, `git checkout --theirs .`, `git checkout --ours .`).
-- If conflicts occur, inspect each conflicted file and resolve intentionally.
-- After conflict resolution, run required verification/tests before pushing.
+- Commit after each discrete task or sub-task.
+- Do not batch unrelated tasks into one commit.
+- Use a specific commit message describing the change.
 
-## Conflict Avoidance and Recovery (MANDATORY)
+## PR Review Bots
 
-- Do not rebase long-lived mixed-history branches directly onto `main` if it creates broad unrelated conflicts.
-- Prefer a fresh branch from `main` + cherry-pick only task-relevant commits.
-- If a branch is already checked out in another worktree, rebase/commit there, then merge by branch name from main worktree.
-- If merge pulls unrelated conflicts, abort and retry with a narrower commit set.
+- Treat Qodo/CodeRabbit comments as advisory, not authoritative.
+- For PR update + review requests: push branch, update PR summary/verification notes when changed, then post a plain PR comment containing exactly `/review`.
+- Do not use draft reviews or batch review APIs to trigger Qodo.
+- Before applying a bot fix, inspect the current code path and classify the comment as real, stale/resolved, rejected, or docs-only.
+- Prefer a focused regression test for accepted bugs. After fixing, run the narrow test plus relevant build/typecheck, push, and re-check PR comments/status.
+- Completion reports must distinguish confirmed fixes from stale or rejected bot comments.
 
-## package.json / manual test docs Conflict Rule
+## Performance
 
-- For any merge/rebase conflict involving `package.json`, always resolve by taking the current local/checkpoint `package.json` entirely (full file replacement) without additional review, then continue merge.
-- Treat `package.json` as generated/low-priority for conflict resolution and do not block merge completion on its conflicts.
-- If `package.json` has uncommitted changes during merge/rebase workflow, always discard those uncommitted changes and keep the current local/checkpoint `package.json` version.
-- For any merge/rebase conflict involving `tests.md` or files under `tests/`, always resolve by taking the current local/checkpoint file entirely (full file replacement) without additional review, then continue merge.
-- Treat manual test docs as low-priority for conflict resolution and do not block merge completion on their conflicts.
+- Every feature/behavior change needs a performance audit before completion.
+- Ground the audit in measurements, profiler output, traces, request counts, bundle/build output, or concrete code-path analysis. If live measurement is infeasible, say what was not measured.
+- Documentation-only changes do not require a performance audit.
+- For startup, thread loading, realtime rendering, routing, API, filesystem, git, or module-loading changes, explicitly check duplicate requests, blocking work, unbounded fanout, large payloads, and cache invalidation risk.
+- Prefer profiler helpers for browser/startup/thread work: `pnpm run profile:browser` and `pnpm run profile:thread`; reports land under `output/playwright/`.
+- Profiler server setup:
+  1. Ensure `node_modules` exists. In side worktrees, reuse a compatible shared dependency tree instead of installing from scratch.
+  2. Before reusing `127.0.0.1:4173`, inspect the listener with `lsof -nP -iTCP:4173 -sTCP:LISTEN` and `lsof -a -p <PID> -d cwd`.
+  3. If `4173` belongs to another worktree, old main checkout, or stale Vite state, stop only that `4173` process and restart from the current cwd.
+  4. Never stop the persistent tmux server on `5173`.
+  5. Start/current server command: `pnpm run dev --host 127.0.0.1 --port 4173`.
+  6. Reject profiler output from an error page, stale worktree, indefinite `Loading threads...`, or zero API traffic caused by failed app boot. Fix readiness and rerun.
+- General profile command: `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser`.
+- Thread route profile command: `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_ROUTE='#/thread/<thread-id>' PROFILE_WAIT_MS=7000 pnpm run profile:browser`; use `pnpm run profile:thread` when appropriate.
+- Inspect `duplicateCounts`, `warnings`, `totalApiKB`, `topApiSummary`, and `slowestApiRows`; open the matching trace zip with `npx playwright show-trace` when deeper request/render timing is needed.
 
-## Commit After Each Task
-
-- Always create a commit after completing each discrete task or sub-task.
-- Do not batch multiple tasks into a single commit.
-- Each commit message should describe the specific change made.
-
-## Pre-Merge Squash Review (MANDATORY)
-
-- Before merging to local `main`, diff-compare all changes on the current branch against `main`.
-
-## PR Review Bot Workflow (MANDATORY)
-
-- Treat Qodo and other review-bot comments as advisory findings, not authoritative fix instructions.
-- When the user asks to update a PR and request review, first push the current branch, update the PR summary/verification notes when they changed, then post a plain PR comment containing exactly `/review`.
-- Do not use a draft review, pending review, or batch review technique to trigger Qodo; Qodo review requests should be ordinary PR comments.
-- After posting `/review`, wait for or re-check bot comments/status when the user asks to wait, continue, or check comments.
-- Before applying a suggested review-bot fix, inspect the relevant code path and decide whether the reported behavior is technically correct.
-- Reproduce the issue with a focused test when feasible; if direct reproduction is impractical, document the exact reasoning and code evidence used to accept or reject the finding.
-- Prefer adding or updating a regression test for every accepted review-bot bug before or alongside the fix.
-- Do not patch purely to satisfy a bot comment if the behavior is correct, stale, already fixed, or the proposed change would make the implementation worse.
-- After fixing an accepted review-bot finding, run the narrow regression test plus the relevant build/typecheck command, push the commit, and re-check the PR comments/status.
-- In the completion report, distinguish confirmed fixes from stale or rejected bot comments.
-
-## Performance Audit Rule (MANDATORY)
-
-- When implementing any feature or behavior change, always audit performance before marking the task complete.
-- Ground the audit in measurements, profiler output, traces, request counts, bundle/build output, or concrete code-path analysis when live measurement is not feasible.
-- For startup, thread loading, realtime rendering, routing, API, filesystem, git, or module-loading changes, explicitly check for duplicate requests, unnecessary blocking work, unbounded fanout, large payloads, and cache invalidation risks.
-- For browser, startup, and thread-loading performance audits, prefer the built-in profiler helpers: `pnpm run profile:browser` and `pnpm run profile:thread`, which use `scripts/profile-browser-runtime.cjs` and write reports under `output/playwright/`.
-- Exact post-task profiling workflow:
-  1. Start or confirm the app server on `http://127.0.0.1:4173` with `pnpm run dev --host 127.0.0.1 --port 4173`; do not stop the persistent `5173` tmux server.
-  2. For general browser/startup changes, run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser`.
-  3. For thread-loading or conversation-route changes, also run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_ROUTE='#/thread/<thread-id>' PROFILE_WAIT_MS=7000 pnpm run profile:browser` or `pnpm run profile:thread` when the default thread id is appropriate.
-  4. Open the generated `output/playwright/browser-runtime-profile-*.json` and inspect `duplicateCounts`, `warnings`, `totalApiKB`, `topApiSummary`, and `slowestApiRows`.
-  5. For traces, open the matching `output/playwright/browser-runtime-profile-*-trace.zip` with `npx playwright show-trace` when request timing or rendering behavior needs deeper inspection.
-  6. Compare against the pre-change profile when available; otherwise record the current numbers as the baseline and state that no prior measurement was available.
-  7. If profiling exposes duplicate requests, large payloads, slow API rows, or warnings related to the changed path, fix them or explicitly document why they are acceptable before completion.
-- If live measurement is not feasible, state what was not measured and what should be measured next.
-- Include the performance audit result in the completion report.
-
-## Tests Documentation Rule (MANDATORY)
-
-- After every feature implementation, update the relevant manual test doc under `tests/<domain>/`.
-- Keep `tests.md` as the root index only; update it when adding, renaming, or removing a domain folder.
-- Add a new section file describing how to test the feature manually, or update the closest existing section file.
-- For any new or changed UI, include both light-theme and dark-theme verification steps/results in that test section.
-- Each test section must include:
-  - feature/change name
-  - prerequisites/setup
-  - exact step-by-step actions
-  - expected result(s)
-  - rollback/cleanup notes (if applicable)
-- Keep existing test cases; append or update only what is needed for the new feature.
-- Do not mark a feature task complete until the relevant `tests/<domain>/...` file is updated.
-
-## Completion Verification Requirement (MANDATORY)
+## Tests And Verification
 
 - Test changes before reporting completion when feasible.
-- For any new or changed UI, always verify both light theme and dark theme before reporting completion.
-- Do not treat dark theme as optional polish; dark-theme support is part of the feature being complete.
-- When a user asks to "test it" for UI work and a local dev server is available, prefer actually loading the changed route and checking the rendered result instead of stopping at static analysis.
-- If a dark-theme screenshot shows light-theme surfaces on a dark page, fix the actual CSS/theme wiring first; do not treat "text is visible" as sufficient.
-- Run Browser Use or Playwright verification only when the user explicitly asks for browser automation testing.
-- If a change affects package/runtime/module loading behavior, also run a CJS smoke test before completion.
-- CJS smoke test requirement:
-  1. Build the project/artifact first (if needed).
-  2. Run a Node `require(...)` check against the changed entry (or closest public CJS entry).
-  3. Confirm the module loads without runtime errors and expected exported symbol(s) exist.
-  4. Include the exact CJS command and result summary in the completion report.
-- For Playwright automation scripts, CJS (`const { chromium } = require('playwright')`) is the default style unless ESM is explicitly required.
-- Preferred Playwright verification pattern for chat parsing changes (when Playwright is requested):
-  - send a message with a unique marker (for selecting the correct rendered row)
-  - include mixed content in one message (for example: plain text, `**bold**`, and `` `code` ``)
-  - inspect row HTML and count expected rendered nodes (for example `strong.message-bold-text`)
-  - save screenshot to `output/playwright/<task-name>.png`
-- Playwright test sequence (when Playwright is requested):
-  1. Start or confirm a single dev server instance (`pnpm run dev --host 0.0.0.0 --port 4173`).
-  2. If there are stale servers on the same port, stop them first to avoid false test results.
-  3. Run Playwright CLI against `http://127.0.0.1:4173` (or required test URL) and exercise the changed flow.
-  4. For visual/UI changes, capture both light-theme and dark-theme results.
-  5. For responsive/mobile changes, run checks at 375x812 and 768x1024.
-  6. Wait 2-3 seconds before capturing final screenshot(s).
-  7. Save screenshots under `output/playwright/` with task-specific names.
-  8. Leave the dev server running after verification unless the user explicitly asks to stop it.
-- Capture screenshots only when Playwright verification is requested.
-- If the dev server fails to start due to pre-existing errors, fix them first or work around them before testing.
-- If requested Playwright assertions fail, do not report completion; fix and re-run until passing.
+- Update the relevant manual test doc under `tests/<domain>/` after feature work. Keep `tests.md` as the root index only. Add/adjust only the relevant section and preserve existing cases.
+- Manual test entries must include feature/change name, prerequisites/setup, exact actions, expected results, and rollback/cleanup notes when applicable.
+- For new/changed UI, verify light and dark themes. If dark screenshots show light surfaces on a dark page, fix CSS/theme wiring.
+- Run Browser Use or Playwright only when the user explicitly asks for browser automation testing, or when a repo-specific rule below requires it.
+- CJS smoke test is required for package/runtime/module-loading changes: build first, run `node -e "require(...)"` or the closest public CJS entry, confirm expected exports, and report the exact command/result.
 
-## Browser Automation: Prefer Browser Use, Fallback To Playwright CLI
+## Browser And Playwright
 
-- For browser interactions (navigation, clicking, typing, screenshots, snapshots), prefer the Browser Use plugin first when it is available.
-- Use Browser Use through its in-app browser backend for local UI testing, screenshots, and visible-route checks so evidence matches what the user can see in Codex.
-- Fall back to the previous Playwright CLI approach when Browser Use is unavailable, blocked, cannot reach the target, or when the user explicitly asks for Playwright CLI/headless evidence.
-- Do not run Browser Use or Playwright for routine task completion unless the user explicitly asks for browser automation testing.
-- In the Playwright CLI fallback path, use headless mode by default; only add `--headed` when a live visual check is explicitly needed.
-- Playwright fallback skill location: `~/.codex/skills/playwright/SKILL.md` (wrapper script: `~/.codex/skills/playwright/scripts/playwright_cli.sh`).
-- Minimum reporting format in completion messages:
-  - tested URL
-  - viewport(s)
-  - assertion/result summary
-  - screenshot absolute path(s)
-  - inline screenshot image(s) rendered in chat with Markdown image syntax using absolute local paths
-  - CJS command/result (when module-loading behavior was changed)
+- Prefer Browser Use for navigation, clicking, typing, screenshots, snapshots, and visible local UI checks.
+- Use Playwright CLI directly when verification needs request interception/route stubbing, synthetic network failures, modifying `localStorage`/session storage, or other page-context mutation that the in-app Browser bridge cannot perform reliably.
+- If falling back from Browser Use, state the exact limitation, keep the same target/viewport, and save screenshots under `output/playwright/`.
+- Playwright scripts should default to CJS: `const { chromium } = require('playwright')`.
+- Playwright sequence: use `127.0.0.1:4173`, verify the server is current, exercise the changed flow, capture light/dark screenshots for UI work, include 375x812 and 768x1024 for responsive/mobile changes, wait 2-3 seconds before final screenshots, and leave `4173` running unless asked to stop.
+- Screenshot reports must include tested URL, viewport, assertion/result summary, absolute screenshot path(s), and inline Markdown image(s).
+- If Playwright assertions fail, fix and rerun before reporting completion.
+- For chat parsing/file-link/browse-link changes, TestChat validation is mandatory: send a unique marker with representative markdown/link content, inspect the rendered row, assert `hrefOk`, `titleOk`, and `textOk`, and save `output/playwright/testchat-<feature>-cjs.png`.
 
-## Worktree Dev Server Rule
+## Dev Servers
 
-- When working in a git worktree, prefer reusing an existing compatible `node_modules` tree when it is already available instead of triggering a fresh install by default.
-- If `node_modules` is symlinked to a shared dependency directory, avoid workflows that prompt to remove and recreate that shared directory just to run `npm run dev` or `pnpm run dev`.
-- For this repo's `pnpm run dev` wrapper, pass Vite flags directly, for example `pnpm run dev --host 127.0.0.1 --port 5173`; do not insert an extra `--` before `--host`.
-- For dev-server fixes, verify the exact user-requested command afterwards (for example `npm run dev`), not only a fallback Vite invocation.
-- Never kill or stop the tmux-managed dev server bound to port `5173`.
-- Treat the `5173` tmux dev process as persistent infrastructure; restart it only when the user explicitly requests a restart.
-- Treat the `4173` verification dev server as reusable test infrastructure during active UI work; after tests or screenshots, leave it running unless the user explicitly asks to stop it.
+- In worktrees, reuse an existing compatible `node_modules` tree when available. Do not prompt to remove/recreate a shared dependency directory just to run dev commands.
+- Pass Vite flags directly to this repo's wrapper: `pnpm run dev --host 127.0.0.1 --port 5173`; do not insert an extra `--`.
+- For dev-server fixes, verify the exact user-requested command afterward.
+- Never kill or restart the tmux-managed `5173` server unless the user explicitly asks.
+- Treat `4173` as reusable/disposable verification infrastructure. Verify its cwd before using it; restart only stale `4173` processes.
 
-## Dark Theme CSS Rule
+## UI Rules
 
-- For shared route surfaces and large feature UIs, prefer putting the decisive dark-theme overrides in the global theme stylesheet (`src/style.css`) instead of relying only on component-scoped `:global(:root.dark)` blocks.
-- Scoped dark overrides are fine for truly local elements, but if a full route still looks like light theme in dark mode, add or strengthen the global selectors for that surface.
+- For shared route surfaces and large feature UIs, put decisive dark-theme overrides in `src/style.css` instead of relying only on component-scoped `:global(:root.dark)` blocks.
+- Browser assertions must inspect the real changed UI, not sidebar previews or base page load.
+- For refresh-persistence fixes, include post-refresh evidence that the state persisted.
 
-## NPX Testing Rule
+## Provider/Auth Docker Workflow
 
-- For any `npx` package behavior test, **publish first**, then test the published `@latest` package.
-- Do not rely on local unpublished changes when validating `npx` behavior.
-- Run `npx` validation on the Oracle host (not local machine) unless user explicitly asks otherwise.
-- For Playwright verification of `npx` behavior, use the Oracle host Tailscale URL (for example `http://100.127.77.25:<port>`) instead of `localhost`.
+- Use this only when changes touch Docker startup, Codex auth detection, OpenCode Zen/OpenRouter/custom providers, provider model loading, app-server config, chat send/reply handling, or failed-turn error rendering.
+- Build/package first: `pnpm run build`, `pnpm pack --pack-destination /tmp`, then build an OrbStack/Docker image installing the packed `codexapp` tarball plus `@openai/codex`, using `CODEX_HOME=/codex-home` and command `codexapp --port ${PORT:-4190} --no-password --no-open --no-tunnel --no-login`.
+- Test isolated containers on unique localhost ports for: no auth Zen fallback, invalid/expired auth Codex error persistence after reload, malformed auth fallback, and provider switch from Zen to OpenRouter.
+- Before success, report tested ports, provider/config summary, exact commands, screenshot paths, whether invalid auth persisted after reload, and whether duplicate live overlay count was zero.
 
-## A1 Playwright Verification (From Mac via Tailscale)
+## NPX / A1 Validation
 
-- Use this flow when validating UI behavior on Oracle A1 from the local Mac machine.
-- On A1, start the app server with Codex CLI available in `PATH`:
-  - `export PATH="$HOME/.npm-global/bin:$PATH"`
-  - `pnpm run dev --host 0.0.0.0 --port 4173`
-- From Mac, run Playwright against Tailscale URL (`http://100.127.77.25:4173`), not localhost.
-- Verify success with both checks:
-  - UI assertion in Playwright (new project/folder appears in sidebar or selector).
-  - Filesystem assertion on A1 (`test -d /home/ubuntu/<project-name>`).
-- Save screenshot artifact under `output/playwright/` and include it in the report.
+- For `npx` package behavior tests, publish first and test the published `@latest`.
+- Run `npx` validation on the Oracle host unless the user explicitly asks otherwise.
+- For Oracle A1 UI validation from Mac, start the A1 server with Codex CLI in `PATH` using `pnpm run dev --host 0.0.0.0 --port 4173`, use the Tailscale URL such as `http://100.127.77.25:4173`, verify both UI and filesystem effects, and save screenshot evidence.
 
-## Playwright Evidence For UI Fixes
+## LLM Wiki
 
-- When the user asks to test with Playwright, run the verification on the explicitly requested project/thread context (for example `TestChat`).
-- Screenshot artifacts must show complete passing evidence for the tested feature, not only the base page load.
-- Always show captured screenshots inline in the chat, not only as links or filesystem paths. Use Markdown image tags with absolute local paths, for example `![light verification](/absolute/path/output/playwright/example.png)`.
-- For UI work, include dark-theme evidence in addition to the default/light-theme evidence unless the task is explicitly light-only.
-- For refresh-persistence fixes, include a post-refresh screenshot that still shows the expected UI state.
-
-## Docker Provider/Auth Regression Workflow
-
-- Use this workflow when a change touches Docker startup, Codex auth detection, OpenCode Zen/OpenRouter/custom providers, provider model loading, app-server config, chat send/reply handling, or failed-turn error rendering.
-- Build and test a packaged Docker image, not only the Vite dev server:
-  1. Run `pnpm run build`.
-  2. Run `pnpm pack --pack-destination /tmp`.
-  3. Build a local image that installs the packed `codexapp` tarball plus `@openai/codex`, with `CODEX_HOME=/codex-home` and command `codexapp --port ${PORT:-4190} --no-password --no-open --no-tunnel --no-login`.
-  4. Use OrbStack/Docker CLI. Do not rely on Docker Desktop.
-- Start fresh isolated containers on unique localhost ports for at least these cases:
-  - no auth file: no `/codex-home/auth.json`; expect runtime OpenCode Zen fallback, `model_provider="opencode-zen"`, `model="big-pickle"`, send `hi`, wait for an assistant reply.
-  - invalid/expired auth file: mount an `auth.json` with token fields containing invalid/expired strings; expect Codex provider path, send `hi`, wait for final 401/auth error rendered in chat, verify `Send feedback`, reload the thread, verify the error persists, and verify no duplicate live `Thinking` overlay remains after persistence.
-  - malformed auth file: mount invalid JSON as `/codex-home/auth.json`; expect it to be treated as unusable auth and fall back to Zen, then send `hi` and wait for a reply.
-  - provider switch: start from OpenCode Zen, send `hi` and wait for a reply, switch the Provider settings selector to OpenRouter (do not change the model dropdown directly), send `hi` again and wait for a reply.
-- Browser assertions must inspect conversation rows, not sidebar previews. A test is not passing just because the sidebar contains the sent text.
-- Save screenshots under `output/playwright/` for all Docker browser cases and show them inline in the completion report.
-- Before reporting success, include:
-  - tested URLs/ports,
-  - provider/config summary for each container,
-  - exact build/test commands,
-  - screenshot absolute paths,
-  - whether invalid auth persisted after reload and whether duplicate live overlay count was zero.
-- If any Docker edge case fails, fix it before requesting PR review or merge.
-
-## Mandatory CJS + TestChat Validation For Markdown/File-Link Features
-
-- For any markdown parsing, link parsing, file-link rendering, or browse-link encoding change, verification in `TestChat` is mandatory before reporting completion.
-- Use CJS Playwright scripts as the default verification implementation:
-  - `const { chromium } = require('playwright')`
-  - run from repository working directory so local `node_modules` resolves correctly.
-- Required validation flow:
-  1. Start dev server at `http://127.0.0.1:4173`.
-  2. Open project `TestChat`.
-  3. Open an existing TestChat thread, or create one if none exists.
-  4. Send a message with a unique marker plus target markdown link (example: ``<MARKER> [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)``).
-  5. Locate the rendered row by marker.
-  6. Assert a parsed file link exists (`a.message-file-link`) in that row.
-  7. Assert link metadata is correct:
-     - `href` includes encoded full path (example: `/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/hosting_manager.py`)
-     - `title` equals the original full file path
-     - visible link text contains expected filename.
-  8. Save screenshot to `output/playwright/testchat-<feature>-cjs.png`.
-- Completion report must include:
-  - tested URL
-  - thread context (`TestChat`)
-  - viewport
-  - exact CJS command/script path
-  - assertion summary (`hrefOk`, `titleOk`, `textOk`)
-  - screenshot absolute path
-  - inline screenshot image rendered in chat with Markdown image syntax using the absolute screenshot path
-
-## LLM Wiki Schema
-
-This repository includes a persistent wiki under `llm-wiki/` maintained by an LLM agent.
-
-### Structure
-- `llm-wiki/raw/`: immutable source notes and captured material.
-- `llm-wiki/wiki/`: synthesized, interlinked markdown pages.
-- `llm-wiki/wiki/index.md`: catalog of pages.
-- `llm-wiki/wiki/log.md`: append-only operation log.
-
-### Conventions
-- Never edit files under `llm-wiki/raw/` after creation.
-- Prefer updating existing wiki pages over creating duplicates.
-- Add wiki links using relative markdown links.
-- Keep factual claims tied to one or more source files in `llm-wiki/raw/`.
-
-### Operations
-- Ingest:
-  1. Add a source under `llm-wiki/raw/`.
-  2. Create or update topic/entity pages under `llm-wiki/wiki/`.
-  3. Update `llm-wiki/wiki/index.md`.
-  4. Append one entry in `llm-wiki/wiki/log.md`.
-- Query:
-  1. Read `llm-wiki/wiki/index.md` first.
-  2. Read relevant linked pages.
-  3. Synthesize an answer and optionally file it back as a page.
-- Lint:
-  1. Check for orphan pages.
-  2. Check for stale or contradictory claims.
-  3. Add follow-up questions to the log.
+- `llm-wiki/raw/` is immutable source material; never edit raw files after creation.
+- Prefer updating existing pages under `llm-wiki/wiki/` over creating duplicates.
+- Keep factual wiki claims tied to one or more raw source files.
+- For ingest: add raw source, update/create topic pages, update `llm-wiki/wiki/index.md`, append `llm-wiki/wiki/log.md`.
+- For query: read `llm-wiki/wiki/index.md` first, then relevant pages.
+- For lint: check orphans, stale/contradictory claims, and add follow-up questions to the log.

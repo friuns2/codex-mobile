@@ -15,13 +15,15 @@
 
     <div
       v-if="isOpen"
+      ref="menuWrapRef"
       class="composer-dropdown-menu-wrap"
       :class="{
         'composer-dropdown-menu-wrap-up': openDirection === 'up',
         'composer-dropdown-menu-wrap-down': openDirection === 'down',
       }"
+      :style="menuWrapStyle"
     >
-      <div class="composer-dropdown-menu">
+      <div ref="menuRef" class="composer-dropdown-menu">
         <div v-if="enableSearch" class="composer-dropdown-search-wrap">
           <input
             ref="searchInputRef"
@@ -71,6 +73,7 @@ const props = defineProps<{
   selectedPrefixIcon?: Component | null
   iconOnly?: boolean
   openDirection?: 'up' | 'down'
+  menuAlign?: 'start' | 'end'
   enableSearch?: boolean
   searchPlaceholder?: string
   emptyLabel?: string
@@ -81,9 +84,13 @@ const emit = defineEmits<{
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
+const menuWrapRef = ref<HTMLElement | null>(null)
+const menuRef = ref<HTMLElement | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const isOpen = ref(false)
 const searchQuery = ref('')
+const menuWrapStyle = ref<Record<string, string>>({})
+let isLayoutListenerAttached = false
 
 const selectedLabel = computed(() => {
   const selected = props.options.find((option) => option.value === props.modelValue)
@@ -92,6 +99,7 @@ const selectedLabel = computed(() => {
 })
 
 const openDirection = computed(() => props.openDirection ?? 'down')
+const menuAlign = computed(() => props.menuAlign ?? 'start')
 const iconOnly = computed(() => props.iconOnly === true)
 const enableSearch = computed(() => props.enableSearch === true)
 const searchPlaceholderText = computed(() => props.searchPlaceholder?.trim() || 'Quick search projects')
@@ -108,6 +116,60 @@ const filteredOptions = computed(() => {
 function onToggle(): void {
   if (props.disabled) return
   isOpen.value = !isOpen.value
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function updateMenuPosition(): void {
+  if (!isOpen.value) return
+  const root = rootRef.value
+  if (!root || typeof window === 'undefined') return
+
+  const rect = root.getBoundingClientRect()
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const viewportPadding = 8
+  const gap = 8
+  const maxMenuWidth = Math.max(0, viewportWidth - viewportPadding * 2)
+  const measuredWidth = menuRef.value?.offsetWidth ?? menuWrapRef.value?.offsetWidth ?? 224
+  const measuredHeight = menuRef.value?.offsetHeight ?? menuWrapRef.value?.offsetHeight ?? 0
+  const menuWidth = Math.min(measuredWidth, maxMenuWidth)
+  const maxLeft = Math.max(viewportPadding, viewportWidth - menuWidth - viewportPadding)
+  const desiredLeft = menuAlign.value === 'end' ? rect.right - menuWidth : rect.left
+  const left = clamp(desiredLeft, viewportPadding, maxLeft)
+
+  let top = openDirection.value === 'up'
+    ? rect.top - measuredHeight - gap
+    : rect.bottom + gap
+  if (measuredHeight > 0 && top + measuredHeight > viewportHeight - viewportPadding) {
+    top = viewportHeight - measuredHeight - viewportPadding
+  }
+  top = Math.max(viewportPadding, top)
+
+  menuWrapStyle.value = {
+    position: 'fixed',
+    left: `${left}px`,
+    right: 'auto',
+    top: `${top}px`,
+    bottom: 'auto',
+    width: `${menuWidth}px`,
+  }
+}
+
+function addLayoutListeners(): void {
+  if (isLayoutListenerAttached || typeof window === 'undefined') return
+  window.addEventListener('resize', updateMenuPosition)
+  window.addEventListener('scroll', updateMenuPosition, true)
+  isLayoutListenerAttached = true
+}
+
+function removeLayoutListeners(): void {
+  if (!isLayoutListenerAttached || typeof window === 'undefined') return
+  window.removeEventListener('resize', updateMenuPosition)
+  window.removeEventListener('scroll', updateMenuPosition, true)
+  isLayoutListenerAttached = false
 }
 
 function onSelect(value: string): void {
@@ -137,9 +199,17 @@ function onDocumentPointerDown(event: PointerEvent): void {
 }
 
 watch(isOpen, (open) => {
-  if (!open) return
-  if (!enableSearch.value) return
-  nextTick(() => searchInputRef.value?.focus())
+  if (!open) {
+    removeLayoutListeners()
+    menuWrapStyle.value = {}
+    return
+  }
+  addLayoutListeners()
+  nextTick(() => {
+    updateMenuPosition()
+    window.requestAnimationFrame(updateMenuPosition)
+    if (enableSearch.value) searchInputRef.value?.focus()
+  })
 })
 
 onMounted(() => {
@@ -148,6 +218,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', onDocumentPointerDown)
+  removeLayoutListeners()
 })
 </script>
 

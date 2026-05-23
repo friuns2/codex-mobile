@@ -186,6 +186,25 @@
                         </span>
                       </li>
                     </ul>
+                    <div v-if="isFileChangeActionable(readStandaloneFileChangeSummary(message))" class="file-change-actions">
+                      <p v-if="fileChangeActionErrorText(readStandaloneFileChangeSummary(message))" class="file-change-action-error">
+                        {{ fileChangeActionErrorText(readStandaloneFileChangeSummary(message)) }}
+                      </p>
+                      <button
+                        type="button"
+                        class="file-change-action-button"
+                        :disabled="fileChangeActionStatus(readStandaloneFileChangeSummary(message)) === 'undoing' || fileChangeActionStatus(readStandaloneFileChangeSummary(message)) === 'redoing'"
+                        :title="fileChangeNextAction(readStandaloneFileChangeSummary(message)) === 'redo' ? 'Redo file changes from this turn' : 'Undo file changes from this turn'"
+                        :aria-label="fileChangeNextAction(readStandaloneFileChangeSummary(message)) === 'redo' ? 'Redo file changes from this turn' : 'Undo file changes from this turn'"
+                        @click="runFileChangeAction(readStandaloneFileChangeSummary(message), fileChangeNextAction(readStandaloneFileChangeSummary(message)))"
+                      >
+                        <IconTablerArrowBackUp
+                          class="icon-svg file-change-action-icon"
+                          :class="{ 'file-change-action-icon-redo': fileChangeNextAction(readStandaloneFileChangeSummary(message)) === 'redo' }"
+                        />
+                        {{ fileChangeActionLabel(readStandaloneFileChangeSummary(message)) }}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -645,6 +664,25 @@
                         </span>
                       </li>
                     </ul>
+                    <div v-if="isFileChangeActionable(readAnchoredFileChangeSummary(message))" class="file-change-actions">
+                      <p v-if="fileChangeActionErrorText(readAnchoredFileChangeSummary(message))" class="file-change-action-error">
+                        {{ fileChangeActionErrorText(readAnchoredFileChangeSummary(message)) }}
+                      </p>
+                      <button
+                        type="button"
+                        class="file-change-action-button"
+                        :disabled="fileChangeActionStatus(readAnchoredFileChangeSummary(message)) === 'undoing' || fileChangeActionStatus(readAnchoredFileChangeSummary(message)) === 'redoing'"
+                        :title="fileChangeNextAction(readAnchoredFileChangeSummary(message)) === 'redo' ? 'Redo file changes from this turn' : 'Undo file changes from this turn'"
+                        :aria-label="fileChangeNextAction(readAnchoredFileChangeSummary(message)) === 'redo' ? 'Redo file changes from this turn' : 'Undo file changes from this turn'"
+                        @click="runFileChangeAction(readAnchoredFileChangeSummary(message), fileChangeNextAction(readAnchoredFileChangeSummary(message)))"
+                      >
+                        <IconTablerArrowBackUp
+                          class="icon-svg file-change-action-icon"
+                          :class="{ 'file-change-action-icon-redo': fileChangeNextAction(readAnchoredFileChangeSummary(message)) === 'redo' }"
+                        />
+                        {{ fileChangeActionLabel(readAnchoredFileChangeSummary(message)) }}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -881,9 +919,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
+import { updateThreadFileChanges } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 
+import IconTablerArrowBackUp from '../icons/IconTablerArrowBackUp.vue'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
@@ -1288,6 +1328,9 @@ const conversationListRef = ref<HTMLElement | null>(null)
 const bottomAnchorRef = ref<HTMLElement | null>(null)
 const modalImageUrl = ref('')
 const copiedResponseAnchorId = ref('')
+const fileChangeActionState = ref<Record<string, 'idle' | 'undoing' | 'redoing' | 'undone' | 'redone'>>({})
+const fileChangeActionError = ref<Record<string, string>>({})
+const fileChangeRedoPatchIds = ref<Record<string, string[]>>({})
 const toolQuestionAnswers = ref<Record<string, string>>({})
 const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const mcpElicitationAnswers = ref<Record<string, string | number | boolean | string[]>>({})
@@ -1439,6 +1482,7 @@ type TurnFileChangeSummary = {
   changes: UiFileChange[]
   sourceMessageIds: string[]
   source: 'assistant' | 'metadata'
+  turnId: string
 }
 type DiffViewerLineKind = 'meta' | 'hunk' | 'add' | 'remove' | 'context'
 type DiffViewerLine = {
@@ -1884,6 +1928,7 @@ const anchoredFileChangeSummaryByAnchorId = computed<Record<string, TurnFileChan
           changes: aggregateFileChanges(message.fileChanges),
           sourceMessageIds: [],
           source: 'assistant',
+          turnId: message.turnId ?? '',
         })
       }
     }
@@ -1899,10 +1944,12 @@ const anchoredFileChangeSummaryByAnchorId = computed<Record<string, TurnFileChan
   for (const [turnKey, messages] of fileChangeMessagesByTurnKey.entries()) {
     const anchorId = assistantAnchorIdByTurnKey.get(turnKey)
     if (!anchorId) continue
+    const assistantTurnId = assistantSummaryByAnchorId.get(anchorId)?.turnId ?? ''
     summaries[anchorId] = {
       changes: aggregateFileChanges(messages.flatMap((message) => message.fileChanges ?? [])),
       sourceMessageIds: messages.map((message) => message.id),
       source: 'metadata',
+      turnId: messages.find((message) => typeof message.turnId === 'string' && message.turnId.length > 0)?.turnId ?? assistantTurnId,
     }
   }
 
@@ -1940,6 +1987,7 @@ const standaloneFileChangeSummaryByMessageId = computed<Record<string, TurnFileC
       changes: aggregateFileChanges(messages.flatMap((message) => message.fileChanges ?? [])),
       sourceMessageIds: messages.map((message) => message.id),
       source: 'metadata',
+      turnId: visibleMessage.turnId ?? messages.find((message) => typeof message.turnId === 'string' && message.turnId.length > 0)?.turnId ?? '',
     }
   }
 
@@ -1969,6 +2017,87 @@ function readAnchoredFileChangeSummary(message: UiMessage): TurnFileChangeSummar
 
 function readStandaloneFileChangeSummary(message: UiMessage): TurnFileChangeSummary | null {
   return standaloneFileChangeSummaryByMessageId.value[message.id] ?? null
+}
+
+function fileChangeActionKey(summary: TurnFileChangeSummary | null): string {
+  return summary?.turnId && props.activeThreadId ? `thread:${props.activeThreadId}:turn:${summary.turnId}` : ''
+}
+
+function isFileChangeActionable(summary: TurnFileChangeSummary | null): boolean {
+  return fileChangeActionKey(summary).length > 0
+}
+
+function fileChangeActionStatus(summary: TurnFileChangeSummary | null): 'idle' | 'undoing' | 'redoing' | 'undone' | 'redone' {
+  const key = fileChangeActionKey(summary)
+  return key ? fileChangeActionState.value[key] ?? 'idle' : 'idle'
+}
+
+function fileChangeActionErrorText(summary: TurnFileChangeSummary | null): string {
+  const key = fileChangeActionKey(summary)
+  return key ? fileChangeActionError.value[key] ?? '' : ''
+}
+
+function fileChangeNextAction(summary: TurnFileChangeSummary | null): 'undo' | 'redo' {
+  const status = fileChangeActionStatus(summary)
+  return status === 'undone' || status === 'redoing' ? 'redo' : 'undo'
+}
+
+function fileChangeActionLabel(summary: TurnFileChangeSummary | null): string {
+  const status = fileChangeActionStatus(summary)
+  if (status === 'undoing') return 'Undoing'
+  if (status === 'redoing') return 'Redoing'
+  return fileChangeNextAction(summary) === 'redo' ? 'Redo' : 'Undo'
+}
+
+async function runFileChangeAction(summary: TurnFileChangeSummary | null, action: 'undo' | 'redo'): Promise<void> {
+  const key = fileChangeActionKey(summary)
+  if (!summary || !key || !props.activeThreadId || !props.cwd) return
+  const previousState = fileChangeActionStatus(summary)
+  const pendingState = action === 'undo' ? 'undoing' : 'redoing'
+  fileChangeActionState.value = { ...fileChangeActionState.value, [key]: pendingState }
+  fileChangeActionError.value = { ...fileChangeActionError.value, [key]: '' }
+
+  let result: Awaited<ReturnType<typeof updateThreadFileChanges>>
+  try {
+    const patchIds = fileChangeRedoPatchIds.value[key] ?? []
+    result = await updateThreadFileChanges(
+      props.activeThreadId,
+      summary.turnId,
+      props.cwd,
+      action,
+      patchIds.length > 0 ? patchIds : undefined,
+      'single_turn',
+    )
+  } catch (error) {
+    fileChangeActionState.value = { ...fileChangeActionState.value, [key]: previousState }
+    fileChangeActionError.value = {
+      ...fileChangeActionError.value,
+      [key]: error instanceof Error ? error.message : 'Failed to update file changes.',
+    }
+    return
+  }
+
+  if (result.errors.length > 0) {
+    if (action === 'undo') {
+      fileChangeRedoPatchIds.value = { ...fileChangeRedoPatchIds.value, [key]: result.revertedPatchIds ?? [] }
+      fileChangeActionState.value = { ...fileChangeActionState.value, [key]: 'undone' }
+    } else {
+      if ((result.appliedPatchIds ?? []).length > 0) {
+        fileChangeRedoPatchIds.value = { ...fileChangeRedoPatchIds.value, [key]: result.appliedPatchIds ?? [] }
+      }
+      fileChangeActionState.value = { ...fileChangeActionState.value, [key]: 'undone' }
+    }
+    fileChangeActionError.value = { ...fileChangeActionError.value, [key]: result.errors.join('; ') }
+    return
+  }
+
+  if (action === 'undo') {
+    fileChangeRedoPatchIds.value = { ...fileChangeRedoPatchIds.value, [key]: result.revertedPatchIds ?? [] }
+    fileChangeActionState.value = { ...fileChangeActionState.value, [key]: 'undone' }
+  } else {
+    fileChangeRedoPatchIds.value = { ...fileChangeRedoPatchIds.value, [key]: result.appliedPatchIds ?? [] }
+    fileChangeActionState.value = { ...fileChangeActionState.value, [key]: 'redone' }
+  }
 }
 
 function fileChangeOperationLabel(change: UiFileChange): string {
@@ -4318,6 +4447,9 @@ watch(
     autoFollowOutput.value = true
     modalImageUrl.value = ''
     isLoadingMore.value = false
+    fileChangeActionState.value = {}
+    fileChangeActionError.value = {}
+    fileChangeRedoPatchIds.value = {}
     // Apply immediately for cached threads where isLoading never toggles.
     renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
     await scheduleConversationScroll()
@@ -5274,6 +5406,26 @@ onBeforeUnmount(() => {
 
 .file-change-delta {
   @apply ml-auto inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-600;
+}
+
+.file-change-actions {
+  @apply mt-2 flex flex-wrap items-center justify-end gap-2;
+}
+
+.file-change-action-button {
+  @apply inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+.file-change-action-icon {
+  @apply text-sm;
+}
+
+.file-change-action-icon-redo {
+  transform: scaleX(-1);
+}
+
+.file-change-action-error {
+  @apply m-0 min-w-0 flex-1 text-xs text-rose-600;
 }
 
 .file-change-signed-count {
