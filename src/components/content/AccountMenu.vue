@@ -19,7 +19,7 @@
       <div v-else class="account-menu-list">
         <article
           v-for="account in accounts"
-          :key="account.accountId"
+          :key="account.storageId"
           class="account-menu-item"
           :class="{ 'is-active': account.isActive }"
         >
@@ -33,7 +33,7 @@
             class="account-menu-switch"
             type="button"
             :disabled="isSwitching || account.isActive"
-            @click="emit('switch', account.accountId)"
+            @click="emit('switch', account.storageId)"
           >
             {{ account.isActive ? 'Active' : isSwitching ? 'Switching…' : 'Switch' }}
           </button>
@@ -55,7 +55,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  switch: [accountId: string]
+  switch: [storageId: string]
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)

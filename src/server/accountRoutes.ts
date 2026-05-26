@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +44,7 @@ type AccountUnavailableReason = 'payment_required'
 type StoredAccountEntry = {
   accountId: string
   storageId: string
+  userId: string | null
   authMode: string | null
   email: string | null
   planType: string | null
@@ -58,7 +59,14 @@ type StoredAccountEntry = {
 
 type StoredAccountsState = {
   activeAccountId: string | null
+  activeStorageId: string | null
   accounts: StoredAccountEntry[]
+}
+
+type SnapshotMigrationResult = {
+  accounts: StoredAccountEntry[]
+  storageIdMap: Map<string, string>
+  changed: boolean
 }
 
 type AuthFile = {
@@ -71,6 +79,7 @@ type AuthFile = {
 
 type TokenMetadata = {
   email: string | null
+  userId: string | null
   planType: string | null
 }
 
@@ -182,6 +191,20 @@ function toStorageId(accountId: string): string {
   return createHash('sha256').update(accountId).digest('hex')
 }
 
+function toAccountStorageKey(accountId: string, metadata: TokenMetadata): string {
+  return metadata.userId ? `${accountId}\u0000${metadata.userId}` : accountId
+}
+
+function toAccountStorageId(accountId: string, metadata: TokenMetadata): string {
+  return toStorageId(toAccountStorageKey(accountId, metadata))
+}
+
+function pickLatestIso(left: string | null, right: string | null): string | null {
+  if (!left) return right
+  if (!right) return left
+  return left.localeCompare(right) >= 0 ? left : right
+}
+
 function normalizeRateLimitWindow(value: unknown): StoredRateLimitWindow | null {
   const record = asRecord(value)
   if (!record) return null
@@ -255,6 +278,7 @@ function normalizeStoredAccountEntry(value: unknown): StoredAccountEntry | null 
   return {
     accountId,
     storageId,
+    userId: readString(record?.userId),
     authMode: readString(record?.authMode),
     email: readString(record?.email),
     planType: readString(record?.planType),
@@ -269,18 +293,69 @@ function normalizeStoredAccountEntry(value: unknown): StoredAccountEntry | null 
   }
 }
 
+async function resolveActiveStorageId(
+  accounts: StoredAccountEntry[],
+  activeStorageId: string | null,
+  activeAccountId: string | null,
+): Promise<string | null> {
+  if (activeStorageId && accounts.some((entry) => entry.storageId === activeStorageId)) {
+    return activeStorageId
+  }
+
+  const activeAuthStorageId = await readActiveAuthStorageId()
+  if (activeAuthStorageId && accounts.some((entry) => entry.storageId === activeAuthStorageId)) {
+    return activeAuthStorageId
+  }
+
+  if (!activeAccountId) return null
+  const matchingAccounts = accounts.filter((entry) => entry.accountId === activeAccountId)
+  return matchingAccounts.length === 1 ? matchingAccounts[0]?.storageId ?? null : null
+}
+
+function resolveActiveState(accounts: StoredAccountEntry[], activeStorageId: string | null): Pick<StoredAccountsState, 'activeAccountId' | 'activeStorageId'> {
+  const active = activeStorageId ? accounts.find((entry) => entry.storageId === activeStorageId) ?? null : null
+  return {
+    activeAccountId: active?.accountId ?? null,
+    activeStorageId: active?.storageId ?? null,
+  }
+}
+
 async function readStoredAccountsState(): Promise<StoredAccountsState> {
+  let activeAccountId: string | null = null
+  let rawActiveStorageId: string | null = null
+  let accounts: StoredAccountEntry[] = []
   try {
     const raw = await readFile(getAccountsStatePath(), 'utf8')
     const parsed = asRecord(JSON.parse(raw))
-    const activeAccountId = readString(parsed?.activeAccountId)
+    activeAccountId = readString(parsed?.activeAccountId)
+    rawActiveStorageId = readString(parsed?.activeStorageId)
     const rawAccounts = Array.isArray(parsed?.accounts) ? parsed.accounts : []
-    const accounts = rawAccounts
+    accounts = rawAccounts
       .map((entry) => normalizeStoredAccountEntry(entry))
       .filter((entry): entry is StoredAccountEntry => entry !== null)
-    return { activeAccountId, accounts }
   } catch {
-    return { activeAccountId: null, accounts: [] }
+    accounts = []
+  }
+
+  try {
+    const migration = await migrateStoredAccountSnapshots(accounts)
+    const migratedActiveStorageId = rawActiveStorageId ? migration.storageIdMap.get(rawActiveStorageId) ?? rawActiveStorageId : null
+    const activeStorageId = await resolveActiveStorageId(migration.accounts, migratedActiveStorageId, activeAccountId)
+    const nextState = {
+      ...resolveActiveState(migration.accounts, activeStorageId),
+      accounts: migration.accounts,
+    }
+    if (migration.changed || nextState.activeStorageId !== rawActiveStorageId || nextState.activeAccountId !== activeAccountId) {
+      await writeStoredAccountsState(nextState).catch(() => undefined)
+    }
+    return nextState
+  } catch {
+    try {
+      await writeStoredAccountsState({ activeAccountId: null, activeStorageId: null, accounts })
+    } catch {
+      // ignore
+    }
+    return { activeAccountId: null, activeStorageId: null, accounts }
   }
 }
 
@@ -289,26 +364,27 @@ async function writeStoredAccountsState(state: StoredAccountsState): Promise<voi
 }
 
 function withUpsertedAccount(state: StoredAccountsState, nextEntry: StoredAccountEntry): StoredAccountsState {
-  const rest = state.accounts.filter((entry) => entry.accountId !== nextEntry.accountId)
+  const rest = state.accounts.filter((entry) => entry.storageId !== nextEntry.storageId)
+  const accounts = [nextEntry, ...rest]
   return {
-    activeAccountId: state.activeAccountId,
-    accounts: [nextEntry, ...rest],
+    ...resolveActiveState(accounts, state.activeStorageId),
+    accounts,
   }
 }
 
-function sortAccounts(accounts: StoredAccountEntry[], activeAccountId: string | null): StoredAccountEntry[] {
+function sortAccounts(accounts: StoredAccountEntry[], activeStorageId: string | null): StoredAccountEntry[] {
   return [...accounts].sort((left, right) => {
-    const leftActive = left.accountId === activeAccountId ? 1 : 0
-    const rightActive = right.accountId === activeAccountId ? 1 : 0
+    const leftActive = left.storageId === activeStorageId ? 1 : 0
+    const rightActive = right.storageId === activeStorageId ? 1 : 0
     if (leftActive !== rightActive) return rightActive - leftActive
     return right.lastRefreshedAtIso.localeCompare(left.lastRefreshedAtIso)
   })
 }
 
-function toPublicAccountEntry(entry: StoredAccountEntry, activeAccountId: string | null): StoredAccountEntry & { isActive: boolean } {
+function toPublicAccountEntry(entry: StoredAccountEntry, activeStorageId: string | null): StoredAccountEntry & { isActive: boolean } {
   return {
     ...entry,
-    isActive: entry.accountId === activeAccountId,
+    isActive: entry.storageId === activeStorageId,
   }
 }
 
@@ -326,17 +402,18 @@ function decodeBase64UrlJson(input: string): Record<string, unknown> | null {
 
 function extractTokenMetadata(accessToken: string | undefined): TokenMetadata {
   if (!accessToken || typeof accessToken !== 'string') {
-    return { email: null, planType: null }
+    return { email: null, userId: null, planType: null }
   }
   const parts = accessToken.split('.')
   if (parts.length < 2) {
-    return { email: null, planType: null }
+    return { email: null, userId: null, planType: null }
   }
   const payload = decodeBase64UrlJson(parts[1] ?? '')
   const profile = asRecord(payload?.['https://api.openai.com/profile'])
   const auth = asRecord(payload?.['https://api.openai.com/auth'])
   return {
     email: typeof profile?.email === 'string' && profile.email.trim().length > 0 ? profile.email.trim() : null,
+    userId: readString(auth?.user_id ?? auth?.userId),
     planType:
       typeof auth?.chatgpt_plan_type === 'string' && auth.chatgpt_plan_type.trim().length > 0
         ? auth.chatgpt_plan_type.trim()
@@ -360,6 +437,160 @@ async function readAuthFileFromPath(path: string): Promise<{ raw: string; parsed
   }
 }
 
+async function readActiveAuthStorageId(): Promise<string | null> {
+  try {
+    const activeAuth = await readAuthFileFromPath(getActiveAuthPath())
+    return toAccountStorageId(activeAuth.accountId, activeAuth.metadata)
+  } catch {
+    return null
+  }
+}
+
+async function listSnapshotStorageIds(): Promise<string[]> {
+  try {
+    const entries = await readdir(getAccountsSnapshotRoot(), { withFileTypes: true })
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+function createStoredAccountEntryFromSnapshot(storageId: string, auth: Awaited<ReturnType<typeof readAuthFileFromPath>>, lastRefreshedAtIso: string): StoredAccountEntry {
+  return {
+    accountId: auth.accountId,
+    storageId,
+    userId: auth.metadata.userId,
+    authMode: auth.authMode,
+    email: auth.metadata.email,
+    planType: auth.metadata.planType,
+    lastRefreshedAtIso,
+    lastActivatedAtIso: null,
+    quotaSnapshot: null,
+    quotaUpdatedAtIso: null,
+    quotaStatus: 'idle',
+    quotaError: null,
+    unavailableReason: null,
+  }
+}
+
+function mergeStoredAccountEntries(current: StoredAccountEntry, next: StoredAccountEntry): StoredAccountEntry {
+  return {
+    accountId: next.accountId,
+    storageId: next.storageId,
+    userId: next.userId ?? current.userId,
+    authMode: next.authMode ?? current.authMode,
+    email: next.email ?? current.email,
+    planType: next.planType ?? current.planType,
+    lastRefreshedAtIso: pickLatestIso(current.lastRefreshedAtIso, next.lastRefreshedAtIso) ?? next.lastRefreshedAtIso,
+    lastActivatedAtIso: pickLatestIso(current.lastActivatedAtIso, next.lastActivatedAtIso),
+    quotaSnapshot: current.quotaSnapshot ?? next.quotaSnapshot,
+    quotaUpdatedAtIso: pickLatestIso(current.quotaUpdatedAtIso, next.quotaUpdatedAtIso),
+    quotaStatus: current.quotaStatus !== 'idle' ? current.quotaStatus : next.quotaStatus,
+    quotaError: current.quotaError ?? next.quotaError,
+    unavailableReason: current.unavailableReason ?? next.unavailableReason,
+  }
+}
+
+function upsertMigratedAccount(accountsByStorageId: Map<string, StoredAccountEntry>, next: StoredAccountEntry): void {
+  const current = accountsByStorageId.get(next.storageId)
+  accountsByStorageId.set(next.storageId, current ? mergeStoredAccountEntries(current, next) : next)
+}
+
+function hasStoredAccountMetadataChanged(current: StoredAccountEntry, next: StoredAccountEntry): boolean {
+  return current.accountId !== next.accountId
+    || current.userId !== next.userId
+    || current.authMode !== next.authMode
+    || current.email !== next.email
+    || current.planType !== next.planType
+}
+
+async function canUseExistingSnapshotTarget(storageId: string, auth: Awaited<ReturnType<typeof readAuthFileFromPath>>): Promise<boolean> {
+  try {
+    const existing = await readAuthFileFromPath(getSnapshotPath(storageId))
+    return existing.accountId === auth.accountId
+      && (existing.metadata.userId ?? null) === (auth.metadata.userId ?? null)
+  } catch {
+    return false
+  }
+}
+
+async function migrateStoredAccountSnapshots(accounts: StoredAccountEntry[]): Promise<SnapshotMigrationResult> {
+  const accountsByStorageId = new Map<string, StoredAccountEntry>()
+  const storageIdMap = new Map<string, string>()
+  let changed = false
+
+  for (const account of accounts) {
+    upsertMigratedAccount(accountsByStorageId, account)
+  }
+
+  const storageIds = new Set([
+    ...accounts.map((account) => account.storageId),
+    ...await listSnapshotStorageIds(),
+  ])
+
+  for (const storageId of storageIds) {
+    const snapshotPath = getSnapshotPath(storageId)
+    let auth: Awaited<ReturnType<typeof readAuthFileFromPath>>
+    try {
+      auth = await readAuthFileFromPath(snapshotPath)
+    } catch {
+      continue
+    }
+
+    const snapshotStat = await stat(snapshotPath).catch(() => null)
+    const currentEntry = accountsByStorageId.get(storageId)
+    const baseEntry = currentEntry ?? createStoredAccountEntryFromSnapshot(
+      storageId,
+      auth,
+      snapshotStat?.mtime.toISOString() ?? new Date().toISOString(),
+    )
+    const nextStorageId = toAccountStorageId(auth.accountId, auth.metadata)
+    const nextEntry: StoredAccountEntry = {
+      ...baseEntry,
+      accountId: auth.accountId,
+      storageId: nextStorageId,
+      userId: auth.metadata.userId ?? baseEntry.userId,
+      authMode: auth.authMode ?? baseEntry.authMode,
+      email: auth.metadata.email ?? baseEntry.email,
+      planType: auth.metadata.planType ?? baseEntry.planType,
+    }
+
+    if (nextStorageId === storageId) {
+      if (!currentEntry || hasStoredAccountMetadataChanged(currentEntry, nextEntry)) {
+        accountsByStorageId.delete(storageId)
+        upsertMigratedAccount(accountsByStorageId, nextEntry)
+        changed = true
+      }
+      continue
+    }
+
+    const sourceDir = join(getAccountsSnapshotRoot(), storageId)
+    const targetDir = join(getAccountsSnapshotRoot(), nextStorageId)
+    if (!await fileExists(targetDir)) {
+      try {
+        await rename(sourceDir, targetDir)
+      } catch {
+        continue
+      }
+    } else if (!await canUseExistingSnapshotTarget(nextStorageId, auth)) {
+      continue
+    }
+
+    accountsByStorageId.delete(storageId)
+    storageIdMap.set(storageId, nextStorageId)
+    upsertMigratedAccount(accountsByStorageId, nextEntry)
+    changed = true
+  }
+
+  return {
+    accounts: [...accountsByStorageId.values()],
+    storageIdMap,
+    changed,
+  }
+}
+
 function getSnapshotPath(storageId: string): string {
   return join(getAccountsSnapshotRoot(), storageId, 'auth.json')
 }
@@ -379,6 +610,7 @@ async function readRuntimeAccountMetadata(appServer: AppServerLike): Promise<Tok
   const account = asRecord(payload?.account)
   return {
     email: typeof account?.email === 'string' && account.email.trim().length > 0 ? account.email.trim() : null,
+    userId: null,
     planType: typeof account?.planType === 'string' && account.planType.trim().length > 0 ? account.planType.trim() : null,
   }
 }
@@ -562,6 +794,7 @@ async function inspectStoredAccount(entry: StoredAccountEntry): Promise<AccountI
     return {
       metadata: {
         email: typeof account?.email === 'string' && account.email.trim().length > 0 ? account.email.trim() : entry.email,
+        userId: entry.userId,
         planType: typeof account?.planType === 'string' && account.planType.trim().length > 0 ? account.planType.trim() : entry.planType,
       },
       quotaSnapshot: pickCodexRateLimitSnapshot(quotaPayload),
@@ -598,16 +831,10 @@ function shouldRefreshAccountQuota(entry: StoredAccountEntry): boolean {
   return Date.now() - updatedAtMs >= ACCOUNT_QUOTA_REFRESH_TTL_MS
 }
 
-async function replaceStoredAccount(nextEntry: StoredAccountEntry, activeAccountId: string | null): Promise<void> {
+async function replaceStoredAccount(nextEntry: StoredAccountEntry): Promise<void> {
   const state = await readStoredAccountsState()
-  const nextState = withUpsertedAccount({
-    activeAccountId,
-    accounts: state.accounts,
-  }, nextEntry)
-  await writeStoredAccountsState({
-    activeAccountId,
-    accounts: nextState.accounts,
-  })
+  const nextState = withUpsertedAccount(state, nextEntry)
+  await writeStoredAccountsState(nextState)
 }
 
 async function pickReplacementActiveAccount(accounts: StoredAccountEntry[]): Promise<StoredAccountEntry | null> {
@@ -621,10 +848,10 @@ async function pickReplacementActiveAccount(accounts: StoredAccountEntry[]): Pro
   return null
 }
 
-async function refreshAccountsInBackground(accountIds: string[], activeAccountId: string | null): Promise<void> {
-  for (const accountId of accountIds) {
+async function refreshAccountsInBackground(storageIds: string[]): Promise<void> {
+  for (const storageId of storageIds) {
     const state = await readStoredAccountsState()
-    const entry = state.accounts.find((item) => item.accountId === accountId)
+    const entry = state.accounts.find((item) => item.storageId === storageId)
     if (!entry) continue
 
     try {
@@ -638,7 +865,7 @@ async function refreshAccountsInBackground(accountIds: string[], activeAccountId
         quotaStatus: 'ready',
         quotaError: null,
         unavailableReason: null,
-      }, activeAccountId)
+      })
     } catch (error) {
       await replaceStoredAccount({
         ...entry,
@@ -646,37 +873,38 @@ async function refreshAccountsInBackground(accountIds: string[], activeAccountId
         quotaStatus: 'error',
         quotaError: getErrorMessage(error, 'Failed to refresh account quota'),
         unavailableReason: detectAccountUnavailableReason(error),
-      }, activeAccountId)
+      })
     }
   }
 }
 
 async function scheduleAccountsBackgroundRefresh(
-  options: { force?: boolean; prioritizeAccountId?: string; accountIds?: string[] } = {},
+  options: { force?: boolean; prioritizeStorageId?: string; storageIds?: string[] } = {},
 ): Promise<StoredAccountsState> {
   const state = await readStoredAccountsState()
   if (state.accounts.length === 0) return state
   if (backgroundRefreshPromise) return state
 
-  const allowedIds = options.accountIds ? new Set(options.accountIds) : null
+  const allowedIds = options.storageIds ? new Set(options.storageIds) : null
   const candidates = state.accounts
-    .filter((entry) => !allowedIds || allowedIds.has(entry.accountId))
+    .filter((entry) => !allowedIds || allowedIds.has(entry.storageId))
     .filter((entry) => options.force === true || shouldRefreshAccountQuota(entry))
     .sort((left, right) => {
-      const prioritize = options.prioritizeAccountId ?? ''
-      const leftPriority = left.accountId === prioritize ? 1 : 0
-      const rightPriority = right.accountId === prioritize ? 1 : 0
+      const prioritize = options.prioritizeStorageId ?? ''
+      const leftPriority = left.storageId === prioritize ? 1 : 0
+      const rightPriority = right.storageId === prioritize ? 1 : 0
       if (leftPriority !== rightPriority) return rightPriority - leftPriority
       return 0
     })
 
   if (candidates.length === 0) return state
 
-  const candidateIds = new Set(candidates.map((entry) => entry.accountId))
+  const candidateIds = new Set(candidates.map((entry) => entry.storageId))
   const markedState: StoredAccountsState = {
     activeAccountId: state.activeAccountId,
+    activeStorageId: state.activeStorageId,
     accounts: state.accounts.map((entry) => (
-      candidateIds.has(entry.accountId)
+      candidateIds.has(entry.storageId)
         ? {
           ...entry,
           quotaStatus: 'loading',
@@ -689,8 +917,7 @@ async function scheduleAccountsBackgroundRefresh(
   await writeStoredAccountsState(markedState)
 
   backgroundRefreshPromise = refreshAccountsInBackground(
-    candidates.map((entry) => entry.accountId),
-    markedState.activeAccountId,
+    candidates.map((entry) => entry.storageId),
   ).finally(() => {
     backgroundRefreshPromise = null
   })
@@ -700,18 +927,26 @@ async function scheduleAccountsBackgroundRefresh(
 
 async function importAccountFromAuthPath(path: string): Promise<{
   activeAccountId: string | null
+  activeStorageId: string | null
   importedAccountId: string
+  importedStorageId: string
   accounts: Array<StoredAccountEntry & { isActive: boolean }>
 }> {
   const imported = await readAuthFileFromPath(path)
-  const storageId = toStorageId(imported.accountId)
+  const storageId = toAccountStorageId(imported.accountId, imported.metadata)
   await writeSnapshot(storageId, imported.raw)
 
   const state = await readStoredAccountsState()
-  const existing = state.accounts.find((entry) => entry.accountId === imported.accountId) ?? null
+  const legacyStorageId = toStorageId(imported.accountId)
+  const existing = state.accounts.find((entry) => entry.storageId === storageId)
+    ?? (storageId !== legacyStorageId
+      ? state.accounts.find((entry) => entry.storageId === legacyStorageId && entry.accountId === imported.accountId && entry.userId === null)
+      : null)
+    ?? null
   const nextEntry: StoredAccountEntry = {
     accountId: imported.accountId,
     storageId,
+    userId: imported.metadata.userId ?? existing?.userId ?? null,
     authMode: imported.authMode,
     email: imported.metadata.email ?? existing?.email ?? null,
     planType: imported.metadata.planType ?? existing?.planType ?? null,
@@ -723,13 +958,23 @@ async function importAccountFromAuthPath(path: string): Promise<{
     quotaError: existing?.quotaError ?? null,
     unavailableReason: existing?.unavailableReason ?? null,
   }
-  const nextState = withUpsertedAccount(state, nextEntry)
+  const nextState = withUpsertedAccount({
+    ...state,
+    activeStorageId: existing && existing.storageId !== storageId && state.activeStorageId === existing.storageId
+      ? storageId
+      : state.activeStorageId,
+    accounts: existing && existing.storageId !== storageId
+      ? state.accounts.filter((entry) => entry.storageId !== existing.storageId)
+      : state.accounts,
+  }, nextEntry)
   await writeStoredAccountsState(nextState)
 
   return {
     activeAccountId: nextState.activeAccountId,
+    activeStorageId: nextState.activeStorageId,
     importedAccountId: imported.accountId,
-    accounts: sortAccounts(nextState.accounts, nextState.activeAccountId).map((entry) => toPublicAccountEntry(entry, nextState.activeAccountId)),
+    importedStorageId: storageId,
+    accounts: sortAccounts(nextState.accounts, nextState.activeStorageId).map((entry) => toPublicAccountEntry(entry, nextState.activeStorageId)),
   }
 }
 
@@ -888,7 +1133,8 @@ export async function handleAccountRoutes(
     setJson(res, 200, {
       data: {
         activeAccountId: state.activeAccountId,
-        accounts: sortAccounts(state.accounts, state.activeAccountId).map((entry) => toPublicAccountEntry(entry, state.activeAccountId)),
+        activeStorageId: state.activeStorageId,
+        accounts: sortAccounts(state.accounts, state.activeStorageId).map((entry) => toPublicAccountEntry(entry, state.activeStorageId)),
       },
     })
     return true
@@ -896,11 +1142,11 @@ export async function handleAccountRoutes(
 
   if (req.method === 'GET' && url.pathname === '/codex-api/accounts/active') {
     const state = await readStoredAccountsState()
-    const active = state.activeAccountId
-      ? state.accounts.find((entry) => entry.accountId === state.activeAccountId) ?? null
+    const active = state.activeStorageId
+      ? state.accounts.find((entry) => entry.storageId === state.activeStorageId) ?? null
       : null
     setJson(res, 200, {
-      data: active ? toPublicAccountEntry(active, state.activeAccountId) : null,
+      data: active ? toPublicAccountEntry(active, state.activeStorageId) : null,
     })
     return true
   }
@@ -914,7 +1160,8 @@ export async function handleAccountRoutes(
         const inspection = await validateSwitchedAccount(appServer)
         const state = await readStoredAccountsState()
         const importedAccountId = imported.importedAccountId
-        const target = state.accounts.find((entry) => entry.accountId === importedAccountId) ?? null
+        const importedStorageId = imported.importedStorageId
+        const target = state.accounts.find((entry) => entry.storageId === importedStorageId) ?? null
         if (!target) {
           throw new Error('account_not_found')
         }
@@ -932,24 +1179,24 @@ export async function handleAccountRoutes(
         }
         const nextState = withUpsertedAccount({
           activeAccountId: importedAccountId,
+          activeStorageId: importedStorageId,
           accounts: state.accounts,
         }, nextEntry)
-        await writeStoredAccountsState({
-          activeAccountId: importedAccountId,
-          accounts: nextState.accounts,
-        })
+        await writeStoredAccountsState(nextState)
 
         const backgroundState = await scheduleAccountsBackgroundRefresh({
           force: true,
-          prioritizeAccountId: importedAccountId,
-          accountIds: nextState.accounts.filter((entry) => entry.accountId !== importedAccountId).map((entry) => entry.accountId),
+          prioritizeStorageId: importedStorageId,
+          storageIds: nextState.accounts.filter((entry) => entry.storageId !== importedStorageId).map((entry) => entry.storageId),
         })
 
         setJson(res, 200, {
           data: {
             activeAccountId: importedAccountId,
+            activeStorageId: importedStorageId,
             importedAccountId,
-            accounts: sortAccounts(backgroundState.accounts, importedAccountId).map((entry) => toPublicAccountEntry(entry, importedAccountId)),
+            importedStorageId,
+            accounts: sortAccounts(backgroundState.accounts, importedStorageId).map((entry) => toPublicAccountEntry(entry, importedStorageId)),
           },
         })
       } catch (error) {
@@ -1014,7 +1261,8 @@ export async function handleAccountRoutes(
       const inspection = await validateSwitchedAccount(appServer)
       const state = await readStoredAccountsState()
       const importedAccountId = imported.importedAccountId
-      const target = state.accounts.find((entry) => entry.accountId === importedAccountId) ?? null
+      const importedStorageId = imported.importedStorageId
+      const target = state.accounts.find((entry) => entry.storageId === importedStorageId) ?? null
       if (!target) {
         throw new Error('account_not_found')
       }
@@ -1032,25 +1280,25 @@ export async function handleAccountRoutes(
       }
       const nextState = withUpsertedAccount({
         activeAccountId: importedAccountId,
+        activeStorageId: importedStorageId,
         accounts: state.accounts,
       }, nextEntry)
-      await writeStoredAccountsState({
-        activeAccountId: importedAccountId,
-        accounts: nextState.accounts,
-      })
+      await writeStoredAccountsState(nextState)
 
       const backgroundState = await scheduleAccountsBackgroundRefresh({
         force: true,
-        prioritizeAccountId: importedAccountId,
-        accountIds: nextState.accounts.filter((entry) => entry.accountId !== importedAccountId).map((entry) => entry.accountId),
+        prioritizeStorageId: importedStorageId,
+        storageIds: nextState.accounts.filter((entry) => entry.storageId !== importedStorageId).map((entry) => entry.storageId),
       })
 
       setJson(res, 200, {
         ok: true,
         data: {
           activeAccountId: importedAccountId,
+          activeStorageId: importedStorageId,
           importedAccountId,
-          accounts: sortAccounts(backgroundState.accounts, importedAccountId).map((entry) => toPublicAccountEntry(entry, importedAccountId)),
+          importedStorageId,
+          accounts: sortAccounts(backgroundState.accounts, importedStorageId).map((entry) => toPublicAccountEntry(entry, importedStorageId)),
         },
       })
     } catch (error) {
@@ -1074,13 +1322,16 @@ export async function handleAccountRoutes(
 
       const payload = await readJsonBody(req)
       const accountId = typeof payload?.accountId === 'string' ? payload.accountId.trim() : ''
-      if (!accountId) {
-        setJson(res, 400, { error: 'account_not_found', message: 'Missing accountId.' })
+      const storageId = typeof payload?.storageId === 'string' ? payload.storageId.trim() : ''
+      if (!accountId && !storageId) {
+        setJson(res, 400, { error: 'account_not_found', message: 'Missing account identifier.' })
         return true
       }
 
       const state = await readStoredAccountsState()
-      const target = state.accounts.find((entry) => entry.accountId === accountId) ?? null
+      const target = storageId
+        ? state.accounts.find((entry) => entry.storageId === storageId) ?? null
+        : state.accounts.find((entry) => entry.accountId === accountId) ?? null
       if (!target) {
         setJson(res, 404, { error: 'account_not_found', message: 'The requested account was not found.' })
         return true
@@ -1117,23 +1368,22 @@ export async function handleAccountRoutes(
           unavailableReason: null,
         }
         const nextState = withUpsertedAccount({
-          activeAccountId: accountId,
+          activeAccountId: target.accountId,
+          activeStorageId: target.storageId,
           accounts: state.accounts,
         }, nextEntry)
-        await writeStoredAccountsState({
-          activeAccountId: accountId,
-          accounts: nextState.accounts,
-        })
+        await writeStoredAccountsState(nextState)
         void scheduleAccountsBackgroundRefresh({
           force: true,
-          prioritizeAccountId: accountId,
-          accountIds: nextState.accounts.filter((entry) => entry.accountId !== accountId).map((entry) => entry.accountId),
+          prioritizeStorageId: target.storageId,
+          storageIds: nextState.accounts.filter((entry) => entry.storageId !== target.storageId).map((entry) => entry.storageId),
         })
         setJson(res, 200, {
           ok: true,
           data: {
-            activeAccountId: accountId,
-            account: toPublicAccountEntry(nextEntry, accountId),
+            activeAccountId: target.accountId,
+            activeStorageId: target.storageId,
+            account: toPublicAccountEntry(nextEntry, target.storageId),
           },
         })
       } catch (error) {
@@ -1145,7 +1395,7 @@ export async function handleAccountRoutes(
           quotaStatus: 'error',
           quotaError: getErrorMessage(error, 'Failed to switch account'),
           unavailableReason: detectAccountUnavailableReason(error),
-        }, state.activeAccountId)
+        })
         setJson(res, 502, {
           error: 'account_switch_failed',
           message: getErrorMessage(error, 'Failed to switch account'),
@@ -1164,30 +1414,35 @@ export async function handleAccountRoutes(
     try {
       const payload = await readJsonBody(req)
       const accountId = typeof payload?.accountId === 'string' ? payload.accountId.trim() : ''
-      if (!accountId) {
-        setJson(res, 400, { error: 'account_not_found', message: 'Missing accountId.' })
+      const storageId = typeof payload?.storageId === 'string' ? payload.storageId.trim() : ''
+      if (!accountId && !storageId) {
+        setJson(res, 400, { error: 'account_not_found', message: 'Missing account identifier.' })
         return true
       }
 
       const state = await readStoredAccountsState()
-      const target = state.accounts.find((entry) => entry.accountId === accountId) ?? null
+      const target = storageId
+        ? state.accounts.find((entry) => entry.storageId === storageId) ?? null
+        : state.accounts.find((entry) => entry.accountId === accountId) ?? null
       if (!target) {
         setJson(res, 404, { error: 'account_not_found', message: 'The requested account was not found.' })
         return true
       }
 
-      const remainingAccounts = state.accounts.filter((entry) => entry.accountId !== accountId)
-      if (state.activeAccountId !== accountId) {
+      const remainingAccounts = state.accounts.filter((entry) => entry.storageId !== target.storageId)
+      if (state.activeStorageId !== target.storageId) {
         await removeSnapshot(target.storageId)
+        const activeState = resolveActiveState(remainingAccounts, state.activeStorageId)
         await writeStoredAccountsState({
-          activeAccountId: state.activeAccountId,
+          ...activeState,
           accounts: remainingAccounts,
         })
         setJson(res, 200, {
           ok: true,
           data: {
-            activeAccountId: state.activeAccountId,
-            accounts: sortAccounts(remainingAccounts, state.activeAccountId).map((entry) => toPublicAccountEntry(entry, state.activeAccountId)),
+            activeAccountId: activeState.activeAccountId,
+            activeStorageId: activeState.activeStorageId,
+            accounts: sortAccounts(remainingAccounts, activeState.activeStorageId).map((entry) => toPublicAccountEntry(entry, activeState.activeStorageId)),
           },
         })
         return true
@@ -1215,16 +1470,18 @@ export async function handleAccountRoutes(
         await removeSnapshot(target.storageId)
         await writeStoredAccountsState({
           activeAccountId: null,
+          activeStorageId: null,
           accounts: remainingAccounts,
         })
         void scheduleAccountsBackgroundRefresh({
           force: true,
-          accountIds: remainingAccounts.map((entry) => entry.accountId),
+          storageIds: remainingAccounts.map((entry) => entry.storageId),
         })
         setJson(res, 200, {
           ok: true,
           data: {
             activeAccountId: null,
+            activeStorageId: null,
             accounts: sortAccounts(remainingAccounts, null).map((entry) => toPublicAccountEntry(entry, null)),
           },
         })
@@ -1258,26 +1515,28 @@ export async function handleAccountRoutes(
           unavailableReason: null,
         }
         const nextAccounts = remainingAccounts.map((entry) => (
-          entry.accountId === activatedReplacement.accountId ? activatedReplacement : entry
+          entry.storageId === activatedReplacement.storageId ? activatedReplacement : entry
         ))
         await removeSnapshot(target.storageId)
         await writeStoredAccountsState({
           activeAccountId: activatedReplacement.accountId,
+          activeStorageId: activatedReplacement.storageId,
           accounts: nextAccounts,
         })
         void scheduleAccountsBackgroundRefresh({
           force: true,
-          prioritizeAccountId: activatedReplacement.accountId,
-          accountIds: nextAccounts
-            .filter((entry) => entry.accountId !== activatedReplacement.accountId)
-            .map((entry) => entry.accountId),
+          prioritizeStorageId: activatedReplacement.storageId,
+          storageIds: nextAccounts
+            .filter((entry) => entry.storageId !== activatedReplacement.storageId)
+            .map((entry) => entry.storageId),
         })
         setJson(res, 200, {
           ok: true,
           data: {
             activeAccountId: activatedReplacement.accountId,
-            accounts: sortAccounts(nextAccounts, activatedReplacement.accountId)
-              .map((entry) => toPublicAccountEntry(entry, activatedReplacement.accountId)),
+            activeStorageId: activatedReplacement.storageId,
+            accounts: sortAccounts(nextAccounts, activatedReplacement.storageId)
+              .map((entry) => toPublicAccountEntry(entry, activatedReplacement.storageId)),
           },
         })
       } catch (error) {
@@ -1289,7 +1548,7 @@ export async function handleAccountRoutes(
           quotaStatus: 'error',
           quotaError: getErrorMessage(error, 'Failed to switch account'),
           unavailableReason: detectAccountUnavailableReason(error),
-        }, state.activeAccountId)
+        })
         setJson(res, 502, {
           error: 'account_remove_failed',
           message: getErrorMessage(error, 'Failed to remove account'),

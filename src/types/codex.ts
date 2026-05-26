@@ -300,6 +300,8 @@ export type UiAccountUnavailableReason = 'payment_required'
 
 export type UiAccountEntry = {
   accountId: string
+  storageId: string
+  userId: string | null
   authMode: string | null
   email: string | null
   planType: string | null

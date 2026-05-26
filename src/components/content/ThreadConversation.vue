@@ -922,6 +922,7 @@ import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerReques
 import { updateThreadFileChanges } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
+import { copyTextToClipboard, copyTextWithSelectionFallback } from '../../utils/clipboard'
 
 import IconTablerArrowBackUp from '../icons/IconTablerArrowBackUp.vue'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -2340,42 +2341,16 @@ function diffViewerMarker(line: DiffViewerLine): string {
   return ''
 }
 
-function copyTextWithSelectionFallback(text: string): boolean {
-  if (typeof document === 'undefined') return false
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
-  textarea.style.opacity = '0'
-  textarea.style.pointerEvents = 'none'
-  document.body.appendChild(textarea)
-  textarea.focus()
-  textarea.select()
-  textarea.setSelectionRange(0, text.length)
-
-  try {
-    return document.execCommand('copy')
-  } catch {
-    return false
-  } finally {
-    document.body.removeChild(textarea)
-  }
-}
-
 async function copyResponse(anchorMessageId: string): Promise<void> {
   const content = copyableResponseContentByAnchorId.value[anchorMessageId] ?? ''
   if (!content) return
 
   let copied = false
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(content)
-      copied = true
-    } catch {
-      copied = false
-    }
+  try {
+    await copyTextToClipboard(content)
+    copied = true
+  } catch {
+    copied = false
   }
 
   if (!copied) {
@@ -2971,17 +2946,9 @@ async function copyFileLinkContextLink(): Promise<void> {
   if (!href || href === '#') return
 
   try {
-    await navigator.clipboard.writeText(href)
+    await copyTextToClipboard(href)
   } catch {
-    const textarea = document.createElement('textarea')
-    textarea.value = href
-    textarea.setAttribute('readonly', 'true')
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
-    document.body.appendChild(textarea)
-    textarea.select()
-    document.execCommand('copy')
-    document.body.removeChild(textarea)
+    // Clipboard writes can be blocked by browser permissions; keep the context action best-effort.
   }
 }
 

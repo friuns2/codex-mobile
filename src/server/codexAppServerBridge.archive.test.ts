@@ -1,10 +1,12 @@
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  callRpcWithArchiveRecovery,
   buildProjectlessFolderName,
+  callRpcWithArchiveRecovery,
+  canonicalizeThreadListResponseForRead,
+  canonicalizeWorkspaceRootsStateForRead,
   ensureDefaultFreeModeStateForMissingAuthSync,
   hasUsableCodexAuth,
   isEmptyThreadReadError,
@@ -12,6 +14,7 @@ import {
   isThreadNotFoundError,
   isUnauthenticatedRateLimitError,
   writeFreeModeStateFile,
+  writeWorkspaceRootsState,
 } from './codexAppServerBridge'
 
 const originalCodexHome = process.env.CODEX_HOME
@@ -149,6 +152,143 @@ describe('buildProjectlessFolderName', () => {
     const folderName = buildProjectlessFolderName(slug, 20, 'mabc1234-deadbeef')
     expect(folderName).toHaveLength(80)
     expect(folderName).toMatch(/-mabc1234-deadbeef$/)
+  })
+})
+
+describe('canonicalizeWorkspaceRootsStateForRead', () => {
+  it('realpaths existing local roots so symlink cwd sessions remain visible', async () => {
+    const state = await canonicalizeWorkspaceRootsStateForRead({
+      order: ['/workspace-link/projects/demo', 'remote-project-id'],
+      labels: {
+        '/storage/projects/demo': 'Canonical Demo',
+        '/workspace-link/projects/demo': 'Symlink Demo',
+        'remote-project-id': 'Remote Demo',
+      },
+      active: ['/workspace-link/projects/demo'],
+      projectOrder: ['remote-project-id', '/workspace-link/projects/demo'],
+      remoteProjects: [{
+        id: 'remote-project-id',
+        hostId: 'remote-ssh-discovered:host',
+        remotePath: '/remote/projects/demo',
+        label: 'remote-demo',
+      }],
+    }, async (value) => value.replace('/workspace-link/', '/storage/'))
+
+    expect(state.order).toEqual([
+      '/storage/projects/demo',
+      'remote-project-id',
+    ])
+    expect(state.active).toEqual(['/storage/projects/demo'])
+    expect(state.projectOrder).toEqual([
+      'remote-project-id',
+      '/storage/projects/demo',
+    ])
+    expect(state.labels).toEqual({
+      '/storage/projects/demo': 'Canonical Demo',
+      'remote-project-id': 'Remote Demo',
+    })
+    expect(state.remoteProjects[0]?.id).toBe('remote-project-id')
+  })
+})
+
+describe('writeWorkspaceRootsState', () => {
+  it('persists workspace roots in canonical form', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-workspace-roots-'))
+    const canonicalRoot = join(codexHome, 'storage', 'projects', 'demo')
+    const symlinkParent = join(codexHome, 'workspace-link', 'projects')
+    const symlinkRoot = join(symlinkParent, 'demo')
+    process.env.CODEX_HOME = codexHome
+
+    try {
+      await mkdir(canonicalRoot, { recursive: true })
+      await mkdir(symlinkParent, { recursive: true })
+      await symlink(canonicalRoot, symlinkRoot)
+      await writeWorkspaceRootsState({
+        order: [symlinkRoot, 'remote-project-id', canonicalRoot],
+        labels: {
+          [canonicalRoot]: 'Canonical Demo',
+          [symlinkRoot]: 'Symlink Demo',
+          'remote-project-id': 'Remote Demo',
+        },
+        active: [symlinkRoot, canonicalRoot],
+        projectOrder: ['remote-project-id', symlinkRoot, canonicalRoot],
+        remoteProjects: [{
+          id: 'remote-project-id',
+          hostId: 'remote-ssh-discovered:host',
+          remotePath: '/remote/projects/demo',
+          label: 'remote-demo',
+        }],
+      })
+
+      const rawState = JSON.parse(await readFile(join(codexHome, '.codex-global-state.json'), 'utf8')) as Record<string, unknown>
+      expect(rawState['electron-saved-workspace-roots']).toEqual([
+        canonicalRoot,
+        'remote-project-id',
+      ])
+      expect(rawState['active-workspace-roots']).toEqual([canonicalRoot])
+      expect(rawState['project-order']).toEqual([
+        'remote-project-id',
+        canonicalRoot,
+      ])
+      expect(rawState['electron-workspace-root-labels']).toEqual({
+        [canonicalRoot]: 'Canonical Demo',
+        'remote-project-id': 'Remote Demo',
+      })
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('canonicalizeThreadListResponseForRead', () => {
+  it('realpaths thread cwd values to match canonicalized workspace roots', async () => {
+    const payload = await canonicalizeThreadListResponseForRead({
+      data: [
+        { id: 'symlink-cwd-thread', cwd: '/workspace-link/projects/demo' },
+        { id: 'canonical-cwd-thread', cwd: '/storage/projects/demo' },
+        { id: 'remote-thread', cwd: 'remote-project-id' },
+      ],
+      nextCursor: null,
+    }, async (value) => value.replace('/workspace-link/', '/storage/'))
+
+    expect(payload).toEqual({
+      data: [
+        { id: 'symlink-cwd-thread', cwd: '/storage/projects/demo' },
+        { id: 'canonical-cwd-thread', cwd: '/storage/projects/demo' },
+        { id: 'remote-thread', cwd: 'remote-project-id' },
+      ],
+      nextCursor: null,
+    })
+  })
+
+  it('reuses cwd realpath results within one thread list response', async () => {
+    const calls: string[] = []
+    const payload = await canonicalizeThreadListResponseForRead({
+      data: [
+        { id: 'first-symlink-thread', cwd: '/workspace-link/projects/demo' },
+        { id: 'second-symlink-thread', cwd: '/workspace-link/projects/demo' },
+        { id: 'canonical-cwd-thread', cwd: '/storage/projects/demo' },
+        { id: 'remote-thread', cwd: 'remote-project-id' },
+      ],
+      nextCursor: null,
+    }, async (value) => {
+      calls.push(value)
+      return value.replace('/workspace-link/', '/storage/')
+    })
+
+    expect(payload).toEqual({
+      data: [
+        { id: 'first-symlink-thread', cwd: '/storage/projects/demo' },
+        { id: 'second-symlink-thread', cwd: '/storage/projects/demo' },
+        { id: 'canonical-cwd-thread', cwd: '/storage/projects/demo' },
+        { id: 'remote-thread', cwd: 'remote-project-id' },
+      ],
+      nextCursor: null,
+    })
+    expect(calls).toEqual([
+      '/workspace-link/projects/demo',
+      '/storage/projects/demo',
+    ])
   })
 })
 
@@ -298,6 +438,90 @@ describe('ensureDefaultFreeModeStateForMissingAuthSync', () => {
       await writeFile(join(codexHome, 'auth.json'), JSON.stringify({ tokens: { access_token: 'access-token' } }))
 
       expect(ensureDefaultFreeModeStateForMissingAuthSync(statePath)).toBeNull()
+      await expect(stat(statePath)).rejects.toThrow()
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('does not synthesize OpenCode Zen when config.toml explicitly selects a model provider', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-config-provider-'))
+    const statePath = join(codexHome, 'webui-custom-providers.json')
+    process.env.CODEX_HOME = codexHome
+    try {
+      await writeFile(join(codexHome, 'config.toml'), [
+        'model = "gpt-5.5"',
+        'model_provider = "azure"',
+        '',
+        '[model_providers.azure]',
+        'base_url = "https://example.openai.azure.com/openai/v1"',
+        'wire_api = "responses"',
+      ].join('\n'))
+
+      expect(ensureDefaultFreeModeStateForMissingAuthSync(statePath)).toBeNull()
+      await expect(stat(statePath)).rejects.toThrow()
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('detects quoted top-level model_provider keys in config.toml', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-quoted-config-provider-'))
+    const statePath = join(codexHome, 'webui-custom-providers.json')
+    process.env.CODEX_HOME = codexHome
+    try {
+      await writeFile(join(codexHome, 'config.toml'), [
+        '"model_provider" = "azure"',
+        '',
+        '[model_providers.azure]',
+        'base_url = "https://example.openai.azure.com/openai/v1"',
+        'wire_api = "responses"',
+      ].join('\n'))
+
+      expect(ensureDefaultFreeModeStateForMissingAuthSync(statePath)).toBeNull()
+      await expect(stat(statePath)).rejects.toThrow()
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores commented and nested model_provider keys when deciding the runtime fallback', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-nested-provider-config-'))
+    const statePath = join(codexHome, 'webui-custom-providers.json')
+    process.env.CODEX_HOME = codexHome
+    try {
+      await writeFile(join(codexHome, 'config.toml'), [
+        '# model_provider = "azure"',
+        '',
+        '[profiles.work]',
+        'model_provider = "azure"',
+      ].join('\n'))
+
+      const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
+
+      expect(state?.enabled).toBe(true)
+      expect(state?.provider).toBe('opencode-zen')
+      await expect(stat(statePath)).rejects.toThrow()
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores model_provider text inside multiline TOML strings', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-multiline-provider-config-'))
+    const statePath = join(codexHome, 'webui-custom-providers.json')
+    process.env.CODEX_HOME = codexHome
+    try {
+      await writeFile(join(codexHome, 'config.toml'), [
+        'banner = """',
+        'model_provider = "azure"',
+        '"""',
+      ].join('\n'))
+
+      const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
+
+      expect(state?.enabled).toBe(true)
+      expect(state?.provider).toBe('opencode-zen')
       await expect(stat(statePath)).rejects.toThrow()
     } finally {
       await rm(codexHome, { recursive: true, force: true })

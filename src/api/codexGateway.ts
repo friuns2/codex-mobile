@@ -407,8 +407,10 @@ export type ThreadTerminalQuickCommand = {
 
 export type AccountsListResult = {
   activeAccountId: string | null
+  activeStorageId: string | null
   accounts: UiAccountEntry[]
   importedAccountId?: string
+  importedStorageId?: string
 }
 
 type ThreadFileChangeFallbackEntry = {
@@ -502,16 +504,23 @@ function normalizeRateLimitSnapshot(value: unknown): UiRateLimitSnapshot | null 
   }
 }
 
-function normalizeAccountEntry(value: unknown, activeAccountId: string | null = null): UiAccountEntry | null {
+function normalizeAccountEntry(
+  value: unknown,
+  activeAccountId: string | null = null,
+  activeStorageId: string | null = null,
+): UiAccountEntry | null {
   const record = asRecord(value)
   if (!record) return null
   const accountId = readString(record.accountId)
+  const storageId = readString(record.storageId) ?? accountId
   const quotaStatusRaw = readString(record.quotaStatus)
   const quotaStatus: UiAccountQuotaStatus =
     quotaStatusRaw === 'loading' || quotaStatusRaw === 'ready' || quotaStatusRaw === 'error' ? quotaStatusRaw : 'idle'
   if (!accountId) return null
   return {
     accountId,
+    storageId: storageId ?? accountId,
+    userId: readString(record.userId),
     authMode: readString(record.authMode),
     email: readString(record.email),
     planType: readString(record.planType),
@@ -523,7 +532,7 @@ function normalizeAccountEntry(value: unknown, activeAccountId: string | null = 
     quotaError: readString(record.quotaError),
     unavailableReason: normalizeAccountUnavailableReason(record.unavailableReason)
       ?? (isPaymentRequiredErrorMessage(readString(record.quotaError)) ? 'payment_required' : null),
-    isActive: readBoolean(record.isActive) ?? accountId === activeAccountId,
+    isActive: readBoolean(record.isActive) ?? (storageId === activeStorageId || accountId === activeAccountId),
   }
 }
 
@@ -1389,12 +1398,15 @@ export async function getAccountRateLimits(): Promise<UiRateLimitSnapshot | null
 function normalizeAccountsListResult(payload: unknown): AccountsListResult {
   const record = asRecord(payload)
   const activeAccountId = readString(record?.activeAccountId)
+  const activeStorageId = readString(record?.activeStorageId)
   const data = Array.isArray(record?.accounts) ? record?.accounts : []
   return {
     activeAccountId,
+    activeStorageId,
     importedAccountId: readString(record?.importedAccountId) ?? undefined,
+    importedStorageId: readString(record?.importedStorageId) ?? undefined,
     accounts: data
-      .map((entry) => normalizeAccountEntry(entry, activeAccountId))
+      .map((entry) => normalizeAccountEntry(entry, activeAccountId, activeStorageId))
       .filter((entry): entry is UiAccountEntry => entry !== null),
   }
 }
@@ -1452,11 +1464,11 @@ export async function completeCodexLogin(callbackUrl: string): Promise<AccountsL
   return normalizeAccountsListResult(envelope?.data)
 }
 
-export async function switchAccount(accountId: string): Promise<UiAccountEntry> {
+export async function switchAccount(storageId: string): Promise<UiAccountEntry> {
   const response = await fetch('/codex-api/accounts/switch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accountId }),
+    body: JSON.stringify({ storageId }),
   })
   const payload = (await response.json()) as unknown
   if (!response.ok) {
@@ -1464,18 +1476,18 @@ export async function switchAccount(accountId: string): Promise<UiAccountEntry> 
   }
   const envelope = asRecord(payload)
   const data = asRecord(envelope?.data)
-  const account = normalizeAccountEntry(data?.account, readString(data?.activeAccountId))
+  const account = normalizeAccountEntry(data?.account, readString(data?.activeAccountId), readString(data?.activeStorageId))
   if (!account) {
     throw new Error('Failed to switch account')
   }
   return account
 }
 
-export async function removeAccount(accountId: string): Promise<AccountsListResult> {
+export async function removeAccount(storageId: string): Promise<AccountsListResult> {
   const response = await fetch('/codex-api/accounts/remove', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accountId }),
+    body: JSON.stringify({ storageId }),
   })
   const payload = (await response.json()) as unknown
   if (!response.ok) {

@@ -15,7 +15,7 @@ This file is the manual test index. Detailed regression and feature verification
 
 | Folder | Sections | Scope |
 | --- | ---: | --- |
-| [Projects, Sidebar, and New Chat](tests/projects-sidebar-new-chat/index.md) | 14 | Home route, project picker, sidebar organization, new-chat setup, projectless folders, and project/worktree shell behavior. |
+| [Projects, Sidebar, and New Chat](tests/projects-sidebar-new-chat/index.md) | 15 | Home route, project picker, sidebar organization, new-chat setup, projectless folders, and project/worktree shell behavior. |
 | [Automations](tests/automations/index.md) | 4 | Thread heartbeat automations, project cron automations, dialogs, action rows, and automation panel behavior. |
 | [Skills, Plugins, and Integrations](tests/skills-plugins-integrations/index.md) | 27 | Skills Hub, skill sync, plugin/app directory surfaces, prompts, Composio, Telegram, and installed skill behavior. |
 | [Chat Composer and Message Rendering](tests/chat-composer-rendering/index.md) | 33 | Composer controls, queued messages, plan mode, markdown parsing, file links, attachments, generated images, and visible message rows. |

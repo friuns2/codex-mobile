@@ -17,7 +17,7 @@ The thread overflow menu includes a `Copy path` item that copies the selected th
 5. Reopen the same menu in dark theme and verify the item remains readable and in the same position
 
 #### Expected Results
-- The menu order is `Add automation...` or `Manage automations...`, `Browse files`, `Copy path`, `Export chat`, `Create chat fork`, `Rename thread`, `Delete thread`
+- The menu order is `Add automation...` or `Manage automations...`, `Browse files`, `Copy path`, `Copy chat`, `Create chat fork`, `Pin thread` or `Unpin thread`, `Rename thread`, `Delete thread`
 - Clicking `Copy path` closes the menu
 - Clipboard contents equal the thread's `cwd` path
 - Light theme and dark theme both keep the menu item readable

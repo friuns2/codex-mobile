@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rename, rm, mkdir, stat, cp, lstat, readlink, symlink } from 'node:fs/promises'
-import { createReadStream, existsSync, readFileSync } from 'node:fs'
+import { mkdtemp, readFile, readdir, rename, rm, mkdir, stat, cp, lstat, readlink, symlink, realpath } from 'node:fs/promises'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -83,7 +83,7 @@ type ServerRequestReply = {
   }
 }
 
-type WorkspaceRootsState = {
+export type WorkspaceRootsState = {
   order: string[]
   labels: Record<string, string>
   active: string[]
@@ -1506,7 +1506,10 @@ export async function callRpcWithArchiveRecovery(
   params: unknown,
 ): Promise<unknown> {
   try {
-    return await callRpcWithRateLimitDecodeRecovery(appServer, method, params)
+    const result = await callRpcWithRateLimitDecodeRecovery(appServer, method, params)
+    return method === 'thread/list'
+      ? await canonicalizeThreadListResponseForRead(result)
+      : result
   } catch (error) {
     const paramsRecord = asRecord(params)
     const threadId = readNonEmptyString(paramsRecord?.threadId)
@@ -3714,6 +3717,136 @@ function readFreeModeStateSync(statePath: string): FreeModeState | null {
   }
 }
 
+type TomlScanState = {
+  inMultilineBasicString: boolean
+  inMultilineLiteralString: boolean
+}
+
+function stripTomlComment(line: string, state: TomlScanState): string {
+  let content = ''
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  let escaped = false
+  for (let i = 0; i < line.length; i++) {
+    if (state.inMultilineBasicString) {
+      const end = line.indexOf('"""', i)
+      if (end === -1) return content
+      state.inMultilineBasicString = false
+      i = end + 2
+      continue
+    }
+    if (state.inMultilineLiteralString) {
+      const end = line.indexOf("'''", i)
+      if (end === -1) return content
+      state.inMultilineLiteralString = false
+      i = end + 2
+      continue
+    }
+    const ch = line[i]
+    if (inDoubleQuote && escaped) {
+      escaped = false
+      content += ch
+      continue
+    }
+    if (inDoubleQuote && ch === '\\') {
+      escaped = true
+      content += ch
+      continue
+    }
+    if (!inSingleQuote && !inDoubleQuote && line.startsWith('"""', i)) {
+      state.inMultilineBasicString = true
+      i += 2
+      continue
+    }
+    if (!inSingleQuote && !inDoubleQuote && line.startsWith("'''", i)) {
+      state.inMultilineLiteralString = true
+      i += 2
+      continue
+    }
+    if (!inDoubleQuote && ch === "'") {
+      inSingleQuote = !inSingleQuote
+      content += ch
+      continue
+    }
+    if (!inSingleQuote && ch === '"') {
+      inDoubleQuote = !inDoubleQuote
+      content += ch
+      continue
+    }
+    if (!inSingleQuote && !inDoubleQuote && ch === '#') {
+      return content
+    }
+    content += ch
+  }
+  return content
+}
+
+function isModelProviderAssignment(content: string): boolean {
+  return /^(?:model_provider|"model_provider"|'model_provider')\s*=/.test(content)
+}
+
+let explicitCodexModelProviderConfigCache: {
+  path: string
+  mtimeMs: number | null
+  size: number | null
+  value: boolean
+} | null = null
+
+function hasExplicitCodexModelProviderConfigSync(): boolean {
+  const configPath = join(getCodexHomeDir(), 'config.toml')
+  let info: ReturnType<typeof statSync> | null = null
+  try {
+    info = statSync(configPath)
+  } catch {
+    explicitCodexModelProviderConfigCache = {
+      path: configPath,
+      mtimeMs: null,
+      size: null,
+      value: false,
+    }
+    return false
+  }
+  if (
+    explicitCodexModelProviderConfigCache?.path === configPath
+    && explicitCodexModelProviderConfigCache.mtimeMs === info.mtimeMs
+    && explicitCodexModelProviderConfigCache.size === info.size
+  ) {
+    return explicitCodexModelProviderConfigCache.value
+  }
+
+  let value = false
+  try {
+    const raw = readFileSync(configPath, 'utf8')
+    let inTopLevelTable = true
+    const scanState: TomlScanState = {
+      inMultilineBasicString: false,
+      inMultilineLiteralString: false,
+    }
+    for (const line of raw.split(/\r?\n/)) {
+      const content = stripTomlComment(line, scanState).trim()
+      if (!content) continue
+      if (/^\[\[?[^\]]+\]?\]$/.test(content)) {
+        inTopLevelTable = false
+        continue
+      }
+      if (!inTopLevelTable) continue
+      if (isModelProviderAssignment(content)) {
+        value = true
+        break
+      }
+    }
+  } catch {
+    value = false
+  }
+  explicitCodexModelProviderConfigCache = {
+    path: configPath,
+    mtimeMs: info.mtimeMs,
+    size: info.size,
+    value,
+  }
+  return value
+}
+
 export async function writeFreeModeStateFile(statePath: string, state: FreeModeState): Promise<void> {
   await mkdir(dirname(statePath), { recursive: true })
   await writeFile(statePath, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 })
@@ -3725,7 +3858,9 @@ export function ensureDefaultFreeModeStateForMissingAuthSync(statePath: string):
   if (shouldSuppressCommunityFreeModeForCodexAuth(current, hasUsableCodexAuth)) {
     return null
   }
-  if (!shouldCreateDefaultFreeModeStateForMissingAuth(current, hasUsableCodexAuth)) {
+  const shouldCreateDefault = shouldCreateDefaultFreeModeStateForMissingAuth(current, hasUsableCodexAuth)
+  const hasExplicitModelProviderConfig = shouldCreateDefault && hasExplicitCodexModelProviderConfigSync()
+  if (hasExplicitModelProviderConfig || !shouldCreateDefault) {
     return current
   }
 
@@ -4721,6 +4856,108 @@ async function readMergedThreadTitleCache(): Promise<ThreadTitleCache> {
   return mergeThreadTitleCaches(persistedCache, sessionIndexCache)
 }
 
+type PathRealpathResolver = (path: string) => Promise<string>
+
+async function canonicalizeWorkspaceRootPath(
+  value: string,
+  pathRealpath: PathRealpathResolver,
+): Promise<string> {
+  if (!isAbsolute(value)) return value
+  try {
+    return await pathRealpath(value)
+  } catch {
+    return value
+  }
+}
+
+async function canonicalizeWorkspaceRootPathList(
+  values: string[],
+  pathRealpath: PathRealpathResolver,
+): Promise<string[]> {
+  return normalizeStringArray(await Promise.all(values.map((value) => canonicalizeWorkspaceRootPath(value, pathRealpath))))
+}
+
+export async function canonicalizeWorkspaceRootsState(
+  state: WorkspaceRootsState,
+  pathRealpath: PathRealpathResolver = realpath,
+): Promise<WorkspaceRootsState> {
+  const [order, active, projectOrder] = await Promise.all([
+    canonicalizeWorkspaceRootPathList(state.order, pathRealpath),
+    canonicalizeWorkspaceRootPathList(state.active, pathRealpath),
+    canonicalizeWorkspaceRootPathList(state.projectOrder, pathRealpath),
+  ])
+  const labelEntries = await Promise.all(
+    Object.entries(state.labels)
+      .sort(([first], [second]) => first.localeCompare(second))
+      .map(async ([key, label]) => {
+        const canonicalKey = await canonicalizeWorkspaceRootPath(key, pathRealpath)
+        return {
+          canonicalKey,
+          label,
+          isCanonicalSource: canonicalKey === key,
+        }
+      }),
+  )
+  const labels: Record<string, string> = {}
+  const labelSourceByCanonicalKey = new Map<string, { isCanonicalSource: boolean }>()
+  for (const entry of labelEntries) {
+    const existing = labelSourceByCanonicalKey.get(entry.canonicalKey)
+    if (existing?.isCanonicalSource === true && !entry.isCanonicalSource) continue
+    if (existing && existing.isCanonicalSource === entry.isCanonicalSource) continue
+    labels[entry.canonicalKey] = entry.label
+    labelSourceByCanonicalKey.set(entry.canonicalKey, {
+      isCanonicalSource: entry.isCanonicalSource,
+    })
+  }
+
+  return {
+    order,
+    labels,
+    active,
+    projectOrder,
+    remoteProjects: state.remoteProjects.map((project) => ({ ...project })),
+  }
+}
+
+export async function canonicalizeWorkspaceRootsStateForRead(
+  state: WorkspaceRootsState,
+  pathRealpath: PathRealpathResolver = realpath,
+): Promise<WorkspaceRootsState> {
+  return await canonicalizeWorkspaceRootsState(state, pathRealpath)
+}
+
+async function canonicalizeThreadCwdRecord(
+  value: unknown,
+  canonicalizeCwd: (cwd: string) => Promise<string>,
+): Promise<unknown> {
+  const record = asRecord(value)
+  const cwd = typeof record?.cwd === 'string' ? record.cwd : ''
+  if (!record || !cwd) return value
+  const canonicalCwd = await canonicalizeCwd(cwd)
+  return canonicalCwd === cwd ? value : { ...record, cwd: canonicalCwd }
+}
+
+export async function canonicalizeThreadListResponseForRead(
+  payload: unknown,
+  pathRealpath: PathRealpathResolver = realpath,
+): Promise<unknown> {
+  const record = asRecord(payload)
+  if (!record || !Array.isArray(record.data)) return payload
+  const cwdCanonicalizationByValue = new Map<string, Promise<string>>()
+  const canonicalizeCwd = (cwd: string): Promise<string> => {
+    let canonicalized = cwdCanonicalizationByValue.get(cwd)
+    if (!canonicalized) {
+      canonicalized = canonicalizeWorkspaceRootPath(cwd, pathRealpath)
+      cwdCanonicalizationByValue.set(cwd, canonicalized)
+    }
+    return canonicalized
+  }
+  return {
+    ...record,
+    data: await Promise.all(record.data.map((item) => canonicalizeThreadCwdRecord(item, canonicalizeCwd))),
+  }
+}
+
 async function readWorkspaceRootsState(): Promise<WorkspaceRootsState> {
   const statePath = getCodexGlobalStatePath()
   let payload: Record<string, unknown> = {}
@@ -4733,16 +4970,17 @@ async function readWorkspaceRootsState(): Promise<WorkspaceRootsState> {
     payload = {}
   }
 
-  return {
+  return await canonicalizeWorkspaceRootsState({
     order: normalizeStringArray(payload['electron-saved-workspace-roots']),
     labels: normalizeStringRecord(payload['electron-workspace-root-labels']),
     active: normalizeStringArray(payload['active-workspace-roots']),
     projectOrder: normalizeStringArray(payload['project-order']),
     remoteProjects: normalizeRemoteProjects(payload['remote-projects']),
-  }
+  })
 }
 
-async function writeWorkspaceRootsState(nextState: WorkspaceRootsState): Promise<void> {
+export async function writeWorkspaceRootsState(nextState: WorkspaceRootsState): Promise<void> {
+  const state = await canonicalizeWorkspaceRootsState(nextState)
   const statePath = getCodexGlobalStatePath()
   let payload: Record<string, unknown> = {}
   try {
@@ -4752,10 +4990,10 @@ async function writeWorkspaceRootsState(nextState: WorkspaceRootsState): Promise
     payload = {}
   }
 
-  payload['electron-saved-workspace-roots'] = normalizeStringArray(nextState.order)
-  payload['electron-workspace-root-labels'] = normalizeStringRecord(nextState.labels)
-  payload['active-workspace-roots'] = normalizeStringArray(nextState.active)
-  payload['project-order'] = normalizeStringArray(nextState.projectOrder)
+  payload['electron-saved-workspace-roots'] = normalizeStringArray(state.order)
+  payload['electron-workspace-root-labels'] = normalizeStringRecord(state.labels)
+  payload['active-workspace-roots'] = normalizeStringArray(state.active)
+  payload['project-order'] = normalizeStringArray(state.projectOrder)
 
   await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }

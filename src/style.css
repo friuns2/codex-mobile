@@ -477,6 +477,10 @@
   @apply text-zinc-300 hover:bg-zinc-700;
 }
 
+:root.dark .thread-menu-item:disabled {
+  @apply text-zinc-500 hover:bg-transparent;
+}
+
 :root.dark .thread-menu-item-danger {
   @apply text-rose-300 hover:bg-rose-900/40;
 }
