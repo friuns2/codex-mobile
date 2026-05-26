@@ -301,6 +301,49 @@
           class="thread-composer-actions"
           :class="{ 'thread-composer-actions--recording': isDictationRecording }"
         >
+          <div
+            v-if="contextUsageView"
+            class="thread-composer-context-ring"
+            :class="[
+              `is-${contextUsageTone}`,
+              { 'is-tooltip-dismissed': isContextUsageTooltipDismissed },
+            ]"
+            :style="contextUsageRingStyle"
+            tabindex="0"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-valuenow="contextUsageUsedPercent"
+            :aria-label="contextUsageTooltipText"
+            @mouseenter="resetContextUsageTooltipDismissal"
+            @mouseleave="resetContextUsageTooltipDismissal"
+            @focusin="resetContextUsageTooltipDismissal"
+          >
+            <span class="thread-composer-context-ring-track" aria-hidden="true">
+              <span class="thread-composer-context-ring-core">
+                {{ contextUsageUsedPercent }}
+              </span>
+            </span>
+            <span class="thread-composer-context-tooltip" role="tooltip">
+              <span class="thread-composer-context-tooltip-title">{{ contextUsageSummaryText }}</span>
+              <span
+                v-for="line in contextUsageTooltipLines"
+                :key="line"
+                class="thread-composer-context-tooltip-line"
+              >
+                {{ line }}
+              </span>
+              <button
+                type="button"
+                class="thread-composer-context-compact-button"
+                :disabled="!canCompactContext"
+                @click.stop="onCompactContextClick"
+              >
+                {{ contextCompactButtonText }}
+              </button>
+            </span>
+          </div>
+
           <div v-if="dictationState === 'recording'" class="thread-composer-dictation-waveform-wrap" aria-hidden="true">
             <canvas ref="dictationWaveformCanvasRef" class="thread-composer-dictation-waveform" />
           </div>
@@ -444,6 +487,7 @@ const props = defineProps<{
   skills?: SkillItem[]
   threadTokenUsage?: UiThreadTokenUsage | null
   codexQuota?: UiRateLimitSnapshot | null
+  contextCompactionAvailable?: boolean
   isTurnInProgress?: boolean
   isStopPending?: boolean
   isInterruptingTurn?: boolean
@@ -482,6 +526,7 @@ export type ThreadComposerExposed = {
 
 const emit = defineEmits<{
   submit: [payload: SubmitPayload]
+  'compact-context': []
   interrupt: []
   'update:selected-collaboration-mode': [mode: CollaborationModeKind]
   'update:selected-model': [modelId: string]
@@ -574,6 +619,7 @@ const isFileMentionOpen = ref(false)
 const fileMentionHighlightedIndex = ref(0)
 const isComposerExpanded = ref(false)
 const isDraftOverflowing = ref(false)
+const isContextUsageTooltipDismissed = ref(false)
 let composerOverflowMeasurementQueued = false
 const draftGeneration = ref(0)
 let fileMentionSearchToken = 0
@@ -734,8 +780,26 @@ const quotaTooltipText = computed(() => buildQuotaTooltipText(props.codexQuota ?
 const contextUsageView = computed(() => buildContextUsageView(props.threadTokenUsage ?? null))
 const contextUsageSummaryText = computed(() => contextUsageView.value?.summaryText ?? '')
 const contextUsageTooltipText = computed(() => contextUsageView.value?.tooltipText ?? '')
+const contextUsageTooltipLines = computed(() => contextUsageTooltipText.value.split('\n').filter(Boolean))
 const contextUsageRemainingPercent = computed(() => contextUsageView.value?.percentRemaining ?? 0)
+const contextUsageUsedPercent = computed(() => Math.max(0, Math.min(100, 100 - contextUsageRemainingPercent.value)))
 const contextUsageTone = computed(() => contextUsageView.value?.tone ?? 'healthy')
+const contextUsageRingStyle = computed(() => ({
+  '--context-usage-used': `${contextUsageUsedPercent.value}%`,
+}))
+const canCompactContext = computed(() =>
+  props.contextCompactionAvailable !== false &&
+  Boolean(props.activeThreadId) &&
+  !isInteractionDisabled.value &&
+  props.isTurnInProgress !== true,
+)
+const contextCompactButtonText = computed(() =>
+  props.contextCompactionAvailable === false
+    ? 'Open thread to compact'
+    : props.isTurnInProgress
+      ? 'Compact after current turn'
+      : 'Compact context',
+)
 
 function formatPlanType(planType: string | null | undefined): string {
   if (!planType || planType === 'unknown') return ''
@@ -940,9 +1004,9 @@ function buildContextUsageView(
       : 'healthy'
 
   return {
-    summaryText: `${percentRemaining}% · ${formatCompactTokenCount(tokensInContext)} / ${formatCompactTokenCount(contextWindow)}`,
+    summaryText: `${percentUsed}% used · ${formatCompactTokenCount(tokensInContext)} / ${formatCompactTokenCount(contextWindow)}`,
     tooltipText: [
-      `Context window: ${percentRemaining}% left (${percentUsed}% used)`,
+      `Context window: ${percentUsed}% used (${percentRemaining}% left)`,
       `In context: ${tokensInContext.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`,
       `Last turn: ${formatBreakdownSummary(usage.last)}`,
       `Session total: ${formatBreakdownSummary(usage.total)}`,
@@ -972,6 +1036,17 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
     inputRef.value?.blur()
     return
   }
+  nextTick(() => inputRef.value?.focus())
+}
+
+function resetContextUsageTooltipDismissal(): void {
+  isContextUsageTooltipDismissed.value = false
+}
+
+function onCompactContextClick(): void {
+  if (!canCompactContext.value) return
+  isContextUsageTooltipDismissed.value = true
+  emit('compact-context')
   nextTick(() => inputRef.value?.focus())
 }
 
@@ -2019,6 +2094,72 @@ watch(
 .thread-composer-context-usage-inline-bar-fill {
   @apply block h-full rounded-full transition-[width] duration-200 ease-out;
   background: var(--context-usage-accent);
+}
+
+.thread-composer-context-ring {
+  --context-usage-accent: rgb(34 197 94);
+  --context-usage-track: rgb(228 228 231);
+  --context-usage-used: 0%;
+  @apply relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none transition;
+}
+
+.thread-composer-context-ring.is-warning {
+  --context-usage-accent: rgb(245 158 11);
+}
+
+.thread-composer-context-ring.is-danger {
+  --context-usage-accent: rgb(239 68 68);
+}
+
+.thread-composer-context-ring:focus-visible {
+  @apply ring-2 ring-emerald-500 ring-offset-2 ring-offset-white;
+}
+
+.thread-composer-context-ring-track {
+  @apply flex h-9 w-9 items-center justify-center rounded-full;
+  background: conic-gradient(
+    var(--context-usage-accent) var(--context-usage-used),
+    var(--context-usage-track) 0
+  );
+}
+
+.thread-composer-context-ring-core {
+  @apply flex h-7 w-7 items-center justify-center rounded-full bg-white text-[10px] font-semibold leading-none tabular-nums text-zinc-700;
+}
+
+.thread-composer-context-tooltip {
+  @apply pointer-events-auto absolute bottom-full right-0 z-40 mb-2 hidden w-72 rounded-lg border border-zinc-200 bg-white p-3 text-left text-[11px] leading-4 text-zinc-600 shadow-xl;
+}
+
+.thread-composer-context-ring:hover .thread-composer-context-tooltip,
+.thread-composer-context-ring:focus-visible .thread-composer-context-tooltip,
+.thread-composer-context-ring:focus-within .thread-composer-context-tooltip {
+  @apply block;
+}
+
+.thread-composer-context-ring.is-tooltip-dismissed .thread-composer-context-tooltip {
+  @apply hidden;
+}
+
+.thread-composer-context-tooltip::before {
+  @apply absolute left-0 top-full h-3 w-full content-[''];
+}
+
+.thread-composer-context-tooltip::after {
+  @apply absolute right-3 top-full h-2 w-2 rotate-45 border-b border-r border-zinc-200 bg-white content-[''];
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.thread-composer-context-tooltip-title {
+  @apply mb-1 block font-semibold text-zinc-900;
+}
+
+.thread-composer-context-tooltip-line {
+  @apply block;
+}
+
+.thread-composer-context-compact-button {
+  @apply mt-2 inline-flex w-full items-center justify-center rounded-md border border-zinc-200 bg-zinc-100 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400;
 }
 
 .thread-composer-input-wrap {

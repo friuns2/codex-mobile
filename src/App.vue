@@ -937,12 +937,14 @@
                   :skills="installedSkills"
                   :thread-token-usage="selectedThreadTokenUsage"
                   :codex-quota="codexQuota"
+                  :context-compaction-available="false"
                   :is-turn-in-progress="false"
                   :is-stop-pending="false"
                   :is-interrupting-turn="false" :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                   :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                   :dictation-language="dictationLanguage"
                   @submit="onSubmitThreadMessage"
+                  @compact-context="onCompactContext"
                   @update:selected-collaboration-mode="onSelectCollaborationMode"
                   @update:selected-model="onSelectModel"
                   @update:selected-reasoning-effort="onSelectReasoningEffort"
@@ -1020,6 +1022,7 @@
                     :skills="installedSkills"
                     :thread-token-usage="selectedThreadTokenUsage"
                     :codex-quota="codexQuota"
+                    :context-compaction-available="true"
                     :is-turn-in-progress="isSelectedThreadInProgress"
                     :is-stop-pending="isSelectedThreadInterruptPending"
                     :is-interrupting-turn="isInterruptingTurn"
@@ -1031,6 +1034,7 @@
                     @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
                     @update:selected-reasoning-effort="onSelectReasoningEffort"
                     @update:selected-speed-mode="onSelectSpeedMode"
+                    @compact-context="onCompactContext"
                     @interrupt="onInterruptTurn" />
                 </div>
               </template>
@@ -1391,6 +1395,7 @@ const {
   forkThreadById,
   renameThreadById,
   forkThreadFromTurn,
+  compactSelectedThread,
   sendMessageToSelectedThread,
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
@@ -3242,6 +3247,12 @@ function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fil
     return
   }
   void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
+}
+
+function onCompactContext(): void {
+  if (isHomeRoute.value) return
+  scheduleMobileConversationJumpToLatest()
+  void compactSelectedThread()
 }
 
 function onEditQueuedMessage(messageId: string): void {

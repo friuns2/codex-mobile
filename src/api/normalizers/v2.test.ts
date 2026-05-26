@@ -106,6 +106,23 @@ Reply with &lt;/instructions&gt; and A &amp; B
     })
   })
 
+  it('renders context compaction items as system messages', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'contextCompaction',
+      id: 'compact-item-1',
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'compact-item-1',
+      role: 'system',
+      text: 'Context compacted',
+      messageType: 'contextCompaction',
+      turnId: 'turn-1',
+      turnIndex: 0,
+    })
+  })
+
   it('renders failed turn errors as chat system messages', () => {
     const response = threadReadResponseWithContent([{
       type: 'userMessage',

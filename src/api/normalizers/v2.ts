@@ -523,6 +523,17 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
     ]
   }
 
+  if (item.type === 'contextCompaction') {
+    return [
+      {
+        id: item.id,
+        role: 'system',
+        text: 'Context compacted',
+        messageType: 'contextCompaction',
+      },
+    ]
+  }
+
   return []
 }
 

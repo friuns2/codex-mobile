@@ -13,6 +13,7 @@ import type { WorkspaceRootsState } from '../api/codexGateway'
 
 const gatewayMocks = vi.hoisted(() => ({
   archiveThread: vi.fn(),
+  compactThread: vi.fn(),
   forkThread: vi.fn(),
   getAccountRateLimits: vi.fn(),
   getAvailableCollaborationModes: vi.fn(),
@@ -595,6 +596,164 @@ describe('startup request deduplication', () => {
     } finally {
       nowSpy.mockRestore()
     }
+  })
+})
+
+describe('thread archive notifications', () => {
+  it('removes a remotely archived thread from the live thread list', async () => {
+    installTestWindow()
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'Project',
+        threads: [
+          thread('keep-thread', '/tmp/project'),
+          thread('archive-me', '/tmp/project'),
+        ],
+      }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'thread/archived',
+      params: { threadId: 'archive-me' },
+    })
+
+    expect(state.projectGroups.value.flatMap((group) => group.threads.map((row) => row.id))).toEqual([
+      'keep-thread',
+    ])
+  })
+
+  it('moves selection away when the selected thread is archived by another client', async () => {
+    installTestWindow()
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      turnIndexByTurnId: {},
+      hasMoreOlder: false,
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'Project',
+        threads: [
+          thread('archive-me', '/tmp/project'),
+          thread('next-thread', '/tmp/project'),
+        ],
+      }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    state.primeSelectedThread('archive-me')
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'thread/archived',
+      params: { threadId: 'archive-me' },
+    })
+
+    expect(state.selectedThreadId.value).toBe('next-thread')
+    expect(state.projectGroups.value.flatMap((group) => group.threads.map((row) => row.id))).toEqual([
+      'next-thread',
+    ])
+  })
+})
+
+describe('context compaction notifications', () => {
+  it('starts manual compaction for the selected idle thread', async () => {
+    installTestWindow()
+    gatewayMocks.compactThread.mockResolvedValue(undefined)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-compact')
+
+    await state.compactSelectedThread()
+
+    expect(gatewayMocks.compactThread).toHaveBeenCalledWith('thread-compact')
+    expect(state.messages.value.at(-1)).toMatchObject({
+      id: 'context-compaction:pending:thread-compact',
+      role: 'system',
+      text: 'Compacting context…',
+      messageType: 'contextCompaction.live',
+    })
+    expect(state.selectedLiveOverlay.value).toBe(null)
+  })
+
+  it('shows live context compaction progress and completion messages', async () => {
+    installTestWindow()
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [],
+      inProgress: true,
+      activeTurnId: 'turn-1',
+      turnIndexByTurnId: { 'turn-1': 0 },
+      hasMoreOlder: false,
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-compact')
+    await state.loadMessages('thread-compact')
+    state.startPolling()
+
+    notificationHandler?.({
+      method: 'item/started',
+      params: {
+        threadId: 'thread-compact',
+        turnId: 'turn-1',
+        item: { id: 'compact-item-1', type: 'contextCompaction' },
+      },
+    })
+
+    expect(state.messages.value.at(-1)).toMatchObject({
+      id: 'compact-item-1',
+      role: 'system',
+      text: 'Compacting context…',
+      messageType: 'contextCompaction.live',
+      turnId: 'turn-1',
+      turnIndex: 0,
+    })
+    expect(state.selectedLiveOverlay.value).toBe(null)
+
+    notificationHandler?.({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-compact',
+        turnId: 'turn-1',
+        item: { id: 'compact-item-1', type: 'contextCompaction' },
+      },
+    })
+
+    expect(state.messages.value.at(-1)).toMatchObject({
+      id: 'compact-item-1',
+      role: 'system',
+      text: 'Context compacted',
+      messageType: 'contextCompaction',
+      turnId: 'turn-1',
+      turnIndex: 0,
+    })
   })
 })
 

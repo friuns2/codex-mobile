@@ -262,7 +262,16 @@
                 </a>
               </div>
 
-              <article v-if="message.text.length > 0" class="message-card" :data-role="message.role">
+              <div
+                v-if="isContextCompactionMessage(message)"
+                class="context-compaction-separator"
+                :data-state="message.messageType === 'contextCompaction.live' ? 'live' : 'done'"
+                aria-live="polite"
+              >
+                <span class="context-compaction-text">{{ message.text }}</span>
+              </div>
+
+              <article v-else-if="message.text.length > 0" class="message-card" :data-role="message.role">
                 <div v-if="message.isAutomationRun" class="automation-message-label">
                   <span>Sent via automation</span>
                   <code v-if="message.automationDisplayName">{{ message.automationDisplayName }}</code>
@@ -1020,6 +1029,10 @@ function isCommandMessage(message: UiMessage): boolean {
 
 function isPlanMessage(message: UiMessage): boolean {
   return message.messageType === 'plan' || message.messageType === 'plan.live'
+}
+
+function isContextCompactionMessage(message: UiMessage): boolean {
+  return message.messageType === 'contextCompaction' || message.messageType === 'contextCompaction.live'
 }
 
 function isTurnErrorMessage(message: UiMessage): boolean {
@@ -4554,6 +4567,33 @@ onBeforeUnmount(() => {
   @apply flex flex-col w-full min-w-0;
 }
 
+.context-compaction-separator {
+  @apply relative my-2 flex w-full max-w-full items-center justify-center text-xs font-medium text-zinc-500 dark:text-zinc-400;
+  background:
+    linear-gradient(
+      to bottom,
+      transparent calc(50% - 0.5px),
+      rgb(228 228 231) calc(50% - 0.5px),
+      rgb(228 228 231) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
+}
+
+.context-compaction-text {
+  @apply relative shrink-0 whitespace-nowrap bg-white px-3 dark:bg-zinc-950;
+}
+
+:global(.dark) .context-compaction-separator {
+  background:
+    linear-gradient(
+      to bottom,
+      transparent calc(50% - 0.5px),
+      rgb(63 63 70) calc(50% - 0.5px),
+      rgb(63 63 70) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
+}
+
 .request-card {
   @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-col gap-2;
 }
@@ -5146,6 +5186,13 @@ onBeforeUnmount(() => {
 .conversation-item[data-message-type='worked'] .message-stack,
 .conversation-item[data-message-type='worked'] .message-body,
 .conversation-item[data-message-type='worked'] .message-card {
+  @apply w-full max-w-full;
+}
+
+.conversation-item[data-message-type='contextCompaction'] .message-stack,
+.conversation-item[data-message-type='contextCompaction'] .message-body,
+.conversation-item[data-message-type='contextCompaction.live'] .message-stack,
+.conversation-item[data-message-type='contextCompaction.live'] .message-body {
   @apply w-full max-w-full;
 }
 
