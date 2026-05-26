@@ -1701,6 +1701,14 @@
   @apply border-zinc-700 bg-zinc-950;
 }
 
+:root.dark .new-thread-project-import-menu-panel {
+  @apply border-zinc-700 bg-zinc-900 shadow-black/40;
+}
+
+:root.dark .new-thread-project-import-menu-item {
+  @apply text-zinc-200 hover:bg-zinc-800 hover:text-zinc-50 focus-visible:ring-zinc-500;
+}
+
 :root.dark .directory-badge.is-muted,
 :root.dark .directory-auth-status.is-muted {
   @apply border-zinc-700 bg-zinc-900 text-zinc-400;

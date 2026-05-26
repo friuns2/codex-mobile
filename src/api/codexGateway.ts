@@ -3079,6 +3079,101 @@ export async function openProjectRoot(path: string, options?: { createIfMissing?
   return normalizedPath
 }
 
+export function getProjectZipDownloadUrl(cwd: string): string {
+  const query = new URLSearchParams({ cwd })
+  return `/codex-api/project-zip?${query.toString()}`
+}
+
+function readDownloadFileName(response: Response, fallback: string): string {
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/iu)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/iu)
+  return plainMatch?.[1]?.trim() || fallback
+}
+
+export async function downloadProjectZip(
+  cwd: string,
+  onProgress?: (progress: { loaded: number; total: number | null }) => void,
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await fetch(getProjectZipDownloadUrl(cwd))
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    const fallback = 'Failed to export project'
+    const payloadMessage = getErrorMessageFromPayload(payload, fallback)
+    const statusLabel = [response.status ? String(response.status) : '', response.statusText].filter(Boolean).join(' ')
+    const message = payloadMessage !== fallback
+      ? payloadMessage
+      : statusLabel ? `Failed to export project: ${statusLabel}` : fallback
+    throw new Error(message)
+  }
+
+  const totalHeader = Number(response.headers.get('content-length') ?? '')
+  const total = Number.isFinite(totalHeader) && totalHeader > 0 ? totalHeader : null
+  const fileName = readDownloadFileName(response, 'project.zip')
+  const reader = response.body?.getReader()
+  if (!reader) {
+    const blob = await response.blob()
+    onProgress?.({ loaded: blob.size, total: blob.size || total })
+    return { blob, fileName }
+  }
+
+  const chunks: Uint8Array[] = []
+  let loaded = 0
+  onProgress?.({ loaded, total })
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    chunks.push(new Uint8Array(value))
+    loaded += value.byteLength
+    onProgress?.({ loaded, total })
+  }
+
+  const blobParts = chunks.map((chunk) => {
+    const copy = new Uint8Array(chunk.byteLength)
+    copy.set(chunk)
+    return copy.buffer
+  })
+  return { blob: new Blob(blobParts, { type: response.headers.get('content-type') ?? 'application/zip' }), fileName }
+}
+
+export async function importProjectZip(file: Blob, parent: string): Promise<{ path: string; importedSessions: number }> {
+  const query = new URLSearchParams({ parent })
+  const response = await fetch(`/codex-api/project-import?${query.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: file,
+  })
+  const payload = await readJsonResponse(response)
+  if (!response.ok) {
+    const message = getErrorMessageFromPayload(payload, 'Failed to import project')
+    throw new Error(message)
+  }
+  const record =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  const data =
+    record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+      ? (record.data as Record<string, unknown>)
+      : {}
+  const normalizedPath = typeof data.path === 'string' ? normalizePathForUi(data.path) : ''
+  if (normalizedPath) {
+    invalidateWorkspaceRootsStateCache()
+  }
+  return {
+    path: normalizedPath,
+    importedSessions: typeof data.importedSessions === 'number' ? data.importedSessions : 0,
+  }
+}
+
 export async function createLocalDirectory(path: string): Promise<string> {
   const response = await fetch('/codex-api/local-directory', {
     method: 'POST',

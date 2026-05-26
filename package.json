@@ -34,6 +34,7 @@
     "dist/",
     "dist-cli/",
     "scripts/dev.cjs",
+    "scripts/dev-random-home.cjs",
     "scripts/fix-pty-native-build.cjs"
   ],
   "pnpm": {
@@ -46,6 +47,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.cjs",
+    "dev2": "node scripts/dev-random-home.cjs",
     "dev:open": "pnpm run build:cli && sh -c 'pnpm run dev & VPID=$!; node dist-cli/index.js --open-project \"${1:-.}\"; wait $VPID' --",
     "build:frontend": "vue-tsc --noEmit && vite build",
     "build:cli": "tsup",

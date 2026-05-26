@@ -4008,13 +4008,11 @@ function readQuestionOtherAnswer(requestId: number, questionId: string): string 
   return toolQuestionOtherAnswers.value[key] ?? ''
 }
 
-function onQuestionAnswerChange(requestId: number, questionId: string, event: Event): void {
-  const target = event.target
-  if (!(target instanceof HTMLSelectElement)) return
+function onQuestionAnswerChange(requestId: number, questionId: string, value: string): void {
   const key = toolQuestionKey(requestId, questionId)
   toolQuestionAnswers.value = {
     ...toolQuestionAnswers.value,
-    [key]: target.value,
+    [key]: value,
   }
 }
 
@@ -4030,7 +4028,7 @@ function onQuestionOtherAnswerInput(requestId: number, questionId: string, event
 
 function onMcpElicitationFieldInput(requestId: number, field: McpElicitationField, event: Event): void {
   const target = event.target
-  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return
+  if (!(target instanceof HTMLInputElement)) return
   mcpElicitationAnswers.value = {
     ...mcpElicitationAnswers.value,
     [mcpElicitationAnswerKey(requestId, field.key)]: target.value,

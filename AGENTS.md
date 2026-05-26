@@ -29,6 +29,7 @@
 - For PR update + review requests: push branch, update PR summary/verification notes when changed, then post a plain PR comment containing exactly `/review`.
 - Do not use draft reviews or batch review APIs to trigger Qodo.
 - Before applying a bot fix, inspect the current code path and classify the comment as real, stale/resolved, rejected, or docs-only.
+- This app server is local-user facing and is not intended to be exposed as a public internet service. Reject Qodo/CodeRabbit security hardening comments that assume a hostile remote caller for local project import/export, including saved-root allowlists, import parent restrictions, ZIP upload caps, or local path redaction, unless they identify a concrete path where this local-only server becomes remotely reachable or bypasses existing authentication.
 - Prefer a focused regression test for accepted bugs. After fixing, run the narrow test plus relevant build/typecheck, push, and re-check PR comments/status.
 - Completion reports must distinguish confirmed fixes from stale or rejected bot comments.
 
@@ -81,6 +82,7 @@
 ## UI Rules
 
 - For shared route surfaces and large feature UIs, put decisive dark-theme overrides in `src/style.css` instead of relying only on component-scoped `:global(:root.dark)` blocks.
+- Do not introduce native browser dropdowns (`<select>`) for app controls such as provider, model, branch, runtime, folder, language, or settings pickers. Use the app's custom dropdown/menu components so styling, search, dark theme, and option layout stay consistent.
 - Browser assertions must inspect the real changed UI, not sidebar previews or base page load.
 - For refresh-persistence fixes, include post-refresh evidence that the state persisted.
 
@@ -90,6 +92,14 @@
 - Build/package first: `pnpm run build`, `pnpm pack --pack-destination /tmp`, then build an OrbStack/Docker image installing the packed `codexapp` tarball plus `@openai/codex`, using `CODEX_HOME=/codex-home` and command `codexapp --port ${PORT:-4190} --no-password --no-open --no-tunnel --no-login`.
 - Test isolated containers on unique localhost ports for: no auth Zen fallback, invalid/expired auth Codex error persistence after reload, malformed auth fallback, and provider switch from Zen to OpenRouter.
 - Before success, report tested ports, provider/config summary, exact commands, screenshot paths, whether invalid auth persisted after reload, and whether duplicate live overlay count was zero.
+
+## Fast Docker Feature Tests
+
+- Use this for local-only feature checks that do not need packaged install behavior, for example project import/export HTTP endpoints.
+- Build the reusable base image once with `docker build -t codexapp-fast-test-base:latest -f scripts/docker-fast-test-base.Dockerfile .`.
+- For each test run, prefer `scripts/run-docker-fast-test.sh`; it runs `pnpm run build`, mounts the current repo read-only, reuses a Docker `CODEX_HOME` volume, and starts `node /repo/dist-cli/index.js` on `127.0.0.1:${PORT:-4191}`.
+- Do not rebuild a packed-image Docker artifact for these checks unless the task specifically needs package install, npm tarball contents, postinstall behavior, auth/provider startup, or published `npx` behavior.
+- To reset state, remove the named volume printed by the script or pass a new `CODEXAPP_DOCKER_FAST_HOME=<volume>` value.
 
 ## NPX / A1 Validation
 
@@ -102,6 +112,7 @@
 - `llm-wiki/raw/` is immutable source material; never edit raw files after creation.
 - Prefer updating existing pages under `llm-wiki/wiki/` over creating duplicates.
 - Keep factual wiki claims tied to one or more raw source files.
-- For ingest: add raw source, update/create topic pages, update `llm-wiki/wiki/index.md`, append `llm-wiki/wiki/log.md`.
+- For ingest: add raw source, update/create topic pages, and update `llm-wiki/wiki/index.md`.
+- Never create or maintain separate wiki logging/changelog files or logging sections anywhere in the repo. Git commit messages are the main and only chronological log for wiki work and related documentation changes.
 - For query: read `llm-wiki/wiki/index.md` first, then relevant pages.
-- For lint: check orphans, stale/contradictory claims, and add follow-up questions to the log.
+- For lint: check orphans and stale/contradictory claims; put follow-up questions in the relevant wiki topic page or a tracked issue, not any log/changelog file.

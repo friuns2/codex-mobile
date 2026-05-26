@@ -47,20 +47,14 @@
 
         <div v-if="!isCommitReview && activeScope === 'baseBranch' && snapshot?.baseBranchOptions.length" class="review-pane-control-cluster">
           <span class="review-pane-control-label">{{ t('Branch') }}</span>
-          <label class="review-pane-branch-select-wrap">
-            <select
-              v-model="selectedBaseBranch"
-              class="review-pane-branch-select"
-            >
-              <option
-                v-for="branch in snapshot.baseBranchOptions"
-                :key="branch"
-                :value="branch"
-              >
-                {{ branch }}
-              </option>
-            </select>
-          </label>
+          <ComposerDropdown
+            v-model="selectedBaseBranch"
+            class="review-pane-branch-dropdown"
+            :options="baseBranchDropdownOptions"
+            :placeholder="t('Branch')"
+            enable-search
+            :search-placeholder="t('Search branches...')"
+          />
         </div>
 
         <div v-if="!isCommitReview && activeScope === 'workspace'" class="review-pane-control-cluster">
@@ -356,6 +350,7 @@ import type {
   UiReviewHunk,
 } from '../../types/codex'
 import IconTablerX from '../icons/IconTablerX.vue'
+import ComposerDropdown from './ComposerDropdown.vue'
 
 const props = defineProps<{
   threadId: string
@@ -426,6 +421,9 @@ type MutableReviewTreeFolder = {
 const selectedFile = computed(() => snapshot.value?.files.find((file) => file.id === selectedFileId.value) ?? snapshot.value?.files[0] ?? null)
 const folderExpansionState = ref<Record<string, boolean>>({})
 const isCommitReview = computed(() => Boolean(props.commitSha?.trim()))
+const baseBranchDropdownOptions = computed(() => {
+  return (snapshot.value?.baseBranchOptions ?? []).map((branch) => ({ value: branch, label: branch }))
+})
 const emptyReviewMessage = computed(() => {
   if (snapshot.value?.scope === 'commit' || isCommitReview.value) {
     return t('No file changes in this commit.')
@@ -987,12 +985,16 @@ onBeforeUnmount(() => {
   @apply shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-400;
 }
 
-.review-pane-branch-select-wrap {
-  @apply inline-flex min-w-[9rem] items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 shadow-sm;
+.review-pane-branch-dropdown {
+  @apply min-w-[9rem];
 }
 
-.review-pane-branch-select {
-  @apply w-full appearance-none bg-transparent text-[11px] font-medium text-zinc-700 outline-none;
+.review-pane-branch-dropdown :deep(.composer-dropdown-trigger) {
+  @apply min-h-7 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-700 shadow-sm;
+}
+
+.review-pane-branch-dropdown :deep(.composer-dropdown-value) {
+  @apply max-w-36;
 }
 
 .review-pane-segmented {
@@ -1389,12 +1391,12 @@ onBeforeUnmount(() => {
     @apply text-[9px];
   }
 
-  .review-pane-branch-select-wrap {
-    @apply min-w-0 flex-1 px-2 py-0.75;
+  .review-pane-branch-dropdown {
+    @apply min-w-0 flex-1;
   }
 
-  .review-pane-branch-select {
-    @apply text-[12px];
+  .review-pane-branch-dropdown :deep(.composer-dropdown-trigger) {
+    @apply px-2 py-0.75 text-[12px];
   }
 
   .review-pane-segmented {

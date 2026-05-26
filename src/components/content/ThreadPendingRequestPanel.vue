@@ -105,36 +105,29 @@
               />
             </label>
 
-            <label v-else-if="field.kind === 'boolean'" class="thread-pending-request-select-wrap">
+            <div v-else-if="field.kind === 'boolean'" class="thread-pending-request-select-wrap">
               <span class="thread-pending-request-select-label">{{ t('Choice') }}</span>
-              <select
-                class="thread-pending-request-select"
-                :value="serializeMcpBooleanValue(readMcpElicitationFieldValue(request.id, field))"
-                @change="onMcpElicitationBooleanChange(request.id, field, $event)"
-              >
-                <option v-if="!field.hasExplicitDefault" value="">{{ t('Select true or false') }}</option>
-                <option value="true">{{ t('True') }}</option>
-                <option value="false">{{ t('False') }}</option>
-              </select>
-            </label>
+              <ComposerDropdown
+                class="thread-pending-request-dropdown"
+                :model-value="serializeMcpBooleanValue(readMcpElicitationFieldValue(request.id, field))"
+                :options="mcpBooleanOptions(field)"
+                :placeholder="t('Select true or false')"
+                @update:model-value="onMcpElicitationBooleanChange(request.id, field, $event)"
+              />
+            </div>
 
-            <label v-else-if="field.kind === 'singleEnum'" class="thread-pending-request-select-wrap">
+            <div v-else-if="field.kind === 'singleEnum'" class="thread-pending-request-select-wrap">
               <span class="thread-pending-request-select-label">{{ t('Choice') }}</span>
-              <select
-                class="thread-pending-request-select"
-                :value="String(readMcpElicitationFieldValue(request.id, field) ?? '')"
-                @change="onMcpElicitationFieldInput(request.id, field, $event)"
-              >
-                <option v-if="!field.hasExplicitDefault" value="">{{ t('Select an option') }}</option>
-                <option
-                  v-for="option in field.options"
-                  :key="`${request.id}:${field.key}:${option.value}`"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
-            </label>
+              <ComposerDropdown
+                class="thread-pending-request-dropdown"
+                :model-value="String(readMcpElicitationFieldValue(request.id, field) ?? '')"
+                :options="mcpSingleEnumOptions(field)"
+                :placeholder="t('Select an option')"
+                enable-search
+                :search-placeholder="t('Search options...')"
+                @update:model-value="onMcpElicitationFieldValueChange(request.id, field, $event)"
+              />
+            </div>
 
             <div v-else class="thread-pending-request-question-options">
               <label
@@ -180,22 +173,16 @@
             <p v-if="question.question" class="thread-pending-request-question-text">{{ question.question }}</p>
 
             <div v-if="question.options.length > 0" class="thread-pending-request-question-options">
-              <label class="thread-pending-request-select-wrap">
+              <div class="thread-pending-request-select-wrap">
                 <span class="thread-pending-request-select-label">{{ t('Choice') }}</span>
-                <select
-                  class="thread-pending-request-select"
-                  :value="readQuestionAnswer(request.id, question.id, question.options[0]?.label || '')"
-                  @change="onQuestionAnswerChange(request.id, question.id, $event)"
-                >
-                  <option
-                    v-for="option in question.options"
-                    :key="`${request.id}:${question.id}:${option.label}`"
-                    :value="option.label"
-                  >
-                    {{ option.label }}
-                  </option>
-                </select>
-              </label>
+                <ComposerDropdown
+                  class="thread-pending-request-dropdown"
+                  :model-value="readQuestionAnswer(request.id, question.id, question.options[0]?.label || '')"
+                  :options="toolQuestionOptions(question)"
+                  :placeholder="t('Choice')"
+                  @update:model-value="onQuestionAnswerChange(request.id, question.id, $event)"
+                />
+              </div>
 
               <p
                 v-if="selectedOptionDescription(request.id, question.id, question.options)"
@@ -250,6 +237,7 @@
 import { computed, ref, watch } from 'vue'
 import type { UiServerRequest, UiServerRequestReply } from '../../types/codex'
 import { useUiLanguage } from '../../composables/useUiLanguage'
+import ComposerDropdown from './ComposerDropdown.vue'
 
 type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel'
 
@@ -532,14 +520,16 @@ function readQuestionOtherAnswer(requestId: number, questionId: string): string 
   return toolQuestionOtherAnswers.value[toolQuestionKey(requestId, questionId)] ?? ''
 }
 
-function onQuestionAnswerChange(requestId: number, questionId: string, event: Event): void {
-  const target = event.target
-  if (!(target instanceof HTMLSelectElement)) return
+function onQuestionAnswerChange(requestId: number, questionId: string, value: string): void {
   const key = toolQuestionKey(requestId, questionId)
   toolQuestionAnswers.value = {
     ...toolQuestionAnswers.value,
-    [key]: target.value,
+    [key]: value,
   }
+}
+
+function toolQuestionOptions(question: ParsedToolQuestion): Array<{ value: string; label: string }> {
+  return question.options.map((option) => ({ value: option.label, label: option.label }))
 }
 
 function onQuestionOtherAnswerInput(requestId: number, questionId: string, event: Event): void {
@@ -727,9 +717,12 @@ function readMcpElicitationMultiValue(requestId: number, field: McpElicitationFi
 
 function onMcpElicitationFieldInput(requestId: number, field: McpElicitationField, event: Event): void {
   const target = event.target
-  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return
+  if (!(target instanceof HTMLInputElement)) return
 
-  const rawValue = target.value
+  onMcpElicitationFieldValueChange(requestId, field, target.value)
+}
+
+function onMcpElicitationFieldValueChange(requestId: number, field: McpElicitationField, rawValue: string): void {
   const nextValue =
     field.kind === 'number'
       ? rawValue
@@ -742,13 +735,10 @@ function onMcpElicitationFieldInput(requestId: number, field: McpElicitationFiel
   mcpElicitationValidationError.value = ''
 }
 
-function onMcpElicitationBooleanChange(requestId: number, field: McpElicitationField, event: Event): void {
-  const target = event.target
-  if (!(target instanceof HTMLSelectElement)) return
-
+function onMcpElicitationBooleanChange(requestId: number, field: McpElicitationField, value: string): void {
   let nextValue: boolean | null = null
-  if (target.value === 'true') nextValue = true
-  else if (target.value === 'false') nextValue = false
+  if (value === 'true') nextValue = true
+  else if (value === 'false') nextValue = false
 
   mcpElicitationAnswers.value = {
     ...mcpElicitationAnswers.value,
@@ -779,6 +769,25 @@ function serializeMcpBooleanValue(value: string | number | boolean | string[] | 
   if (value === true) return 'true'
   if (value === false) return 'false'
   return ''
+}
+
+function mcpBooleanOptions(field: McpElicitationField): Array<{ value: string; label: string }> {
+  const options = [
+    { value: 'true', label: t('True') },
+    { value: 'false', label: t('False') },
+  ]
+  if (!field.hasExplicitDefault) {
+    options.unshift({ value: '', label: t('Select true or false') })
+  }
+  return options
+}
+
+function mcpSingleEnumOptions(field: McpElicitationField): Array<{ value: string; label: string }> {
+  const options = field.options.map((option) => ({ value: option.value, label: option.label }))
+  if (!field.hasExplicitDefault) {
+    options.unshift({ value: '', label: t('Select an option') })
+  }
+  return options
 }
 
 function isMcpElicitationFieldAnswered(requestId: number, field: McpElicitationField): boolean {
@@ -1088,15 +1097,21 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
   @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500;
 }
 
-.thread-pending-request-select,
 .thread-pending-request-input {
   @apply h-11 rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none;
 }
 
-.thread-pending-request-select:focus,
 .thread-pending-request-input:focus {
   @apply border-zinc-500;
   box-shadow: 0 0 0 1px rgba(244, 244, 245, 0.18);
+}
+
+.thread-pending-request-dropdown :deep(.composer-dropdown-trigger) {
+  @apply h-11 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-100;
+}
+
+.thread-pending-request-dropdown :deep(.composer-dropdown-value) {
+  @apply min-w-0 flex-1 text-left;
 }
 
 .thread-pending-request-input::placeholder {

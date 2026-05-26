@@ -4087,8 +4087,8 @@ export function useDesktopState() {
     }
   }
 
-  async function loadThreadTitleCacheIfNeeded(): Promise<void> {
-    if (Object.keys(threadTitleById.value).length > 0) return
+  async function loadThreadTitleCacheIfNeeded(options: { force?: boolean } = {}): Promise<void> {
+    if (options.force !== true && Object.keys(threadTitleById.value).length > 0) return
     try {
       const cache = await getThreadTitleCache()
       if (Object.keys(cache.titles).length > 0) {
@@ -4320,7 +4320,7 @@ export function useDesktopState() {
       const [page, rootsState] = await Promise.all([
         getThreadGroupsPage(),
         loadWorkspaceRootsStateForThreadList(),
-        loadThreadTitleCacheIfNeeded(),
+        loadThreadTitleCacheIfNeeded({ force: options.force === true }),
       ])
       loadedThreadListRootsState = rootsState
       const groups = page.groups
@@ -4603,7 +4603,7 @@ export function useDesktopState() {
   }
 
   async function refreshAll(
-    options: { includeSelectedThreadMessages?: boolean; awaitAncillaryRefreshes?: boolean; providerChanged?: boolean } = {},
+    options: { includeSelectedThreadMessages?: boolean; awaitAncillaryRefreshes?: boolean; providerChanged?: boolean; forceThreadRefresh?: boolean } = {},
   ) {
     error.value = ''
     codexCliMissingError.value = ''
@@ -4612,7 +4612,7 @@ export function useDesktopState() {
 
     try {
       await loadPersistedQueueStateIfNeeded()
-      await loadThreads()
+      await loadThreads({ force: options.forceThreadRefresh === true })
       if (includeSelectedThreadMessages) {
         try {
           await loadMessages(selectedThreadId.value)

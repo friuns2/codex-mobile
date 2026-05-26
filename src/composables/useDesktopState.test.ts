@@ -467,6 +467,26 @@ describe('Codex CLI availability', () => {
 })
 
 describe('startup request deduplication', () => {
+  it('reloads cached thread titles on forced thread refresh', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'Project', threads: [thread('thread-1', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.getThreadTitleCache
+      .mockResolvedValueOnce({ titles: {} })
+      .mockResolvedValueOnce({ titles: { 'thread-1': 'Imported title' } })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    expect(state.projectGroups.value[0]?.threads[0]?.title).toBe('thread-1')
+
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+
+    expect(gatewayMocks.getThreadTitleCache).toHaveBeenCalledTimes(2)
+    expect(state.projectGroups.value[0]?.threads[0]?.title).toBe('Imported title')
+  })
+
   it('reuses a just-loaded thread list during startup refresh bursts', async () => {
     installTestWindow()
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000)
