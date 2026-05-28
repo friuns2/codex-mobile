@@ -4107,10 +4107,35 @@ export function useDesktopState() {
     }
   }
 
-  async function requestThreadTitleGeneration(threadId: string, prompt: string, cwd: string | null): Promise<void> {
+  function resolveFallbackThreadTitle(prompt: string, imageUrls: string[], fileAttachments: FileAttachment[]): string {
+    const trimmed = prompt.trim()
+    if (trimmed) return toOptimisticThreadTitle(trimmed)
+
+    const firstAttachmentLabel = fileAttachments
+      .map((attachment) => attachment.label.trim())
+      .find((label) => label.length > 0)
+    if (firstAttachmentLabel) return toOptimisticThreadTitle(firstAttachmentLabel)
+
+    if (imageUrls.length > 0) return toOptimisticThreadTitle('[Image]')
+    return 'Untitled thread'
+  }
+
+  async function requestThreadTitleGeneration(
+    threadId: string,
+    prompt: string,
+    cwd: string | null,
+    imageUrls: string[] = [],
+    fileAttachments: FileAttachment[] = [],
+  ): Promise<void> {
     if (threadTitleById.value[threadId]) return
     const trimmed = prompt.trim()
-    if (!trimmed) return
+    if (!trimmed) {
+      const fallbackTitle = resolveFallbackThreadTitle(prompt, imageUrls, fileAttachments)
+      threadTitleById.value = { ...threadTitleById.value, [threadId]: fallbackTitle }
+      applyThreadFlags()
+      void persistThreadTitle(threadId, fallbackTitle)
+      return
+    }
     const truncated = trimmed.length > 300 ? trimmed.slice(0, 300) : trimmed
     try {
       const title = await generateThreadTitle(truncated, cwd)
@@ -5021,7 +5046,7 @@ export function useDesktopState() {
         .finally(() => {
           isSendingMessage.value = false
         })
-      void requestThreadTitleGeneration(capturedThreadId, capturedPrompt, capturedCwd)
+      void requestThreadTitleGeneration(capturedThreadId, capturedPrompt, capturedCwd, imageUrls, fileAttachments)
       return threadId
     } catch (unknownError) {
       shouldAutoScrollOnNextAgentEvent = false
