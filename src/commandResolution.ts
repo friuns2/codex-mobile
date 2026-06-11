@@ -1,7 +1,7 @@
-import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
+import { spawnSyncCommand } from './utils/commandInvocation.js'
 
 export type CommandInvocation = {
   command: string
@@ -61,7 +61,7 @@ function getPotentialCodexExecutables(prefix: string): string[] {
           'codex-win32-x64',
           'vendor',
           'x86_64-pc-windows-msvc',
-          'codex',
+          'bin',
           'codex.exe',
         )
       : join(packageDir, 'bin', 'codex')
@@ -86,7 +86,7 @@ function getPotentialRipgrepExecutables(prefix: string): string[] {
 }
 
 export function canRunCommand(command: string, args: string[] = []): boolean {
-  const result = spawnSync(command, args, {
+  const result = spawnSyncCommand(command, args, {
     stdio: 'ignore',
     windowsHide: true,
   })
