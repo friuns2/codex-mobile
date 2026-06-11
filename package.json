@@ -1,5 +1,5 @@
 {
-  "name": "codexapp",
+  "name": "@brutalstrikedevs/codexapp",
   "version": "0.1.90",
   "description": "A lightweight web interface for Codex that runs on top of the Codex app-server, allowing remote access from any browser",
   "type": "module",

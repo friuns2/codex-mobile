@@ -6,7 +6,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-package_name="codexui-android"
+package_name="@brutalstrikedevs/codexui-android"
 current_version=$(node -p "require('./package.json').version")
 published_version=$(pnpm view "$package_name" dist-tags.latest 2>/dev/null || true)
 
