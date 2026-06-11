@@ -2068,12 +2068,10 @@ const existingFolderFilteredEntries = computed(() => {
 })
 const darkModeMediaQuery = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null
 const chatWidthLabel = computed(() => t(CHAT_WIDTH_PRESETS[chatWidth.value].label))
-const terminalShortcutLabel = computed(() => {
-  if (typeof navigator !== 'undefined' && /mac|iphone|ipad|ipod/i.test(navigator.platform)) {
-    return '⌘J'
-  }
-  return 'Ctrl+J'
-})
+function isMacPlatform(): boolean {
+  return typeof navigator !== 'undefined' && /mac|iphone|ipad|ipod/i.test(navigator.platform)
+}
+const terminalShortcutLabel = computed(() => (isMacPlatform() ? '⌘J' : 'Ctrl+J'))
 const terminalCommandPlaceholder = computed(() => (
   isComposerTerminalOpen.value ? t('Terminal') : t('Open terminal')
 ))
@@ -3100,6 +3098,10 @@ function onWindowKeyDown(event: KeyboardEvent): void {
   if (event.shiftKey || event.altKey) return
   const key = event.key.toLowerCase()
   if (key === 'b') {
+    const isSidebarShortcut = isMacPlatform()
+      ? event.metaKey && !event.ctrlKey
+      : event.ctrlKey && !event.metaKey
+    if (!isSidebarShortcut) return
     event.preventDefault()
     setSidebarCollapsed(!isSidebarCollapsed.value)
     return
