@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from '
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveCodexCommand } from '../commandResolution.js'
+import { getSpawnInvocation } from '../utils/commandInvocation.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
 
@@ -650,7 +652,13 @@ async function withTemporaryCodexAppServer<T>(
   const authPath = join(tempCodexHome, 'auth.json')
   await writeFile(authPath, authRaw, { encoding: 'utf8', mode: 0o600 })
 
-  const proc = spawn('codex', buildAppServerArgs(), {
+  const codexCommand = resolveCodexCommand()
+  if (!codexCommand) {
+    throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
+  }
+
+  const invocation = getSpawnInvocation(codexCommand, buildAppServerArgs())
+  const proc = spawn(invocation.command, invocation.args, {
     env: { ...process.env, CODEX_HOME: tempCodexHome },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -1027,7 +1035,13 @@ async function startCodexLogin(): Promise<string> {
     return await waitForLoginUrl()
   }
 
-  const proc = spawn('codex', ['login'], {
+  const codexCommand = resolveCodexCommand()
+  if (!codexCommand) {
+    throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
+  }
+
+  const invocation = getSpawnInvocation(codexCommand, ['login'])
+  const proc = spawn(invocation.command, invocation.args, {
     env: process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
