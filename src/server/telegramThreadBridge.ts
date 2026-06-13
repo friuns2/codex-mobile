@@ -1,5 +1,7 @@
 import { basename } from 'node:path'
 
+import { buildTelegramMarkdownChunks } from '../utils/telegramMarkdown.js'
+
 type TelegramUpdate = {
   update_id?: number
   message?: {
@@ -50,7 +52,8 @@ type TelegramBotCommand = {
   description: string
 }
 
-const TELEGRAM_MESSAGE_MAX_LENGTH = 3500
+const TELEGRAM_PLAIN_MESSAGE_MAX_LENGTH = 3500
+const TELEGRAM_RICH_MESSAGE_MAX_LENGTH = 12000
 const TELEGRAM_BOT_COMMANDS: TelegramBotCommand[] = [
   { command: 'start', description: 'Show quick start and thread picker' },
   { command: 'threads', description: 'List recent threads to connect' },
@@ -113,61 +116,7 @@ function normalizeTelegramAllowlist(values: unknown): NormalizedTelegramAllowlis
   return { allowAllUsers, allowedUserIds }
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
-function renderMarkdownInlineToTelegramHtml(value: string): string {
-  let rendered = escapeHtml(value)
-  rendered = rendered.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
-  rendered = rendered.replace(/`([^`\n]+)`/g, '<code>$1</code>')
-  rendered = rendered.replace(/\*\*([^*\n][^*\n]*?)\*\*/g, '<b>$1</b>')
-  rendered = rendered.replace(/__([^_\n][^_\n]*?)__/g, '<b>$1</b>')
-  rendered = rendered.replace(/\*([^*\n][^*\n]*?)\*/g, '<i>$1</i>')
-  rendered = rendered.replace(/_([^_\n][^_\n]*?)_/g, '<i>$1</i>')
-  rendered = rendered.replace(/^(#{1,6})\s+(.+)$/gm, (_match, _hashes, content: string) => `<b>${content}</b>`)
-  return rendered
-}
-
-function renderMarkdownToTelegramHtml(markdown: string): string {
-  const normalized = markdown.replace(/\r\n/g, '\n')
-  const fencedCodeRegex = /```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g
-  let cursor = 0
-  const parts: string[] = []
-  let match = fencedCodeRegex.exec(normalized)
-
-  while (match) {
-    const [fullMatch, lang, code] = match
-    const matchIndex = match.index
-    const before = normalized.slice(cursor, matchIndex)
-    if (before) {
-      parts.push(renderMarkdownInlineToTelegramHtml(before))
-    }
-
-    const escapedCode = escapeHtml((code ?? '').replace(/\n+$/g, ''))
-    const escapedLang = typeof lang === 'string' ? escapeHtml(lang) : ''
-    if (escapedLang) {
-      parts.push(`<pre><code class="language-${escapedLang}">${escapedCode}</code></pre>`)
-    } else {
-      parts.push(`<pre>${escapedCode}</pre>`)
-    }
-
-    cursor = matchIndex + fullMatch.length
-    match = fencedCodeRegex.exec(normalized)
-  }
-
-  const tail = normalized.slice(cursor)
-  if (tail) {
-    parts.push(renderMarkdownInlineToTelegramHtml(tail))
-  }
-
-  return parts.join('')
-}
-
-function splitTelegramText(text: string, maxLength = TELEGRAM_MESSAGE_MAX_LENGTH): string[] {
+function splitTelegramText(text: string, maxLength = TELEGRAM_PLAIN_MESSAGE_MAX_LENGTH): string[] {
   const normalized = text.replace(/\r\n/g, '\n').trim()
   if (!normalized) return []
   if (normalized.length <= maxLength) return [normalized]
@@ -194,6 +143,10 @@ function splitTelegramText(text: string, maxLength = TELEGRAM_MESSAGE_MAX_LENGTH
 
   if (remaining) chunks.push(remaining)
   return chunks
+}
+
+function formatBooleanLabel(value: boolean): string {
+  return value ? 'yes' : 'no'
 }
 
 export class TelegramThreadBridge {
@@ -337,17 +290,21 @@ export class TelegramThreadBridge {
     text: string,
     options: { replyMarkup?: unknown } = {},
   ): Promise<void> {
-    const chunks = splitTelegramText(text)
+    const chunks = buildTelegramMarkdownChunks(text, TELEGRAM_RICH_MESSAGE_MAX_LENGTH)
     if (chunks.length === 0) return
 
     for (let index = 0; index < chunks.length; index += 1) {
       const chunk = chunks[index]
       const replyMarkup = index === 0 ? options.replyMarkup : undefined
-      const htmlChunk = renderMarkdownToTelegramHtml(chunk)
       try {
-        await this.sendMessageRequest(chatId, htmlChunk, { replyMarkup, parseMode: 'HTML' })
+        await this.sendRichMessageRequest(chatId, chunk, { replyMarkup })
       } catch {
-        await this.sendMessageRequest(chatId, chunk, { replyMarkup })
+        const plainChunks = splitTelegramText(chunk)
+        for (let fallbackIndex = 0; fallbackIndex < plainChunks.length; fallbackIndex += 1) {
+          await this.sendMessageRequest(chatId, plainChunks[fallbackIndex], {
+            replyMarkup: fallbackIndex === 0 ? replyMarkup : undefined,
+          })
+        }
       }
     }
   }
@@ -355,16 +312,30 @@ export class TelegramThreadBridge {
   private async sendMessageRequest(
     chatId: number,
     text: string,
-    options: { replyMarkup?: unknown; parseMode?: 'HTML' } = {},
+    options: { replyMarkup?: unknown } = {},
   ): Promise<void> {
     const payload: Record<string, unknown> = { chat_id: chatId, text }
     if (options.replyMarkup) {
       payload.reply_markup = options.replyMarkup
     }
-    if (options.parseMode) {
-      payload.parse_mode = options.parseMode
-    }
     await this.callTelegramApi('sendMessage', payload)
+  }
+
+  private async sendRichMessageRequest(
+    chatId: number,
+    markdown: string,
+    options: { replyMarkup?: unknown } = {},
+  ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      rich_message: {
+        markdown,
+      },
+    }
+    if (options.replyMarkup) {
+      payload.reply_markup = options.replyMarkup
+    }
+    await this.callTelegramApi('sendRichMessage', payload)
   }
 
   private async syncBotCommands(): Promise<void> {
@@ -391,7 +362,11 @@ export class TelegramThreadBridge {
   }
 
   private async sendOnlineMessage(chatId: number): Promise<void> {
-    await this.sendTelegramMessage(chatId, 'Codex thread bridge went online.')
+    await this.sendTelegramMessage(chatId, [
+      '# Codex Telegram Bridge',
+      '',
+      'Bridge is online and ready.',
+    ].join('\n'))
   }
 
   private async notifyOnlineForKnownChats(): Promise<void> {
@@ -431,7 +406,11 @@ export class TelegramThreadBridge {
 
     if (text === '/newthread') {
       const threadId = await this.createThreadForChat(chatId)
-      await this.sendTelegramMessage(chatId, `Mapped to new thread: ${threadId}`)
+      await this.sendTelegramMessage(chatId, [
+        '# Thread connected',
+        '',
+        `Created and connected a new thread: \`${threadId}\``,
+      ].join('\n'))
       return
     }
 
@@ -439,22 +418,41 @@ export class TelegramThreadBridge {
     if (threadCommand) {
       const threadId = threadCommand[1]
       this.bindChatToThread(chatId, threadId)
-      await this.sendTelegramMessage(chatId, `Mapped to thread: ${threadId}`)
+      await this.sendTelegramMessage(chatId, [
+        '# Thread connected',
+        '',
+        `Connected to existing thread: \`${threadId}\``,
+      ].join('\n'))
       return
     }
 
     if (text === '/current') {
       const threadId = this.threadIdByChatId.get(chatId)
       await this.sendTelegramMessage(chatId, threadId
-        ? `Current thread: \`${threadId}\``
-        : 'No thread is connected for this chat yet. Use /threads, /newthread, or /thread <id>.')
+        ? ['# Current thread', '', `Connected thread: \`${threadId}\``].join('\n')
+        : [
+            '# Current thread',
+            '',
+            'No thread is connected for this chat yet.',
+            '',
+            'Use one of these commands:',
+            '- `/threads`',
+            '- `/newthread`',
+            '- `/thread <id>`',
+          ].join('\n'))
       return
     }
 
     if (text === '/history') {
       const threadId = this.threadIdByChatId.get(chatId)
       if (!threadId) {
-        await this.sendTelegramMessage(chatId, 'No thread is connected for this chat yet. Use /threads or /newthread first.')
+        await this.sendTelegramMessage(chatId, [
+          '# Recent history',
+          '',
+          'No thread is connected for this chat yet.',
+          '',
+          'Use `/threads` or `/newthread` first.',
+        ].join('\n'))
         return
       }
       const history = await this.readThreadHistorySummary(threadId)
@@ -465,19 +463,24 @@ export class TelegramThreadBridge {
     if (text === '/status') {
       const status = this.getStatus()
       const mappedThreadId = this.threadIdByChatId.get(chatId) ?? 'none'
+      const lines = [
+        '# Bridge status',
+        '',
+        `- configured: ${formatBooleanLabel(status.configured)}`,
+        `- active: ${formatBooleanLabel(status.active)}`,
+        `- mapped chats: ${String(status.mappedChats)}`,
+        `- mapped threads: ${String(status.mappedThreads)}`,
+        `- allowed users: ${String(status.allowedUsers)}`,
+        `- allow all users: ${formatBooleanLabel(status.allowAllUsers)}`,
+        `- current chat id: \`${String(chatId)}\``,
+        `- current thread: ${mappedThreadId === 'none' ? 'not connected' : `\`${mappedThreadId}\``}`,
+      ]
+      if (status.lastError) {
+        lines.push('', '## Last error', '', '```text', status.lastError, '```')
+      }
       await this.sendTelegramMessage(
         chatId,
-        [
-          '**Bridge status**',
-          `configured: ${String(status.configured)}`,
-          `active: ${String(status.active)}`,
-          `mapped chats: ${String(status.mappedChats)}`,
-          `mapped threads: ${String(status.mappedThreads)}`,
-          `allowed users: ${String(status.allowedUsers)}`,
-          `allow all users: ${String(status.allowAllUsers)}`,
-          `chat ${String(chatId)} thread: \`${mappedThreadId}\``,
-          status.lastError ? `last error: ${status.lastError}` : '',
-        ].filter(Boolean).join('\n'),
+        lines.join('\n'),
       )
       return
     }
@@ -490,11 +493,12 @@ export class TelegramThreadBridge {
       await this.sendTelegramMessage(
         chatId,
         [
-          '**Identity**',
-          `telegram user id: \`${normalizedSenderId}\``,
-          `chat id: \`${normalizedChatId}\``,
-          `authorized: ${String(this.isAllowedSender(senderId))}`,
-          this.allowAllUsers ? 'allowlist mode: `*`' : 'allowlist mode: explicit ids',
+          '# Identity',
+          '',
+          `- telegram user id: \`${normalizedSenderId}\``,
+          `- chat id: \`${normalizedChatId}\``,
+          `- authorized: ${formatBooleanLabel(this.isAllowedSender(senderId))}`,
+          `- allowlist mode: ${this.allowAllUsers ? '`*`' : 'explicit ids'}`,
         ].join('\n'),
       )
       return
@@ -513,7 +517,15 @@ export class TelegramThreadBridge {
       })
     } catch (error) {
       const message = getErrorMessage(error, 'Failed to forward message to thread')
-      await this.sendTelegramMessage(chatId, `Forward failed: ${message}`)
+      await this.sendTelegramMessage(chatId, [
+        '# Forward failed',
+        '',
+        'Telegram message could not be forwarded into the Codex thread.',
+        '',
+        '```text',
+        message,
+        '```',
+      ].join('\n'))
     }
   }
 
@@ -549,7 +561,11 @@ export class TelegramThreadBridge {
 
     this.bindChatToThread(chatId, threadId)
     await this.answerCallbackQuery(callbackId, 'Thread connected')
-    await this.sendTelegramMessage(chatId, `Connected to thread: ${threadId}`)
+    await this.sendTelegramMessage(chatId, [
+      '# Thread connected',
+      '',
+      `Connected to thread: \`${threadId}\``,
+    ].join('\n'))
     const history = await this.readThreadHistorySummary(threadId)
     if (history) {
       await this.sendTelegramMessage(chatId, history)
@@ -569,7 +585,13 @@ export class TelegramThreadBridge {
     const normalizedSenderId = typeof senderId === 'number' && Number.isFinite(senderId)
       ? String(Math.trunc(senderId))
       : 'unknown'
-    return `Unauthorized sender.\n\nYour Telegram user ID: ${normalizedSenderId}\nAdd this ID to the bot allowlist before using the bridge.`
+    return [
+      '# Access denied',
+      '',
+      `Your Telegram user ID: \`${normalizedSenderId}\``,
+      '',
+      'Add this ID to the bot allowlist before using the bridge.',
+    ].join('\n')
   }
 
   private unauthorizedCallbackMessage(senderId: unknown): string {
@@ -580,8 +602,15 @@ export class TelegramThreadBridge {
   }
 
   private helpMessage(): string {
-    const rows = TELEGRAM_BOT_COMMANDS.map((command) => `/${command.command} - ${command.description}`)
-    return ['**Available commands**', ...rows].join('\n')
+    const rows = TELEGRAM_BOT_COMMANDS.map((command) => `- \`/${command.command}\` - ${command.description}`)
+    return [
+      '# Codex Telegram Bridge',
+      '',
+      'Use the bot to map this chat to a Codex thread and send prompts from Telegram.',
+      '',
+      '## Commands',
+      ...rows,
+    ].join('\n')
   }
 
   private async answerCallbackQuery(callbackQueryId: string, text: string): Promise<void> {
@@ -594,7 +623,13 @@ export class TelegramThreadBridge {
   private async sendThreadPicker(chatId: number): Promise<void> {
     const threads = await this.listRecentThreads()
     if (threads.length === 0) {
-      await this.sendTelegramMessage(chatId, 'No threads found. Send /newthread to create one.')
+      await this.sendTelegramMessage(chatId, [
+        '# Connect thread',
+        '',
+        'No recent threads were found.',
+        '',
+        'Send `/newthread` to create one.',
+      ].join('\n'))
       return
     }
 
@@ -605,7 +640,11 @@ export class TelegramThreadBridge {
       },
     ])
 
-    await this.sendTelegramMessage(chatId, 'Select a thread to connect:', {
+    await this.sendTelegramMessage(chatId, [
+      '# Connect thread',
+      '',
+      'Choose a recent Codex thread from the buttons below.',
+    ].join('\n'), {
       replyMarkup: { inline_keyboard: inlineKeyboard },
     })
   }
@@ -743,23 +782,27 @@ export class TelegramThreadBridge {
           for (const block of content) {
             const blockRecord = asRecord(block)
             if (blockRecord?.type === 'text' && typeof blockRecord.text === 'string' && blockRecord.text.trim()) {
-              historyRows.push(`User: ${blockRecord.text.trim()}`)
+              historyRows.push(`## User\n${blockRecord.text.trim()}`)
             }
           }
         }
         if (type === 'agentMessage' && typeof itemRecord?.text === 'string' && itemRecord.text.trim()) {
-          historyRows.push(`Assistant: ${itemRecord.text.trim()}`)
+          historyRows.push(`## Assistant\n${itemRecord.text.trim()}`)
         }
       }
     }
 
     if (historyRows.length === 0) {
-      return 'Thread has no message history yet.'
+      return [
+        '# Recent history',
+        '',
+        'Thread has no message history yet.',
+      ].join('\n')
     }
 
     const tail = historyRows.slice(-12).join('\n\n')
     const maxLen = 3800
     const summary = tail.length > maxLen ? tail.slice(tail.length - maxLen) : tail
-    return `Recent history:\n\n${summary}`
+    return `# Recent history\n\n${summary}`
   }
 }
