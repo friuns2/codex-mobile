@@ -172,7 +172,7 @@ Bot commands:
 - `/whoami` show your Telegram user/chat IDs and authorization state
 - `/help` show command reference
 
-Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatting, with automatic plain-text fallback if HTML delivery fails.
+Outgoing assistant and bridge status messages are sent with Telegram Rich Messages using markdown input, so headings, lists, tables, quotes, and code blocks render natively. Local file references are degraded to bold text labels, and the bridge falls back to plain `sendMessage` text if Rich Message delivery fails.
 
 ---
 

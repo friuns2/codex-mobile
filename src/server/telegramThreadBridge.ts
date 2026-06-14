@@ -1,5 +1,7 @@
 import { basename } from 'node:path'
 
+import { buildTelegramMarkdownChunks } from '../utils/telegramMarkdown.js'
+
 type TelegramUpdate = {
   update_id?: number
   message?: {
@@ -10,6 +12,7 @@ type TelegramUpdate = {
     }
     chat?: {
       id?: number
+      type?: string
     }
   }
   callback_query?: {
@@ -21,6 +24,7 @@ type TelegramUpdate = {
     message?: {
       chat?: {
         id?: number
+        type?: string
       }
     }
   }
@@ -50,7 +54,18 @@ type TelegramBotCommand = {
   description: string
 }
 
-const TELEGRAM_MESSAGE_MAX_LENGTH = 3500
+type TelegramDraftState = {
+  draftId: number
+  threadId: string
+  turnId: string
+  rawText: string
+  renderedText: string
+  phase: 'thinking' | 'agent'
+}
+
+const TELEGRAM_PLAIN_MESSAGE_MAX_LENGTH = 3500
+const TELEGRAM_RICH_MESSAGE_MAX_LENGTH = 12000
+const TELEGRAM_DRAFT_REFRESH_MS = 15000
 const TELEGRAM_BOT_COMMANDS: TelegramBotCommand[] = [
   { command: 'start', description: 'Show quick start and thread picker' },
   { command: 'threads', description: 'List recent threads to connect' },
@@ -113,61 +128,7 @@ function normalizeTelegramAllowlist(values: unknown): NormalizedTelegramAllowlis
   return { allowAllUsers, allowedUserIds }
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
-function renderMarkdownInlineToTelegramHtml(value: string): string {
-  let rendered = escapeHtml(value)
-  rendered = rendered.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
-  rendered = rendered.replace(/`([^`\n]+)`/g, '<code>$1</code>')
-  rendered = rendered.replace(/\*\*([^*\n][^*\n]*?)\*\*/g, '<b>$1</b>')
-  rendered = rendered.replace(/__([^_\n][^_\n]*?)__/g, '<b>$1</b>')
-  rendered = rendered.replace(/\*([^*\n][^*\n]*?)\*/g, '<i>$1</i>')
-  rendered = rendered.replace(/_([^_\n][^_\n]*?)_/g, '<i>$1</i>')
-  rendered = rendered.replace(/^(#{1,6})\s+(.+)$/gm, (_match, _hashes, content: string) => `<b>${content}</b>`)
-  return rendered
-}
-
-function renderMarkdownToTelegramHtml(markdown: string): string {
-  const normalized = markdown.replace(/\r\n/g, '\n')
-  const fencedCodeRegex = /```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g
-  let cursor = 0
-  const parts: string[] = []
-  let match = fencedCodeRegex.exec(normalized)
-
-  while (match) {
-    const [fullMatch, lang, code] = match
-    const matchIndex = match.index
-    const before = normalized.slice(cursor, matchIndex)
-    if (before) {
-      parts.push(renderMarkdownInlineToTelegramHtml(before))
-    }
-
-    const escapedCode = escapeHtml((code ?? '').replace(/\n+$/g, ''))
-    const escapedLang = typeof lang === 'string' ? escapeHtml(lang) : ''
-    if (escapedLang) {
-      parts.push(`<pre><code class="language-${escapedLang}">${escapedCode}</code></pre>`)
-    } else {
-      parts.push(`<pre>${escapedCode}</pre>`)
-    }
-
-    cursor = matchIndex + fullMatch.length
-    match = fencedCodeRegex.exec(normalized)
-  }
-
-  const tail = normalized.slice(cursor)
-  if (tail) {
-    parts.push(renderMarkdownInlineToTelegramHtml(tail))
-  }
-
-  return parts.join('')
-}
-
-function splitTelegramText(text: string, maxLength = TELEGRAM_MESSAGE_MAX_LENGTH): string[] {
+function splitTelegramText(text: string, maxLength = TELEGRAM_PLAIN_MESSAGE_MAX_LENGTH): string[] {
   const normalized = text.replace(/\r\n/g, '\n').trim()
   if (!normalized) return []
   if (normalized.length <= maxLength) return [normalized]
@@ -196,6 +157,15 @@ function splitTelegramText(text: string, maxLength = TELEGRAM_MESSAGE_MAX_LENGTH
   return chunks
 }
 
+function formatBooleanLabel(value: boolean): string {
+  return value ? 'yes' : 'no'
+}
+
+function isThreadNotFoundError(error: unknown): boolean {
+  const message = getErrorMessage(error, '').toLowerCase()
+  return message.includes('thread not found') || message.includes('no rollout found for thread id')
+}
+
 export class TelegramThreadBridge {
   private token: string
   private readonly appServer: AppServerLike
@@ -205,9 +175,13 @@ export class TelegramThreadBridge {
   private readonly threadIdByChatId = new Map<number, string>()
   private readonly chatIdsByThreadId = new Map<string, Set<number>>()
   private readonly lastForwardedTurnByThreadId = new Map<string, string>()
+  private readonly draftStateByChatId = new Map<number, TelegramDraftState>()
+  private readonly draftRefreshTimerByChatId = new Map<number, ReturnType<typeof setTimeout>>()
+  private readonly draftUnsupportedChatIds = new Set<number>()
   private active = false
   private pollingTask: Promise<void> | null = null
   private nextUpdateOffset = 0
+  private nextDraftId = 1
   private lastError = ''
   private readonly onChatSeen?: (chatId: number) => void
 
@@ -237,6 +211,11 @@ export class TelegramThreadBridge {
 
   stop(): void {
     this.active = false
+    for (const timer of this.draftRefreshTimerByChatId.values()) {
+      clearTimeout(timer)
+    }
+    this.draftRefreshTimerByChatId.clear()
+    this.draftStateByChatId.clear()
   }
 
   private async pollLoop(): Promise<void> {
@@ -337,17 +316,21 @@ export class TelegramThreadBridge {
     text: string,
     options: { replyMarkup?: unknown } = {},
   ): Promise<void> {
-    const chunks = splitTelegramText(text)
+    const chunks = buildTelegramMarkdownChunks(text, TELEGRAM_RICH_MESSAGE_MAX_LENGTH)
     if (chunks.length === 0) return
 
     for (let index = 0; index < chunks.length; index += 1) {
       const chunk = chunks[index]
       const replyMarkup = index === 0 ? options.replyMarkup : undefined
-      const htmlChunk = renderMarkdownToTelegramHtml(chunk)
       try {
-        await this.sendMessageRequest(chatId, htmlChunk, { replyMarkup, parseMode: 'HTML' })
+        await this.sendRichMessageRequest(chatId, chunk, { replyMarkup })
       } catch {
-        await this.sendMessageRequest(chatId, chunk, { replyMarkup })
+        const plainChunks = splitTelegramText(chunk)
+        for (let fallbackIndex = 0; fallbackIndex < plainChunks.length; fallbackIndex += 1) {
+          await this.sendMessageRequest(chatId, plainChunks[fallbackIndex], {
+            replyMarkup: fallbackIndex === 0 ? replyMarkup : undefined,
+          })
+        }
       }
     }
   }
@@ -355,16 +338,44 @@ export class TelegramThreadBridge {
   private async sendMessageRequest(
     chatId: number,
     text: string,
-    options: { replyMarkup?: unknown; parseMode?: 'HTML' } = {},
+    options: { replyMarkup?: unknown } = {},
   ): Promise<void> {
     const payload: Record<string, unknown> = { chat_id: chatId, text }
     if (options.replyMarkup) {
       payload.reply_markup = options.replyMarkup
     }
-    if (options.parseMode) {
-      payload.parse_mode = options.parseMode
-    }
     await this.callTelegramApi('sendMessage', payload)
+  }
+
+  private async sendRichMessageRequest(
+    chatId: number,
+    markdown: string,
+    options: { replyMarkup?: unknown } = {},
+  ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      rich_message: {
+        markdown,
+      },
+    }
+    if (options.replyMarkup) {
+      payload.reply_markup = options.replyMarkup
+    }
+    await this.callTelegramApi('sendRichMessage', payload)
+  }
+
+  private async sendRichMessageDraftRequest(
+    chatId: number,
+    draftId: number,
+    markdown: string,
+  ): Promise<void> {
+    await this.callTelegramApi('sendRichMessageDraft', {
+      chat_id: chatId,
+      draft_id: draftId,
+      rich_message: {
+        markdown,
+      },
+    })
   }
 
   private async syncBotCommands(): Promise<void> {
@@ -391,13 +402,139 @@ export class TelegramThreadBridge {
   }
 
   private async sendOnlineMessage(chatId: number): Promise<void> {
-    await this.sendTelegramMessage(chatId, 'Codex thread bridge went online.')
+    await this.sendTelegramMessage(chatId, [
+      '# Codex Telegram Bridge',
+      '',
+      'Bridge is online and ready.',
+    ].join('\n'))
   }
 
   private async notifyOnlineForKnownChats(): Promise<void> {
     const knownChatIds = Array.from(this.threadIdByChatId.keys())
     for (const chatId of knownChatIds) {
       await this.sendOnlineMessage(chatId)
+    }
+  }
+
+  private nextDraftIdentifier(): number {
+    const next = this.nextDraftId
+    this.nextDraftId += 1
+    if (this.nextDraftId <= 0 || this.nextDraftId > 0x7fffffff) {
+      this.nextDraftId = 1
+    }
+    return next
+  }
+
+  private getOrCreateDraftState(chatId: number, threadId: string, turnId: string): TelegramDraftState {
+    const existing = this.draftStateByChatId.get(chatId)
+    if (existing && existing.threadId === threadId && existing.turnId === turnId) {
+      return existing
+    }
+    const nextState: TelegramDraftState = {
+      draftId: this.nextDraftIdentifier(),
+      threadId,
+      turnId,
+      rawText: '',
+      renderedText: '',
+      phase: 'thinking',
+    }
+    this.draftStateByChatId.set(chatId, nextState)
+    return nextState
+  }
+
+  private clearDraftRefreshTimer(chatId: number): void {
+    const timer = this.draftRefreshTimerByChatId.get(chatId)
+    if (timer) {
+      clearTimeout(timer)
+      this.draftRefreshTimerByChatId.delete(chatId)
+    }
+  }
+
+  private clearDraftState(chatId: number): void {
+    this.clearDraftRefreshTimer(chatId)
+    this.draftStateByChatId.delete(chatId)
+  }
+
+  private clearDraftStatesForTurn(threadId: string, turnId: string): void {
+    for (const [chatId, draft] of this.draftStateByChatId.entries()) {
+      if (draft.threadId === threadId && draft.turnId === turnId) {
+        this.clearDraftState(chatId)
+      }
+    }
+  }
+
+  private clearDraftStatesForThread(threadId: string): void {
+    for (const [chatId, draft] of this.draftStateByChatId.entries()) {
+      if (draft.threadId === threadId) {
+        this.clearDraftState(chatId)
+      }
+    }
+  }
+
+  private scheduleDraftRefresh(chatId: number): void {
+    this.clearDraftRefreshTimer(chatId)
+    const draftState = this.draftStateByChatId.get(chatId)
+    if (!draftState || this.draftUnsupportedChatIds.has(chatId) || !this.active) return
+    const timer = setTimeout(() => {
+      void this.refreshDraft(chatId)
+    }, TELEGRAM_DRAFT_REFRESH_MS)
+    this.draftRefreshTimerByChatId.set(chatId, timer)
+  }
+
+  private async refreshDraft(chatId: number): Promise<void> {
+    const draftState = this.draftStateByChatId.get(chatId)
+    if (!draftState || this.draftUnsupportedChatIds.has(chatId) || !this.active) {
+      this.clearDraftRefreshTimer(chatId)
+      return
+    }
+
+    try {
+      await this.sendRichMessageDraftRequest(
+        chatId,
+        draftState.draftId,
+        draftState.renderedText || 'Thinking…',
+      )
+      this.scheduleDraftRefresh(chatId)
+    } catch {
+      this.draftUnsupportedChatIds.add(chatId)
+      this.clearDraftState(chatId)
+    }
+  }
+
+  private async updateDraftForThread(
+    threadId: string,
+    turnId: string,
+    nextText: string | null,
+    phase: 'thinking' | 'agent',
+  ): Promise<void> {
+    const chatIds = this.chatIdsByThreadId.get(threadId)
+    if (!chatIds || chatIds.size === 0) return
+
+    const trimmed = (nextText ?? '').trim()
+    const draftMarkdown = trimmed || 'Thinking…'
+    const draftChunk = buildTelegramMarkdownChunks(draftMarkdown, TELEGRAM_RICH_MESSAGE_MAX_LENGTH)[0] ?? 'Thinking…'
+
+    for (const chatId of chatIds) {
+      if (this.draftUnsupportedChatIds.has(chatId)) continue
+      const draftState = this.getOrCreateDraftState(chatId, threadId, turnId)
+      if (
+        draftState.renderedText === draftChunk &&
+        draftState.rawText === (nextText ?? '') &&
+        draftState.phase === phase
+      ) {
+        this.scheduleDraftRefresh(chatId)
+        continue
+      }
+      draftState.rawText = nextText ?? ''
+      draftState.renderedText = draftChunk
+      draftState.phase = phase
+      try {
+        await this.sendRichMessageDraftRequest(chatId, draftState.draftId, draftChunk)
+        this.scheduleDraftRefresh(chatId)
+      } catch {
+        this.draftUnsupportedChatIds.add(chatId)
+        this.clearDraftState(chatId)
+      }
     }
   }
 
@@ -431,30 +568,48 @@ export class TelegramThreadBridge {
 
     if (text === '/newthread') {
       const threadId = await this.createThreadForChat(chatId)
-      await this.sendTelegramMessage(chatId, `Mapped to new thread: ${threadId}`)
+      await this.sendTelegramMessage(chatId, [
+        '# Thread connected',
+        '',
+        `Created and connected a new thread: \`${threadId}\``,
+      ].join('\n'))
       return
     }
 
     const threadCommand = text.match(/^\/thread\s+(\S+)$/)
     if (threadCommand) {
       const threadId = threadCommand[1]
-      this.bindChatToThread(chatId, threadId)
-      await this.sendTelegramMessage(chatId, `Mapped to thread: ${threadId}`)
+      await this.connectExistingThread(chatId, threadId, senderId, 'command')
       return
     }
 
     if (text === '/current') {
       const threadId = this.threadIdByChatId.get(chatId)
       await this.sendTelegramMessage(chatId, threadId
-        ? `Current thread: \`${threadId}\``
-        : 'No thread is connected for this chat yet. Use /threads, /newthread, or /thread <id>.')
+        ? ['# Current thread', '', `Connected thread: \`${threadId}\``].join('\n')
+        : [
+            '# Current thread',
+            '',
+            'No thread is connected for this chat yet.',
+            '',
+            'Use one of these commands:',
+            '- `/threads`',
+            '- `/newthread`',
+            '- `/thread <id>`',
+          ].join('\n'))
       return
     }
 
     if (text === '/history') {
       const threadId = this.threadIdByChatId.get(chatId)
       if (!threadId) {
-        await this.sendTelegramMessage(chatId, 'No thread is connected for this chat yet. Use /threads or /newthread first.')
+        await this.sendTelegramMessage(chatId, [
+          '# Recent history',
+          '',
+          'No thread is connected for this chat yet.',
+          '',
+          'Use `/threads` or `/newthread` first.',
+        ].join('\n'))
         return
       }
       const history = await this.readThreadHistorySummary(threadId)
@@ -465,19 +620,24 @@ export class TelegramThreadBridge {
     if (text === '/status') {
       const status = this.getStatus()
       const mappedThreadId = this.threadIdByChatId.get(chatId) ?? 'none'
+      const lines = [
+        '# Bridge status',
+        '',
+        `- configured: ${formatBooleanLabel(status.configured)}`,
+        `- active: ${formatBooleanLabel(status.active)}`,
+        `- mapped chats: ${String(status.mappedChats)}`,
+        `- mapped threads: ${String(status.mappedThreads)}`,
+        `- allowed users: ${String(status.allowedUsers)}`,
+        `- allow all users: ${formatBooleanLabel(status.allowAllUsers)}`,
+        `- current chat id: \`${String(chatId)}\``,
+        `- current thread: ${mappedThreadId === 'none' ? 'not connected' : `\`${mappedThreadId}\``}`,
+      ]
+      if (status.lastError) {
+        lines.push('', '## Last error', '', '```text', status.lastError, '```')
+      }
       await this.sendTelegramMessage(
         chatId,
-        [
-          '**Bridge status**',
-          `configured: ${String(status.configured)}`,
-          `active: ${String(status.active)}`,
-          `mapped chats: ${String(status.mappedChats)}`,
-          `mapped threads: ${String(status.mappedThreads)}`,
-          `allowed users: ${String(status.allowedUsers)}`,
-          `allow all users: ${String(status.allowAllUsers)}`,
-          `chat ${String(chatId)} thread: \`${mappedThreadId}\``,
-          status.lastError ? `last error: ${status.lastError}` : '',
-        ].filter(Boolean).join('\n'),
+        lines.join('\n'),
       )
       return
     }
@@ -490,11 +650,12 @@ export class TelegramThreadBridge {
       await this.sendTelegramMessage(
         chatId,
         [
-          '**Identity**',
-          `telegram user id: \`${normalizedSenderId}\``,
-          `chat id: \`${normalizedChatId}\``,
-          `authorized: ${String(this.isAllowedSender(senderId))}`,
-          this.allowAllUsers ? 'allowlist mode: `*`' : 'allowlist mode: explicit ids',
+          '# Identity',
+          '',
+          `- telegram user id: \`${normalizedSenderId}\``,
+          `- chat id: \`${normalizedChatId}\``,
+          `- authorized: ${formatBooleanLabel(this.isAllowedSender(senderId))}`,
+          `- allowlist mode: ${this.allowAllUsers ? '`*`' : 'explicit ids'}`,
         ].join('\n'),
       )
       return
@@ -507,13 +668,18 @@ export class TelegramThreadBridge {
 
     const threadId = await this.ensureThreadForChat(chatId)
     try {
-      await this.appServer.rpc('turn/start', {
-        threadId,
-        input: [{ type: 'text', text }],
-      })
+      await this.startTurnWithRecovery(threadId, text)
     } catch (error) {
       const message = getErrorMessage(error, 'Failed to forward message to thread')
-      await this.sendTelegramMessage(chatId, `Forward failed: ${message}`)
+      await this.sendTelegramMessage(chatId, [
+        '# Forward failed',
+        '',
+        'Telegram message could not be forwarded into the Codex thread.',
+        '',
+        '```text',
+        message,
+        '```',
+      ].join('\n'))
     }
   }
 
@@ -547,12 +713,21 @@ export class TelegramThreadBridge {
       return
     }
 
-    this.bindChatToThread(chatId, threadId)
-    await this.answerCallbackQuery(callbackId, 'Thread connected')
-    await this.sendTelegramMessage(chatId, `Connected to thread: ${threadId}`)
-    const history = await this.readThreadHistorySummary(threadId)
-    if (history) {
-      await this.sendTelegramMessage(chatId, history)
+    try {
+      await this.connectExistingThread(chatId, threadId, senderId, 'callback')
+      await this.answerCallbackQuery(callbackId, 'Thread connected')
+    } catch (error) {
+      const message = getErrorMessage(error, 'Failed to connect thread')
+      await this.answerCallbackQuery(callbackId, 'Failed to connect thread')
+      await this.sendTelegramMessage(chatId, [
+        '# Thread connect failed',
+        '',
+        'Telegram chat could not be connected to the requested Codex thread.',
+        '',
+        '```text',
+        message,
+        '```',
+      ].join('\n'))
     }
   }
 
@@ -569,7 +744,13 @@ export class TelegramThreadBridge {
     const normalizedSenderId = typeof senderId === 'number' && Number.isFinite(senderId)
       ? String(Math.trunc(senderId))
       : 'unknown'
-    return `Unauthorized sender.\n\nYour Telegram user ID: ${normalizedSenderId}\nAdd this ID to the bot allowlist before using the bridge.`
+    return [
+      '# Access denied',
+      '',
+      `Your Telegram user ID: \`${normalizedSenderId}\``,
+      '',
+      'Add this ID to the bot allowlist before using the bridge.',
+    ].join('\n')
   }
 
   private unauthorizedCallbackMessage(senderId: unknown): string {
@@ -580,8 +761,15 @@ export class TelegramThreadBridge {
   }
 
   private helpMessage(): string {
-    const rows = TELEGRAM_BOT_COMMANDS.map((command) => `/${command.command} - ${command.description}`)
-    return ['**Available commands**', ...rows].join('\n')
+    const rows = TELEGRAM_BOT_COMMANDS.map((command) => `- \`/${command.command}\` - ${command.description}`)
+    return [
+      '# Codex Telegram Bridge',
+      '',
+      'Use the bot to map this chat to a Codex thread and send prompts from Telegram.',
+      '',
+      '## Commands',
+      ...rows,
+    ].join('\n')
   }
 
   private async answerCallbackQuery(callbackQueryId: string, text: string): Promise<void> {
@@ -594,7 +782,13 @@ export class TelegramThreadBridge {
   private async sendThreadPicker(chatId: number): Promise<void> {
     const threads = await this.listRecentThreads()
     if (threads.length === 0) {
-      await this.sendTelegramMessage(chatId, 'No threads found. Send /newthread to create one.')
+      await this.sendTelegramMessage(chatId, [
+        '# Connect thread',
+        '',
+        'No recent threads were found.',
+        '',
+        'Send `/newthread` to create one.',
+      ].join('\n'))
       return
     }
 
@@ -605,7 +799,11 @@ export class TelegramThreadBridge {
       },
     ])
 
-    await this.sendTelegramMessage(chatId, 'Select a thread to connect:', {
+    await this.sendTelegramMessage(chatId, [
+      '# Connect thread',
+      '',
+      'Choose a recent Codex thread from the buttons below.',
+    ].join('\n'), {
       replyMarkup: { inline_keyboard: inlineKeyboard },
     })
   }
@@ -651,6 +849,44 @@ export class TelegramThreadBridge {
     return this.createThreadForChat(chatId)
   }
 
+  private async connectExistingThread(
+    chatId: number,
+    threadId: string,
+    senderId: number | undefined,
+    source: 'command' | 'callback',
+  ): Promise<void> {
+    await this.appServer.rpc('thread/resume', { threadId })
+    this.bindChatToThread(chatId, threadId)
+    await this.sendTelegramMessage(chatId, [
+      '# Thread connected',
+      '',
+      `Connected to existing thread: \`${threadId}\``,
+    ].join('\n'))
+    const history = await this.readThreadHistorySummary(threadId)
+    if (history) {
+      await this.sendTelegramMessage(chatId, history)
+    }
+  }
+
+  private async startTurnWithRecovery(threadId: string, text: string): Promise<void> {
+    const params = {
+      threadId,
+      input: [{ type: 'text', text }],
+    }
+
+    try {
+      await this.appServer.rpc('turn/start', params)
+      return
+    } catch (error) {
+      if (!isThreadNotFoundError(error)) {
+        throw error
+      }
+    }
+
+    await this.appServer.rpc('thread/resume', { threadId })
+    await this.appServer.rpc('turn/start', params)
+  }
+
   private bindChatToThread(chatId: number, threadId: string): void {
     const previousThreadId = this.threadIdByChatId.get(chatId)
     if (previousThreadId && previousThreadId !== threadId) {
@@ -687,17 +923,99 @@ export class TelegramThreadBridge {
   }
 
   private async handleNotification(notification: { method: string; params: unknown }): Promise<void> {
+    const params = asRecord(notification.params)
+    const threadIdFromParams = this.extractThreadId(notification)
+    const turnIdFromParams = this.extractTurnId(notification)
+
+    if (notification.method === 'turn/started' && threadIdFromParams && turnIdFromParams) {
+      await this.updateDraftForThread(threadIdFromParams, turnIdFromParams, 'Thinking…', 'thinking')
+      return
+    }
+
+    if (notification.method === 'item/started' && threadIdFromParams && turnIdFromParams) {
+      const item = asRecord(params?.item)
+      if (item?.type === 'reasoning') {
+        await this.updateDraftForThread(threadIdFromParams, turnIdFromParams, 'Thinking…', 'thinking')
+        return
+      }
+      if (item?.type === 'agentMessage') {
+        await this.updateDraftForThread(threadIdFromParams, turnIdFromParams, null, 'agent')
+        return
+      }
+    }
+
+    if (
+      (notification.method === 'item/reasoning/summaryTextDelta' || notification.method === 'item/reasoning/textDelta') &&
+      threadIdFromParams &&
+      turnIdFromParams
+    ) {
+      const delta = typeof params?.delta === 'string' ? params.delta : ''
+      if (!delta) return
+      const chatIds = this.chatIdsByThreadId.get(threadIdFromParams)
+      const existingText = chatIds && chatIds.size > 0
+        ? Array.from(chatIds)
+          .map((chatId) => this.draftStateByChatId.get(chatId))
+          .find((draft) => (
+            draft?.threadId === threadIdFromParams &&
+            draft.turnId === turnIdFromParams &&
+            draft.phase === 'thinking'
+          ))?.rawText ?? ''
+        : ''
+      const merged = `${existingText}${delta}`
+      await this.updateDraftForThread(threadIdFromParams, turnIdFromParams, merged, 'thinking')
+      return
+    }
+
+    if (notification.method === 'item/reasoning/summaryPartAdded' && threadIdFromParams && turnIdFromParams) {
+      const chatIds = this.chatIdsByThreadId.get(threadIdFromParams)
+      const existingText = chatIds && chatIds.size > 0
+        ? Array.from(chatIds)
+          .map((chatId) => this.draftStateByChatId.get(chatId))
+          .find((draft) => (
+            draft?.threadId === threadIdFromParams &&
+            draft.turnId === turnIdFromParams &&
+            draft.phase === 'thinking'
+          ))?.rawText ?? ''
+        : ''
+      if (!existingText.trim()) {
+        await this.updateDraftForThread(threadIdFromParams, turnIdFromParams, 'Thinking…', 'thinking')
+        return
+      }
+      const merged = existingText.endsWith('\n\n') ? existingText : `${existingText}\n\n`
+      await this.updateDraftForThread(threadIdFromParams, turnIdFromParams, merged, 'thinking')
+      return
+    }
+
+    if (notification.method === 'item/agentMessage/delta' && threadIdFromParams && turnIdFromParams) {
+      const delta = typeof params?.delta === 'string' ? params.delta : ''
+      if (!delta) return
+      const chatIds = this.chatIdsByThreadId.get(threadIdFromParams)
+      const existingText = chatIds && chatIds.size > 0
+        ? Array.from(chatIds)
+          .map((chatId) => this.draftStateByChatId.get(chatId))
+          .find((draft) => draft?.threadId === threadIdFromParams && draft.turnId === turnIdFromParams)?.rawText ?? ''
+        : ''
+      const merged = `${existingText}${delta}`
+      await this.updateDraftForThread(threadIdFromParams, turnIdFromParams, merged, 'agent')
+      return
+    }
+
     if (notification.method !== 'turn/completed') return
-    const threadId = this.extractThreadId(notification)
+    const threadId = threadIdFromParams
     if (!threadId) return
     const chatIds = this.chatIdsByThreadId.get(threadId)
     if (!chatIds || chatIds.size === 0) return
 
-    const turnId = this.extractTurnId(notification)
+    const turnId = turnIdFromParams
     const lastForwardedTurnId = this.lastForwardedTurnByThreadId.get(threadId)
     if (turnId && lastForwardedTurnId === turnId) return
 
     const assistantReply = await this.readLatestAssistantMessage(threadId)
+    if (turnId) {
+      this.clearDraftStatesForTurn(threadId, turnId)
+    } else {
+      this.clearDraftStatesForThread(threadId)
+    }
     if (!assistantReply) return
     for (const chatId of chatIds) {
       await this.sendTelegramMessage(chatId, assistantReply)
@@ -743,23 +1061,27 @@ export class TelegramThreadBridge {
           for (const block of content) {
             const blockRecord = asRecord(block)
             if (blockRecord?.type === 'text' && typeof blockRecord.text === 'string' && blockRecord.text.trim()) {
-              historyRows.push(`User: ${blockRecord.text.trim()}`)
+              historyRows.push(`## User\n${blockRecord.text.trim()}`)
             }
           }
         }
         if (type === 'agentMessage' && typeof itemRecord?.text === 'string' && itemRecord.text.trim()) {
-          historyRows.push(`Assistant: ${itemRecord.text.trim()}`)
+          historyRows.push(`## Assistant\n${itemRecord.text.trim()}`)
         }
       }
     }
 
     if (historyRows.length === 0) {
-      return 'Thread has no message history yet.'
+      return [
+        '# Recent history',
+        '',
+        'Thread has no message history yet.',
+      ].join('\n')
     }
 
     const tail = historyRows.slice(-12).join('\n\n')
     const maxLen = 3800
     const summary = tail.length > maxLen ? tail.slice(tail.length - maxLen) : tail
-    return `Recent history:\n\n${summary}`
+    return `# Recent history\n\n${summary}`
   }
 }
