@@ -91,6 +91,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { sanitizeHtml } from '../../utils/sanitizeHtml'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import IconTablerX from '../icons/IconTablerX.vue'
 
@@ -144,7 +145,7 @@ const renderedReadme = computed(() => {
   const raw = readmeContent.value
   if (!raw) return ''
   const withoutFrontmatter = raw.replace(/^---[\s\S]*?---\s*/, '')
-  return simpleMarkdown(withoutFrontmatter)
+  return sanitizeHtml(simpleMarkdown(withoutFrontmatter))
 })
 
 function simpleMarkdown(md: string): string {
