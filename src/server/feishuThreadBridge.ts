@@ -488,21 +488,16 @@ export class FeishuThreadBridge {
   }
 
   private async sendThreadPicker(chatId: string): Promise<void> {
-    const threads = await this.listRecentThreads()
-    if (threads.length === 0) {
+    const groups = await this.listRecentThreadGroups()
+    if (groups.length === 0) {
       await this.sendFeishuMessage(chatId, 'No threads found. Send /newthread to create one.')
       return
     }
 
-    const buttons = threads.map((thread) => ({
-      text: thread.title,
-      value: thread.id,
-    }))
-
-    await this.sendFeishuMessage(chatId, 'Select a thread to connect:', { buttons })
+    await this.sendGroupedThreadCard(chatId, groups)
   }
 
-  private async listRecentThreads(): Promise<Array<{ id: string; title: string }>> {
+  private async listRecentThreadGroups(): Promise<Array<{ project: string; threads: Array<{ id: string; title: string }> }>> {
     const payload = asRecord(await this.appServer.rpc('thread/list', {
       archived: false,
       limit: 20,
@@ -510,7 +505,9 @@ export class FeishuThreadBridge {
       modelProviders: [],
     }))
     const rows = Array.isArray(payload?.data) ? payload.data : []
-    const threads: Array<{ id: string; title: string }> = []
+    const groupMap = new Map<string, Array<{ id: string; title: string }>>()
+    const groupOrder: string[] = []
+
     for (const row of rows) {
       const record = asRecord(row)
       const id = typeof record?.id === 'string' ? record.id.trim() : ''
@@ -520,10 +517,60 @@ export class FeishuThreadBridge {
       const cwd = typeof record?.cwd === 'string' ? record.cwd.trim() : ''
       const projectName = cwd ? basename(cwd) : 'project'
       const threadTitle = (name || preview || id).replace(/\s+/g, ' ').trim()
-      const title = `${projectName}/${threadTitle}`.slice(0, 64)
-      threads.push({ id, title })
+
+      if (!groupMap.has(projectName)) {
+        groupMap.set(projectName, [])
+        groupOrder.push(projectName)
+      }
+      groupMap.get(projectName)!.push({ id, title: threadTitle.slice(0, 48) })
     }
-    return threads
+
+    return groupOrder
+      .map((project) => ({ project, threads: groupMap.get(project) ?? [] }))
+      .filter((group) => group.threads.length > 0)
+  }
+
+  private async sendGroupedThreadCard(
+    chatId: string,
+    groups: Array<{ project: string; threads: Array<{ id: string; title: string }> }>,
+  ): Promise<void> {
+    if (!this.client) return
+    const elements: unknown[] = []
+
+    for (let gi = 0; gi < groups.length; gi += 1) {
+      const group = groups[gi]
+      if (gi > 0) {
+        elements.push({ tag: 'hr' })
+      }
+      elements.push({
+        tag: 'markdown',
+        content: `📁 **${group.project}**`,
+      })
+      elements.push({
+        tag: 'action',
+        actions: group.threads.map((thread) => ({
+          tag: 'button',
+          text: { content: thread.title, tag: 'plain_text' },
+          type: 'default',
+          value: { threadId: thread.id },
+        })),
+      })
+    }
+
+    await this.client.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        content: JSON.stringify({
+          header: {
+            template: 'indigo',
+            title: { content: '🧵 Select a thread', tag: 'plain_text' },
+          },
+          elements,
+        }),
+        msg_type: 'interactive',
+      },
+    })
   }
 
   private async createThreadForChat(chatId: string): Promise<string> {
