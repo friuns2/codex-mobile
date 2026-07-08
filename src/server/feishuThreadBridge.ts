@@ -112,6 +112,7 @@ export class FeishuThreadBridge {
   private readonly appServer: AppServerLike
   private readonly defaultCwd: string
   private allowAllUsers = false
+  private readonly thinkingMessageIdByChatId = new Map<string, string>()
   private allowedUserIds = new Set<string>()
   private readonly threadIdByChatId = new Map<string, string>()
   private readonly chatIdsByThreadId = new Map<string, Set<string>>()
@@ -248,9 +249,9 @@ export class FeishuThreadBridge {
     }
   }
 
-  private async sendTextMessage(chatId: string, text: string): Promise<void> {
-    if (!this.client) return
-    await this.client.im.message.create({
+  private async sendTextMessage(chatId: string, text: string): Promise<string> {
+    if (!this.client) return ''
+    const resp = await this.client.im.message.create({
       params: { receive_id_type: 'chat_id' },
       data: {
         receive_id: chatId,
@@ -266,6 +267,38 @@ export class FeishuThreadBridge {
         msg_type: 'interactive',
       },
     })
+    const data = asRecord(resp?.data)
+    return typeof data?.message_id === 'string' ? data.message_id : ''
+  }
+
+  private async updateMessage(messageId: string, text: string): Promise<void> {
+    if (!this.client || !messageId) return
+    try {
+      await this.client.im.message.patch({
+        path: { message_id: messageId },
+        data: {
+          content: JSON.stringify({
+            header: {
+              template: 'wathet',
+              title: { content: '🤖 Codex', tag: 'plain_text' },
+            },
+            elements: [
+              { tag: 'markdown', content: text },
+            ],
+          }),
+        },
+      })
+    } catch {
+      // ignore update failures
+    }
+  }
+
+  private getThinkingMessageId(chatId: string): string {
+    return this.thinkingMessageIdByChatId.get(chatId) ?? ''
+  }
+
+  private clearThinkingMessage(chatId: string): void {
+    this.thinkingMessageIdByChatId.delete(chatId)
   }
 
   private async sendCardMessage(
@@ -441,6 +474,13 @@ export class FeishuThreadBridge {
     }
 
     const threadId = await this.ensureThreadForChat(chatId)
+    const existingThinkingId = this.getThinkingMessageId(chatId)
+    if (existingThinkingId) {
+      await this.updateMessage(existingThinkingId, '⏳ Thinking...')
+    } else {
+      const thinkingId = await this.sendTextMessage(chatId, '⏳ Thinking...')
+      if (thinkingId) this.thinkingMessageIdByChatId.set(chatId, thinkingId)
+    }
     try {
       await this.appServer.rpc('turn/start', {
         threadId,
@@ -448,7 +488,13 @@ export class FeishuThreadBridge {
       })
     } catch (error) {
       const message = getErrorMessage(error, 'Failed to forward message to thread')
-      await this.sendFeishuMessage(chatId, `Forward failed: ${message}`)
+      const thinkingId = this.getThinkingMessageId(chatId)
+      if (thinkingId) {
+        await this.updateMessage(thinkingId, `Forward failed: ${message}`)
+        this.clearThinkingMessage(chatId)
+      } else {
+        await this.sendFeishuMessage(chatId, `Forward failed: ${message}`)
+      }
     }
   }
 
@@ -668,7 +714,13 @@ export class FeishuThreadBridge {
     if (!assistantReply) return
     const chatIdList = Array.from(chatIds)
     for (const chatId of chatIdList) {
-      await this.sendFeishuMessage(chatId, assistantReply)
+      const thinkingId = this.getThinkingMessageId(chatId)
+      if (thinkingId) {
+        await this.updateMessage(thinkingId, assistantReply)
+        this.clearThinkingMessage(chatId)
+      } else {
+        await this.sendFeishuMessage(chatId, assistantReply)
+      }
     }
     if (turnId) {
       this.lastForwardedTurnByThreadId.set(threadId, turnId)
