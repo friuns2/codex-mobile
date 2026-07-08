@@ -537,6 +537,8 @@ export class FeishuThreadBridge {
     if (!this.client) return
     const elements: unknown[] = []
 
+    const MAX_THREADS_PER_GROUP = 6
+
     for (let gi = 0; gi < groups.length; gi += 1) {
       const group = groups[gi]
       if (gi > 0) {
@@ -546,15 +548,24 @@ export class FeishuThreadBridge {
         tag: 'markdown',
         content: `📁 **${group.project}**`,
       })
-      elements.push({
-        tag: 'action',
-        actions: group.threads.map((thread) => ({
-          tag: 'button',
-          text: { content: thread.title, tag: 'plain_text' },
-          type: 'default',
-          value: { threadId: thread.id },
-        })),
-      })
+      const visibleThreads = group.threads.slice(0, MAX_THREADS_PER_GROUP)
+      for (const thread of visibleThreads) {
+        elements.push({
+          tag: 'action',
+          actions: [{
+            tag: 'button',
+            text: { content: thread.title, tag: 'plain_text' },
+            type: 'default',
+            value: { threadId: thread.id },
+          }],
+        })
+      }
+      if (group.threads.length > MAX_THREADS_PER_GROUP) {
+        elements.push({
+          tag: 'markdown',
+          content: `_…and ${group.threads.length - MAX_THREADS_PER_GROUP} more_`,
+        })
+      }
     }
 
     await this.client.im.message.create({
