@@ -118,6 +118,8 @@ export class FeishuThreadBridge {
   private readonly chatIdsByThreadId = new Map<string, Set<string>>()
   private readonly threadCwdByThreadId = new Map<string, string>()
   private readonly lastForwardedTurnByThreadId = new Map<string, string>()
+  private readonly processedMessageIds = new Set<string>()
+  private readonly processedMessageIdOrder: string[] = []
   private active = false
   private lastError = ''
   private readonly onChatSeen?: (chatId: string) => void
@@ -361,6 +363,7 @@ export class FeishuThreadBridge {
       ? (asRecord(sender.sender_id)?.open_id as string ?? '')
       : ''
     const msgType = typeof message.message_type === 'string' ? message.message_type : ''
+    const messageId = typeof message.message_id === 'string' ? message.message_id : ''
 
     if (!chatId) return
 
@@ -382,6 +385,8 @@ export class FeishuThreadBridge {
     }
     if (!text) return
 
+    if (this.hasProcessedMessage(messageId)) return
+
     if (!this.isAllowedSender(senderId)) {
       await this.sendFeishuMessage(chatId, this.unauthorizedMessage(senderId))
       return
@@ -390,25 +395,26 @@ export class FeishuThreadBridge {
 
     const atMentionRegex = /@_user_\d+\s*/g
     text = text.replace(atMentionRegex, '').trim()
+    const commandText = text.toLowerCase()
 
-    if (text === '/start') {
+    if (commandText === '/start') {
       await this.sendFeishuMessage(chatId, this.helpMessage())
       await this.sendThreadPicker(chatId)
       return
     }
 
-    if (text === '/threads') {
+    if (commandText === '/threads') {
       await this.sendThreadPicker(chatId)
       return
     }
 
-    if (text === '/newthread') {
+    if (commandText === '/newthread') {
       const threadId = await this.createThreadForChat(chatId)
       await this.sendFeishuMessage(chatId, `Mapped to new thread: ${threadId}`)
       return
     }
 
-    const threadCommand = text.match(/^\/thread\s+(\S+)$/)
+    const threadCommand = text.match(/^\/thread\s+(\S+)$/i)
     if (threadCommand) {
       const threadId = threadCommand[1]
       this.bindChatToThread(chatId, threadId)
@@ -416,7 +422,7 @@ export class FeishuThreadBridge {
       return
     }
 
-    if (text === '/current') {
+    if (commandText === '/current') {
       const threadId = this.threadIdByChatId.get(chatId)
       await this.sendFeishuMessage(chatId, threadId
         ? `Current thread: ${threadId}`
@@ -424,7 +430,7 @@ export class FeishuThreadBridge {
       return
     }
 
-    if (text === '/history') {
+    if (commandText === '/history') {
       const threadId = this.threadIdByChatId.get(chatId)
       if (!threadId) {
         await this.sendFeishuMessage(chatId, 'No thread is connected for this chat yet. Use /threads or /newthread first.')
@@ -434,7 +440,7 @@ export class FeishuThreadBridge {
       return
     }
 
-    if (text === '/status') {
+    if (commandText === '/status') {
       const status = this.getStatus()
       const mappedThreadId = this.threadIdByChatId.get(chatId) ?? 'none'
       await this.sendFeishuMessage(
@@ -454,7 +460,7 @@ export class FeishuThreadBridge {
       return
     }
 
-    if (text === '/whoami') {
+    if (commandText === '/whoami') {
       const normalizedSenderId = senderId || 'unknown'
       await this.sendFeishuMessage(
         chatId,
@@ -469,7 +475,7 @@ export class FeishuThreadBridge {
       return
     }
 
-    if (text === '/help') {
+    if (commandText === '/help') {
       await this.sendFeishuMessage(chatId, this.helpMessage())
       return
     }
@@ -482,13 +488,9 @@ export class FeishuThreadBridge {
       const thinkingId = await this.sendTextMessage(chatId, '⏳ Thinking...')
       if (thinkingId) this.thinkingMessageIdByChatId.set(chatId, thinkingId)
     }
-    const threadCwd = this.threadCwdByThreadId.get(threadId) || this.defaultCwd
+    const threadCwd = await this.resolveCwdForThread(threadId) || this.defaultCwd
     try {
-      await this.appServer.rpc('turn/start', {
-        threadId,
-        input: [{ type: 'text', text }],
-        cwd: threadCwd,
-      })
+      await this.startTurnWithResumeRetry(threadId, text, threadCwd)
     } catch (error) {
       const message = getErrorMessage(error, 'Failed to forward message to thread')
       const thinkingId = this.getThinkingMessageId(chatId)
@@ -533,6 +535,43 @@ export class FeishuThreadBridge {
     if (!senderId) return false
     if (this.allowAllUsers) return true
     return this.allowedUserIds.has(senderId)
+  }
+
+  private hasProcessedMessage(messageId: string): boolean {
+    if (!messageId) return false
+    if (this.processedMessageIds.has(messageId)) return true
+
+    this.processedMessageIds.add(messageId)
+    this.processedMessageIdOrder.push(messageId)
+
+    const maxRememberedMessages = 500
+    while (this.processedMessageIdOrder.length > maxRememberedMessages) {
+      const oldest = this.processedMessageIdOrder.shift()
+      if (oldest) this.processedMessageIds.delete(oldest)
+    }
+
+    return false
+  }
+
+  private isThreadNotFoundError(error: unknown): boolean {
+    return getErrorMessage(error, '').toLowerCase().includes('not found')
+  }
+
+  private async startTurnWithResumeRetry(threadId: string, text: string, cwd: string): Promise<void> {
+    const params = {
+      threadId,
+      input: [{ type: 'text', text }],
+      cwd,
+    }
+
+    try {
+      await this.appServer.rpc('turn/start', params)
+    } catch (error) {
+      if (!this.isThreadNotFoundError(error)) throw error
+
+      await this.appServer.rpc('thread/resume', { threadId })
+      await this.appServer.rpc('turn/start', params)
+    }
   }
 
   private unauthorizedMessage(senderId: string): string {
@@ -654,13 +693,62 @@ export class FeishuThreadBridge {
     })
   }
 
+  private async resolveCwdForThread(threadId: string): Promise<string> {
+    const cached = this.threadCwdByThreadId.get(threadId)?.trim() ?? ''
+    if (cached) return cached
+
+    try {
+      const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: false }))
+      const thread = asRecord(response?.thread)
+      const cwd = typeof thread?.cwd === 'string' ? thread.cwd.trim() : ''
+      if (cwd) {
+        this.threadCwdByThreadId.set(threadId, cwd)
+        return cwd
+      }
+    } catch {
+      // Fall back to the default cwd below.
+    }
+
+    return ''
+  }
+
+  private async resolveRecentThreadCwd(): Promise<string> {
+    try {
+      const payload = asRecord(await this.appServer.rpc('thread/list', {
+        archived: false,
+        limit: 1,
+        sortKey: 'updated_at',
+        modelProviders: [],
+      }))
+      const rows = Array.isArray(payload?.data) ? payload.data : []
+      const first = asRecord(rows[0])
+      const cwd = typeof first?.cwd === 'string' ? first.cwd.trim() : ''
+      return cwd
+    } catch {
+      return ''
+    }
+  }
+
+  private async resolveCwdForChat(chatId: string): Promise<string> {
+    const existingThreadId = this.threadIdByChatId.get(chatId) ?? ''
+    if (existingThreadId) {
+      const existingCwd = await this.resolveCwdForThread(existingThreadId)
+      if (existingCwd) return existingCwd
+    }
+
+    const recentCwd = await this.resolveRecentThreadCwd()
+    return recentCwd || this.defaultCwd
+  }
+
   private async createThreadForChat(chatId: string): Promise<string> {
-    const response = asRecord(await this.appServer.rpc('thread/start', { cwd: this.defaultCwd }))
+    const cwd = await this.resolveCwdForChat(chatId)
+    const response = asRecord(await this.appServer.rpc('thread/start', { cwd }))
     const thread = asRecord(response?.thread)
     const threadId = typeof thread?.id === 'string' ? thread.id : ''
     if (!threadId) {
       throw new Error('thread/start did not return thread id')
     }
+    this.threadCwdByThreadId.set(threadId, cwd)
     this.bindChatToThread(chatId, threadId)
     return threadId
   }
