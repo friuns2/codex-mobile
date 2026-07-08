@@ -136,6 +136,7 @@ Notes:
 - ⚡ No global install required for quick experimentation
 - 🎙️ Built-in hold-to-dictate voice input with transcription to composer draft
 - 🤖 Optional Telegram bot bridge: send messages to bot, forward into mapped thread, send assistant reply back to Telegram
+- 🐦 Optional Feishu bot bridge: same bidirectional messaging via Feishu using WebSocket long connection (no public IP needed)
 - 💾 Project portability: export a project as a ZIP from project or thread menus, including matching Codex chat JSONL history under `.codex-project/chats/`
 - 📦 Project import: restore exported project ZIPs from the browser via `Import Project`
 - 🔁 Imported chats are rewritten for the destination `CODEX_HOME`, project path, and currently selected provider/model so they can be resumed in the new environment
@@ -173,6 +174,41 @@ Bot commands:
 - `/help` show command reference
 
 Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatting, with automatic plain-text fallback if HTML delivery fails.
+
+### Feishu Bot Bridge (Optional)
+
+Same bidirectional messaging as Telegram, using Feishu's WebSocket long connection mode (no public IP or domain required).
+
+**Setup:**
+
+1. Create a self-built app at [Feishu Open Platform](https://open.feishu.cn)
+2. Enable bot capability
+3. Under Event Subscription, select **Long Connection** mode
+4. Subscribe to `im.message.receive_v1` event
+5. Add permission `im:message:send_as_bot`
+6. Configure in the codexapp sidebar settings (App ID, App Secret, allowed user open_ids), or use environment variables:
+
+```bash
+export FEISHU_APP_ID="<your-feishu-app-id>"
+export FEISHU_APP_SECRET="<your-feishu-app-secret>"
+export FEISHU_ALLOWED_USER_IDS="<your-open-id>,<optional-second-id>"
+export FEISHU_DEFAULT_CWD="$PWD" # optional, defaults to current working directory
+npx codexapp
+```
+
+`FEISHU_ALLOWED_USER_IDS` is required for safe access. Use `*` to allow all users. To find your open_id, send a message to the bot — it will show in the rejection message.
+
+Bot commands (same as Telegram):
+
+- `/start` show quick help and thread picker
+- `/threads` list recent threads grouped by project
+- `/newthread` create and map a new Codex thread
+- `/thread <threadId>` map current chat to an existing thread
+- `/current` show currently connected thread
+- `/history` show full history for current thread
+- `/status` show bridge/mapping status
+- `/whoami` show your Feishu IDs and authorization state
+- `/help` show command reference
 
 ---
 
