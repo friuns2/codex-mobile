@@ -116,6 +116,7 @@ export class FeishuThreadBridge {
   private allowedUserIds = new Set<string>()
   private readonly threadIdByChatId = new Map<string, string>()
   private readonly chatIdsByThreadId = new Map<string, Set<string>>()
+  private readonly threadCwdByThreadId = new Map<string, string>()
   private readonly lastForwardedTurnByThreadId = new Map<string, string>()
   private active = false
   private lastError = ''
@@ -481,16 +482,18 @@ export class FeishuThreadBridge {
       const thinkingId = await this.sendTextMessage(chatId, '⏳ Thinking...')
       if (thinkingId) this.thinkingMessageIdByChatId.set(chatId, thinkingId)
     }
+    const threadCwd = this.threadCwdByThreadId.get(threadId) || this.defaultCwd
     try {
       await this.appServer.rpc('turn/start', {
         threadId,
         input: [{ type: 'text', text }],
+        cwd: threadCwd,
       })
     } catch (error) {
       const message = getErrorMessage(error, 'Failed to forward message to thread')
       const thinkingId = this.getThinkingMessageId(chatId)
       const errorMsg = message.includes('not found')
-        ? `Thread belongs to a different project. Use /newthread to create one in the current project, or /threads to pick a local thread.`
+        ? `Thread not found. Use /newthread to create one in the current project, or /threads to pick a local thread.`
         : `Forward failed: ${message}`
       if (thinkingId) {
         await this.updateMessage(thinkingId, errorMsg)
@@ -513,12 +516,14 @@ export class FeishuThreadBridge {
     const value = asRecord(action?.value)
     const threadId = typeof value?.threadId === 'string' ? value.threadId.trim() : ''
     if (!threadId) return
+    const threadCwd = typeof value?.cwd === 'string' ? value.cwd.trim() : ''
 
     const context = asRecord(record.context)
     const chatId = typeof context?.open_chat_id === 'string' ? context.open_chat_id : ''
     if (!chatId) return
 
     this.bindChatToThread(chatId, threadId)
+    if (threadCwd) this.threadCwdByThreadId.set(threadId, threadCwd)
     this.markChatSeen(chatId)
     await this.sendFeishuMessage(chatId, `Connected to thread: ${threadId}`)
     await this.sendHistoryCard(chatId, threadId, 2)
@@ -550,7 +555,7 @@ export class FeishuThreadBridge {
     await this.sendGroupedThreadCard(chatId, groups)
   }
 
-  private async listRecentThreadGroups(): Promise<Array<{ project: string; threads: Array<{ id: string; title: string }> }>> {
+  private async listRecentThreadGroups(): Promise<Array<{ project: string; threads: Array<{ id: string; title: string; cwd: string }> }>> {
     const allRows: unknown[] = []
     let cursor: string | null = null
 
@@ -570,7 +575,7 @@ export class FeishuThreadBridge {
         : null
     } while (cursor)
 
-    const groupMap = new Map<string, Array<{ id: string; title: string }>>()
+    const groupMap = new Map<string, Array<{ id: string; title: string; cwd: string }>>()
     const groupOrder: string[] = []
 
     for (const row of allRows) {
@@ -587,7 +592,7 @@ export class FeishuThreadBridge {
         groupMap.set(projectName, [])
         groupOrder.push(projectName)
       }
-      groupMap.get(projectName)!.push({ id, title: threadTitle.slice(0, 48) })
+      groupMap.get(projectName)!.push({ id, title: threadTitle.slice(0, 48), cwd })
     }
 
     return groupOrder
@@ -597,7 +602,7 @@ export class FeishuThreadBridge {
 
   private async sendGroupedThreadCard(
     chatId: string,
-    groups: Array<{ project: string; threads: Array<{ id: string; title: string }> }>,
+    groups: Array<{ project: string; threads: Array<{ id: string; title: string; cwd: string }> }>,
   ): Promise<void> {
     if (!this.client) return
     const elements: unknown[] = []
@@ -621,7 +626,7 @@ export class FeishuThreadBridge {
             tag: 'button',
             text: { content: thread.title, tag: 'plain_text' },
             type: 'default',
-            value: { threadId: thread.id },
+            value: { threadId: thread.id, cwd: thread.cwd },
           }],
         })
       }
