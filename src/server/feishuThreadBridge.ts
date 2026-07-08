@@ -396,8 +396,7 @@ export class FeishuThreadBridge {
         await this.sendFeishuMessage(chatId, 'No thread is connected for this chat yet. Use /threads or /newthread first.')
         return
       }
-      const history = await this.readThreadHistorySummary(threadId)
-      await this.sendFeishuMessage(chatId, history)
+      await this.sendHistoryCard(chatId, threadId)
       return
     }
 
@@ -473,10 +472,7 @@ export class FeishuThreadBridge {
     this.bindChatToThread(chatId, threadId)
     this.markChatSeen(chatId)
     await this.sendFeishuMessage(chatId, `Connected to thread: ${threadId}`)
-    const history = await this.readThreadHistorySummary(threadId)
-    if (history) {
-      await this.sendFeishuMessage(chatId, history)
-    }
+    await this.sendHistoryCard(chatId, threadId, 2)
   }
 
   private isAllowedSender(senderId: string): boolean {
@@ -697,11 +693,11 @@ export class FeishuThreadBridge {
     return ''
   }
 
-  private async readThreadHistorySummary(threadId: string): Promise<string> {
+  private async readThreadHistoryMessages(threadId: string): Promise<Array<{ role: 'user' | 'assistant'; text: string }>> {
     const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: true }))
     const thread = asRecord(response?.thread)
     const turns = Array.isArray(thread?.turns) ? thread.turns : []
-    const historyRows: string[] = []
+    const messages: Array<{ role: 'user' | 'assistant'; text: string }> = []
 
     for (const turn of turns) {
       const turnRecord = asRecord(turn)
@@ -714,23 +710,75 @@ export class FeishuThreadBridge {
           for (const block of content) {
             const blockRecord = asRecord(block)
             if (blockRecord?.type === 'text' && typeof blockRecord.text === 'string' && blockRecord.text.trim()) {
-              historyRows.push(`User: ${blockRecord.text.trim()}`)
+              messages.push({ role: 'user', text: blockRecord.text.trim() })
             }
           }
         }
         if (type === 'agentMessage' && typeof itemRecord?.text === 'string' && itemRecord.text.trim()) {
-          historyRows.push(`Assistant: ${itemRecord.text.trim()}`)
+          messages.push({ role: 'assistant', text: itemRecord.text.trim() })
         }
       }
     }
 
-    if (historyRows.length === 0) {
-      return 'Thread has no message history yet.'
+    return messages
+  }
+
+  private mergeConsecutiveMessages(messages: Array<{ role: 'user' | 'assistant'; text: string }>): Array<{ role: 'user' | 'assistant'; text: string }> {
+    const merged: Array<{ role: 'user' | 'assistant'; text: string }> = []
+    for (const msg of messages) {
+      const last = merged[merged.length - 1]
+      if (last && last.role === msg.role) {
+        last.text = `${last.text}\n\n${msg.text}`
+      } else {
+        merged.push({ ...msg })
+      }
+    }
+    return merged
+  }
+
+  private async sendHistoryCard(chatId: string, threadId: string, limit?: number): Promise<void> {
+    if (!this.client) return
+    const rawMessages = await this.readThreadHistoryMessages(threadId)
+    if (rawMessages.length === 0) {
+      await this.sendFeishuMessage(chatId, 'Thread has no message history yet.')
+      return
     }
 
-    const tail = historyRows.slice(-12).join('\n\n')
-    const maxLen = 3800
-    const summary = tail.length > maxLen ? tail.slice(tail.length - maxLen) : tail
-    return `Recent history:\n\n${summary}`
+    const merged = this.mergeConsecutiveMessages(rawMessages)
+    const messages = limit ? merged.slice(-limit) : merged
+
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        await this.client.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: chatId,
+            content: JSON.stringify({
+              header: {
+                template: 'wathet',
+                title: { content: '👤 User', tag: 'plain_text' },
+              },
+              elements: [{ tag: 'markdown', content: msg.text }],
+            }),
+            msg_type: 'interactive',
+          },
+        })
+      } else {
+        await this.client.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: chatId,
+            content: JSON.stringify({
+              header: {
+                template: 'grey',
+                title: { content: '🤖 Assistant', tag: 'plain_text' },
+              },
+              elements: [{ tag: 'markdown', content: msg.text }],
+            }),
+            msg_type: 'interactive',
+          },
+        })
+      }
+    }
   }
 }
