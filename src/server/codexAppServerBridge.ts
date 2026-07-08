@@ -17,6 +17,7 @@ import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js
 import { handleReviewRoutes } from './reviewGit.js'
 import { handleSkillsRoutes, initializeSkillsSyncOnStartup } from './skillsRoutes.js'
 import { TelegramThreadBridge } from './telegramThreadBridge.js'
+import { FeishuThreadBridge } from './feishuThreadBridge.js'
 import {
   getRandomFreeKey,
   getFreeKeyCount,
@@ -6133,6 +6134,80 @@ function rememberTelegramChatId(chatId: number): Promise<void> {
   return telegramBridgeConfigMutation
 }
 
+type FeishuBridgeConfigState = {
+  appId: string
+  appSecret: string
+  chatIds: string[]
+  allowedUserIds: Array<string | '*'>
+}
+
+function getFeishuBridgeConfigPath(): string {
+  return join(getCodexHomeDir(), 'feishu-bridge.json')
+}
+
+function normalizeFeishuBridgeConfig(value: unknown): FeishuBridgeConfigState {
+  const record = asRecord(value)
+  if (!record) return { appId: '', appSecret: '', chatIds: [], allowedUserIds: [] }
+  const appId = typeof record.appId === 'string' ? record.appId.trim() : ''
+  const appSecret = typeof record.appSecret === 'string' ? record.appSecret.trim() : ''
+  const rawChatIds = Array.isArray(record.chatIds) ? record.chatIds : []
+  const chatIds = Array.from(new Set(rawChatIds
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim()))).slice(0, 50)
+  const rawAllowedUserIds = Array.isArray(record.allowedUserIds) ? record.allowedUserIds : []
+  const normalizedAllowedUserIds = rawAllowedUserIds
+    .map((value) => {
+      if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+      return ''
+    })
+    .filter((value) => value.length > 0)
+  const allowAllUsers = normalizedAllowedUserIds.some((value) => value === '*')
+  const allowedUserIds = allowAllUsers
+    ? ['*']
+    : Array.from(new Set(normalizedAllowedUserIds)).slice(0, 100)
+  return { appId, appSecret, chatIds, allowedUserIds }
+}
+
+async function readFeishuBridgeConfig(): Promise<FeishuBridgeConfigState> {
+  const configPath = getFeishuBridgeConfigPath()
+  try {
+    const raw = await readFile(configPath, 'utf8')
+    const payload = asRecord(JSON.parse(raw)) ?? {}
+    return normalizeFeishuBridgeConfig(payload)
+  } catch {
+    return { appId: '', appSecret: '', chatIds: [], allowedUserIds: [] }
+  }
+}
+
+async function writeFeishuBridgeConfig(nextState: FeishuBridgeConfigState): Promise<void> {
+  const normalized = normalizeFeishuBridgeConfig(nextState)
+  const configPath = getFeishuBridgeConfigPath()
+  await writeFile(configPath, JSON.stringify({
+    appId: normalized.appId,
+    appSecret: normalized.appSecret,
+    chatIds: normalized.chatIds,
+    allowedUserIds: normalized.allowedUserIds,
+  }), 'utf8')
+}
+
+let feishuBridgeConfigMutation: Promise<void> = Promise.resolve()
+
+function rememberFeishuChatId(chatId: string): Promise<void> {
+  const normalizedChatId = chatId.trim()
+  if (!normalizedChatId) return Promise.resolve()
+
+  feishuBridgeConfigMutation = feishuBridgeConfigMutation.then(async () => {
+    const current = await readFeishuBridgeConfig()
+    if (current.chatIds.includes(normalizedChatId)) return
+    const next = {
+      ...current,
+      chatIds: [normalizedChatId, ...current.chatIds].slice(0, 50),
+    }
+    await writeFeishuBridgeConfig(next)
+  })
+  return feishuBridgeConfigMutation
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const raw = await readRawBody(req)
   if (raw.length === 0) return null
@@ -7322,6 +7397,7 @@ type SharedBridgeState = {
   terminalManager: ThreadTerminalManager
   methodCatalog: MethodCatalog
   telegramBridge: TelegramThreadBridge
+  feishuBridge: FeishuThreadBridge
   backendQueueProcessor: BackendQueueProcessor
 }
 
@@ -7355,6 +7431,11 @@ function getSharedBridgeState(): SharedBridgeState {
     telegramBridge: new TelegramThreadBridge(appServer, {
       onChatSeen: (chatId) => {
         void rememberTelegramChatId(chatId).catch(() => {})
+      },
+    }),
+    feishuBridge: new FeishuThreadBridge(appServer, {
+      onChatSeen: (chatId) => {
+        void rememberFeishuChatId(chatId).catch(() => {})
       },
     }),
   }
@@ -7439,7 +7520,7 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
 }
 
 export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
-  const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = getSharedBridgeState()
+  const { appServer, terminalManager, methodCatalog, telegramBridge, feishuBridge, backendQueueProcessor } = getSharedBridgeState()
   let threadSearchIndex: ThreadSearchIndex | null = null
   let threadSearchIndexPromise: Promise<ThreadSearchIndex> | null = null
 
@@ -7464,6 +7545,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
       telegramBridge.configureToken(config.botToken)
       telegramBridge.configureAllowedUserIds(config.allowedUserIds)
       telegramBridge.start()
+    })
+    .catch(() => {})
+
+  void readFeishuBridgeConfig()
+    .then((config) => {
+      if (!config.appId || !config.appSecret) return
+      feishuBridge.configureApp(config.appId, config.appSecret)
+      feishuBridge.configureAllowedUserIds(config.allowedUserIds)
+      feishuBridge.start()
     })
     .catch(() => {})
 
@@ -9587,6 +9677,60 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'POST' && url.pathname === '/codex-api/feishu/configure-bot') {
+        const payload = asRecord(await readJsonBody(req))
+        const appId = typeof payload?.appId === 'string' ? payload.appId.trim() : ''
+        const appSecret = typeof payload?.appSecret === 'string' ? payload.appSecret.trim() : ''
+        const rawAllowedUserIds = Array.isArray(payload?.allowedUserIds) ? payload.allowedUserIds : []
+        if (!appId) {
+          setJson(res, 400, { error: 'Missing appId' })
+          return
+        }
+        if (!appSecret) {
+          setJson(res, 400, { error: 'Missing appSecret' })
+          return
+        }
+        const config = normalizeFeishuBridgeConfig({
+          appId,
+          appSecret,
+          allowedUserIds: rawAllowedUserIds,
+        })
+        if (config.allowedUserIds.length === 0) {
+          setJson(res, 400, { error: 'At least one allowed Feishu user ID is required' })
+          return
+        }
+
+        feishuBridge.configureApp(config.appId, config.appSecret)
+        feishuBridge.configureAllowedUserIds(config.allowedUserIds)
+        feishuBridge.start()
+        const existingConfig = await readFeishuBridgeConfig()
+        await writeFeishuBridgeConfig({
+          appId: config.appId,
+          appSecret: config.appSecret,
+          chatIds: existingConfig.chatIds,
+          allowedUserIds: config.allowedUserIds,
+        })
+        setJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/feishu/config') {
+        const config = await readFeishuBridgeConfig()
+        setJson(res, 200, {
+          data: {
+            appId: config.appId,
+            appSecret: config.appSecret,
+            allowedUserIds: config.allowedUserIds,
+          },
+        })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/feishu/status') {
+        setJson(res, 200, { data: feishuBridge.getStatus() })
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/events') {
         res.statusCode = 200
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
@@ -9627,6 +9771,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
   middleware.dispose = () => {
     threadSearchIndex = null
     telegramBridge.stop()
+    feishuBridge.stop()
     terminalManager.dispose()
     backendQueueProcessor.dispose()
     appServer.dispose()
