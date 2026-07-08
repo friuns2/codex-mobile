@@ -498,17 +498,29 @@ export class FeishuThreadBridge {
   }
 
   private async listRecentThreadGroups(): Promise<Array<{ project: string; threads: Array<{ id: string; title: string }> }>> {
-    const payload = asRecord(await this.appServer.rpc('thread/list', {
-      archived: false,
-      limit: 20,
-      sortKey: 'updated_at',
-      modelProviders: [],
-    }))
-    const rows = Array.isArray(payload?.data) ? payload.data : []
+    const allRows: unknown[] = []
+    let cursor: string | null = null
+
+    do {
+      const params: Record<string, unknown> = {
+        archived: false,
+        limit: 100,
+        sortKey: 'updated_at',
+        modelProviders: [],
+      }
+      if (cursor) params.cursor = cursor
+      const payload = asRecord(await this.appServer.rpc('thread/list', params))
+      const rows = Array.isArray(payload?.data) ? payload.data : []
+      for (const row of rows) allRows.push(row)
+      cursor = typeof payload?.nextCursor === 'string' && payload.nextCursor.length > 0
+        ? payload.nextCursor
+        : null
+    } while (cursor)
+
     const groupMap = new Map<string, Array<{ id: string; title: string }>>()
     const groupOrder: string[] = []
 
-    for (const row of rows) {
+    for (const row of allRows) {
       const record = asRecord(row)
       const id = typeof record?.id === 'string' ? record.id.trim() : ''
       if (!id) continue
