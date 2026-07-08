@@ -370,6 +370,22 @@ export type TelegramConfig = {
   allowedUserIds: Array<number | '*'>
 }
 
+export type FeishuStatus = {
+  configured: boolean
+  active: boolean
+  mappedChats: number
+  mappedThreads: number
+  allowedUsers: number
+  allowAllUsers: boolean
+  lastError: string
+}
+
+export type FeishuConfig = {
+  appId: string
+  appSecret: string
+  allowedUserIds: Array<string | '*'>
+}
+
 export type LocalDirectoryEntry = {
   name: string
   path: string
@@ -3380,6 +3396,82 @@ export async function getTelegramStatus(): Promise<TelegramStatus> {
   const payload = await response.json()
   if (!response.ok) {
     const message = getErrorMessageFromPayload(payload, 'Failed to load Telegram status')
+    throw new Error(message)
+  }
+  const record =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  const data =
+    record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+      ? (record.data as Record<string, unknown>)
+      : {}
+  return {
+    configured: data.configured === true,
+    active: data.active === true,
+    mappedChats: typeof data.mappedChats === 'number' ? data.mappedChats : 0,
+    mappedThreads: typeof data.mappedThreads === 'number' ? data.mappedThreads : 0,
+    allowedUsers: typeof data.allowedUsers === 'number' ? data.allowedUsers : 0,
+    allowAllUsers: data.allowAllUsers === true,
+    lastError: typeof data.lastError === 'string' ? data.lastError : '',
+  }
+}
+
+export async function configureFeishuBot(
+  appId: string,
+  appSecret: string,
+  allowedUserIds: Array<string | '*'>,
+): Promise<void> {
+  const response = await fetch('/codex-api/feishu/configure-bot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      appId,
+      appSecret,
+      allowedUserIds,
+    }),
+  })
+  const payload = await response.json()
+  if (!response.ok) {
+    const message = getErrorMessageFromPayload(payload, 'Failed to connect Feishu bot')
+    throw new Error(message)
+  }
+}
+
+export async function getFeishuConfig(): Promise<FeishuConfig> {
+  const response = await fetch('/codex-api/feishu/config')
+  const payload = await response.json()
+  if (!response.ok) {
+    const message = getErrorMessageFromPayload(payload, 'Failed to load Feishu configuration')
+    throw new Error(message)
+  }
+  const record =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  const data =
+    record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+      ? (record.data as Record<string, unknown>)
+      : {}
+  const rawAllowedUserIds = Array.isArray(data.allowedUserIds) ? data.allowedUserIds : []
+  const allowedUserIds: Array<string | '*'> = []
+  for (const value of rawAllowedUserIds) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      allowedUserIds.push(value.trim())
+    }
+  }
+  return {
+    appId: typeof data.appId === 'string' ? data.appId : '',
+    appSecret: typeof data.appSecret === 'string' ? data.appSecret : '',
+    allowedUserIds,
+  }
+}
+
+export async function getFeishuStatus(): Promise<FeishuStatus> {
+  const response = await fetch('/codex-api/feishu/status')
+  const payload = await response.json()
+  if (!response.ok) {
+    const message = getErrorMessageFromPayload(payload, 'Failed to load Feishu status')
     throw new Error(message)
   }
   const record =
