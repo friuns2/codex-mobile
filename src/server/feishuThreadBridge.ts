@@ -489,11 +489,14 @@ export class FeishuThreadBridge {
     } catch (error) {
       const message = getErrorMessage(error, 'Failed to forward message to thread')
       const thinkingId = this.getThinkingMessageId(chatId)
+      const errorMsg = message.includes('not found')
+        ? `Thread belongs to a different project. Use /newthread to create one in the current project, or /threads to pick a local thread.`
+        : `Forward failed: ${message}`
       if (thinkingId) {
-        await this.updateMessage(thinkingId, `Forward failed: ${message}`)
+        await this.updateMessage(thinkingId, errorMsg)
         this.clearThinkingMessage(chatId)
       } else {
-        await this.sendFeishuMessage(chatId, `Forward failed: ${message}`)
+        await this.sendFeishuMessage(chatId, errorMsg)
       }
     }
   }
@@ -557,7 +560,6 @@ export class FeishuThreadBridge {
         limit: 100,
         sortKey: 'updated_at',
         modelProviders: [],
-        cwd: this.defaultCwd,
       }
       if (cursor) params.cursor = cursor
       const payload = asRecord(await this.appServer.rpc('thread/list', params))
