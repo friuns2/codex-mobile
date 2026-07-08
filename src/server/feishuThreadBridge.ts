@@ -511,6 +511,7 @@ export class FeishuThreadBridge {
         limit: 100,
         sortKey: 'updated_at',
         modelProviders: [],
+        cwd: this.defaultCwd,
       }
       if (cursor) params.cursor = cursor
       const payload = asRecord(await this.appServer.rpc('thread/list', params))
