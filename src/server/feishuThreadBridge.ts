@@ -254,8 +254,16 @@ export class FeishuThreadBridge {
       params: { receive_id_type: 'chat_id' },
       data: {
         receive_id: chatId,
-        content: JSON.stringify({ text }),
-        msg_type: 'text',
+        content: JSON.stringify({
+          header: {
+            template: 'wathet',
+            title: { content: '🤖 Codex', tag: 'plain_text' },
+          },
+          elements: [
+            { tag: 'markdown', content: text },
+          ],
+        }),
+        msg_type: 'interactive',
       },
     })
   }
