@@ -1,4 +1,6 @@
-import { basename } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import * as lark from '@larksuiteoapi/node-sdk'
 
 type AppServerLike = {
@@ -25,6 +27,12 @@ type FeishuBotCommand = {
   description: string
 }
 
+type FeishuRecentThread = {
+  id: string
+  title: string
+  cwd: string
+}
+
 const FEISHU_MESSAGE_MAX_LENGTH = 3500
 const FEISHU_BOT_COMMANDS: FeishuBotCommand[] = [
   { command: 'start', description: 'Show quick start and thread picker' },
@@ -42,6 +50,54 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+function normalizePathKey(value: string): string {
+  const normalized = value.trim().replace(/\\/g, '/').replace(/\/+$/u, '')
+  return /^[a-z]:\//iu.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+function getPathLeaf(value: string): string {
+  const normalized = value.trim().replace(/[\\/]+$/u, '')
+  if (!normalized) return ''
+  const separatorIndex = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
+  return separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized
+}
+
+function getCodexGlobalStatePath(): string {
+  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
+  return join(codexHome, '.codex-global-state.json')
+}
+
+async function readWorkspaceRootLabels(): Promise<Map<string, string>> {
+  try {
+    const raw = await readFile(getCodexGlobalStatePath(), 'utf8')
+    const payload = asRecord(JSON.parse(raw))
+    const labels = asRecord(payload?.['electron-workspace-root-labels'])
+    const result = new Map<string, string>()
+    for (const [rootPath, label] of Object.entries(labels ?? {})) {
+      if (typeof label !== 'string') continue
+      const key = normalizePathKey(rootPath)
+      const normalizedLabel = label.trim()
+      if (key && normalizedLabel) result.set(key, normalizedLabel)
+    }
+    return result
+  } catch {
+    return new Map()
+  }
+}
+
+function formatThreadProjectName(
+  cwd: string,
+  labelsByPath: Map<string, string>,
+): string {
+  const normalizedCwd = cwd.trim()
+  if (!normalizedCwd) return 'project'
+
+  const label = labelsByPath.get(normalizePathKey(normalizedCwd))
+  if (label) return label
+
+  return getPathLeaf(normalizedCwd) || normalizedCwd
 }
 
 function getErrorMessage(payload: unknown, fallback: string): string {
@@ -594,7 +650,7 @@ export class FeishuThreadBridge {
     await this.sendGroupedThreadCard(chatId, groups)
   }
 
-  private async listRecentThreadGroups(): Promise<Array<{ project: string; threads: Array<{ id: string; title: string; cwd: string }> }>> {
+  private async listRecentThreadGroups(): Promise<Array<{ project: string; threads: FeishuRecentThread[] }>> {
     const allRows: unknown[] = []
     let cursor: string | null = null
 
@@ -614,9 +670,7 @@ export class FeishuThreadBridge {
         : null
     } while (cursor)
 
-    const groupMap = new Map<string, Array<{ id: string; title: string; cwd: string }>>()
-    const groupOrder: string[] = []
-
+    const threads: FeishuRecentThread[] = []
     for (const row of allRows) {
       const record = asRecord(row)
       const id = typeof record?.id === 'string' ? record.id.trim() : ''
@@ -624,18 +678,27 @@ export class FeishuThreadBridge {
       const name = typeof record?.name === 'string' ? record.name.trim() : ''
       const preview = typeof record?.preview === 'string' ? record.preview.trim() : ''
       const cwd = typeof record?.cwd === 'string' ? record.cwd.trim() : ''
-      const projectName = cwd ? basename(cwd) : 'project'
       const threadTitle = (name || preview || id).replace(/\s+/g, ' ').trim()
+      threads.push({ id, title: threadTitle.slice(0, 48), cwd })
+    }
 
-      if (!groupMap.has(projectName)) {
-        groupMap.set(projectName, [])
-        groupOrder.push(projectName)
+    const labelsByPath = await readWorkspaceRootLabels()
+    const groupMap = new Map<string, FeishuRecentThread[]>()
+    const groupNameByKey = new Map<string, string>()
+    const groupOrder: string[] = []
+
+    for (const thread of threads) {
+      const groupKey = thread.cwd ? normalizePathKey(thread.cwd) : 'project'
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, [])
+        groupNameByKey.set(groupKey, formatThreadProjectName(thread.cwd, labelsByPath))
+        groupOrder.push(groupKey)
       }
-      groupMap.get(projectName)!.push({ id, title: threadTitle.slice(0, 48), cwd })
+      groupMap.get(groupKey)!.push(thread)
     }
 
     return groupOrder
-      .map((project) => ({ project, threads: groupMap.get(project) ?? [] }))
+      .map((groupKey) => ({ project: groupNameByKey.get(groupKey) ?? groupKey, threads: groupMap.get(groupKey) ?? [] }))
       .filter((group) => group.threads.length > 0)
   }
 
