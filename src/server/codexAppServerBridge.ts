@@ -17,7 +17,7 @@ import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js
 import { handleReviewRoutes } from './reviewGit.js'
 import { handleSkillsRoutes, initializeSkillsSyncOnStartup } from './skillsRoutes.js'
 import { TelegramThreadBridge } from './telegramThreadBridge.js'
-import { FeishuThreadBridge } from './feishuThreadBridge.js'
+import { FeishuThreadBridge, normalizeFeishuDomain, type FeishuBridgeDomain } from './feishuThreadBridge.js'
 import {
   getRandomFreeKey,
   getFreeKeyCount,
@@ -6137,6 +6137,7 @@ function rememberTelegramChatId(chatId: number): Promise<void> {
 type FeishuBridgeConfigState = {
   appId: string
   appSecret: string
+  domain: FeishuBridgeDomain
   chatIds: string[]
   allowedUserIds: Array<string | '*'>
 }
@@ -6147,9 +6148,10 @@ function getFeishuBridgeConfigPath(): string {
 
 function normalizeFeishuBridgeConfig(value: unknown): FeishuBridgeConfigState {
   const record = asRecord(value)
-  if (!record) return { appId: '', appSecret: '', chatIds: [], allowedUserIds: [] }
+  if (!record) return { appId: '', appSecret: '', domain: 'feishu', chatIds: [], allowedUserIds: [] }
   const appId = typeof record.appId === 'string' ? record.appId.trim() : ''
   const appSecret = typeof record.appSecret === 'string' ? record.appSecret.trim() : ''
+  const domain = normalizeFeishuDomain(record.domain)
   const rawChatIds = Array.isArray(record.chatIds) ? record.chatIds : []
   const chatIds = Array.from(new Set(rawChatIds
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
@@ -6165,7 +6167,7 @@ function normalizeFeishuBridgeConfig(value: unknown): FeishuBridgeConfigState {
   const allowedUserIds = allowAllUsers
     ? ['*']
     : Array.from(new Set(normalizedAllowedUserIds)).slice(0, 100)
-  return { appId, appSecret, chatIds, allowedUserIds }
+  return { appId, appSecret, domain, chatIds, allowedUserIds }
 }
 
 async function readFeishuBridgeConfig(): Promise<FeishuBridgeConfigState> {
@@ -6175,7 +6177,7 @@ async function readFeishuBridgeConfig(): Promise<FeishuBridgeConfigState> {
     const payload = asRecord(JSON.parse(raw)) ?? {}
     return normalizeFeishuBridgeConfig(payload)
   } catch {
-    return { appId: '', appSecret: '', chatIds: [], allowedUserIds: [] }
+    return { appId: '', appSecret: '', domain: 'feishu', chatIds: [], allowedUserIds: [] }
   }
 }
 
@@ -6185,6 +6187,7 @@ async function writeFeishuBridgeConfig(nextState: FeishuBridgeConfigState): Prom
   await writeFile(configPath, JSON.stringify({
     appId: normalized.appId,
     appSecret: normalized.appSecret,
+    domain: normalized.domain,
     chatIds: normalized.chatIds,
     allowedUserIds: normalized.allowedUserIds,
   }), 'utf8')
@@ -7551,7 +7554,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
   void readFeishuBridgeConfig()
     .then((config) => {
       if (!config.appId || !config.appSecret) return
-      feishuBridge.configureApp(config.appId, config.appSecret)
+      feishuBridge.configureApp(config.appId, config.appSecret, config.domain)
       feishuBridge.configureAllowedUserIds(config.allowedUserIds)
       feishuBridge.start()
     })
@@ -9681,6 +9684,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const payload = asRecord(await readJsonBody(req))
         const appId = typeof payload?.appId === 'string' ? payload.appId.trim() : ''
         const appSecret = typeof payload?.appSecret === 'string' ? payload.appSecret.trim() : ''
+        const domain = normalizeFeishuDomain(payload?.domain)
         const rawAllowedUserIds = Array.isArray(payload?.allowedUserIds) ? payload.allowedUserIds : []
         if (!appId) {
           setJson(res, 400, { error: 'Missing appId' })
@@ -9693,6 +9697,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const config = normalizeFeishuBridgeConfig({
           appId,
           appSecret,
+          domain,
           allowedUserIds: rawAllowedUserIds,
         })
         if (config.allowedUserIds.length === 0) {
@@ -9700,13 +9705,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           return
         }
 
-        feishuBridge.configureApp(config.appId, config.appSecret)
+        feishuBridge.configureApp(config.appId, config.appSecret, config.domain)
         feishuBridge.configureAllowedUserIds(config.allowedUserIds)
         feishuBridge.start()
         const existingConfig = await readFeishuBridgeConfig()
         await writeFeishuBridgeConfig({
           appId: config.appId,
           appSecret: config.appSecret,
+          domain: config.domain,
           chatIds: existingConfig.chatIds,
           allowedUserIds: config.allowedUserIds,
         })
@@ -9720,6 +9726,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           data: {
             appId: config.appId,
             appSecret: config.appSecret,
+            domain: config.domain,
             allowedUserIds: config.allowedUserIds,
           },
         })

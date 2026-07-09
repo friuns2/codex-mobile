@@ -480,6 +480,29 @@
                 <span class="sidebar-settings-value">{{ feishuStatusText }}</span>
               </button>
               <div v-if="isFeishuConfigOpen" class="sidebar-settings-telegram-panel">
+                <div class="sidebar-settings-row sidebar-settings-row--select" style="padding: 0">
+                  <span class="sidebar-settings-label">{{ t('Platform') }}</span>
+                  <div class="sidebar-settings-segmented" role="group" :aria-label="t('Feishu platform')">
+                    <button
+                      type="button"
+                      class="sidebar-settings-segmented-option"
+                      :class="{ 'is-active': feishuDomainDraft === 'feishu' }"
+                      :disabled="isFeishuSaving"
+                      @click="feishuDomainDraft = 'feishu'"
+                    >
+                      Feishu
+                    </button>
+                    <button
+                      type="button"
+                      class="sidebar-settings-segmented-option"
+                      :class="{ 'is-active': feishuDomainDraft === 'lark' }"
+                      :disabled="isFeishuSaving"
+                      @click="feishuDomainDraft = 'lark'"
+                    >
+                      Lark
+                    </button>
+                  </div>
+                </div>
                 <label class="sidebar-settings-field">
                   <span class="sidebar-settings-field-label">{{ t('App ID') }}</span>
                   <input
@@ -1285,7 +1308,7 @@ import {
 } from './api/codexGateway'
 import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
-import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, TelegramStatus, FeishuStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
+import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, TelegramStatus, FeishuStatus, FeishuDomain, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
@@ -1722,6 +1745,7 @@ const telegramAllowedUserIdsDraft = ref('')
 const telegramConfigError = ref('')
 const isTelegramSaving = ref(false)
 const isFeishuConfigOpen = ref(false)
+const feishuDomainDraft = ref<FeishuDomain>('feishu')
 const feishuAppIdDraft = ref('')
 const feishuAppSecretDraft = ref('')
 const feishuAllowedUserIdsDraft = ref('')
@@ -1778,6 +1802,7 @@ const telegramStatus = ref<TelegramStatus>({
 const feishuStatus = ref<FeishuStatus>({
   configured: false,
   active: false,
+  domain: 'feishu',
   mappedChats: 0,
   mappedThreads: 0,
   allowedUsers: 0,
@@ -2197,12 +2222,13 @@ const telegramStatusText = computed(() => {
 const feishuStatusText = computed(() => {
   if (!feishuStatus.value.configured) return t('Not configured')
   const base = feishuStatus.value.active ? t('Online') : t('Configured (offline)')
+  const platform = feishuStatus.value.domain === 'lark' ? 'Lark' : 'Feishu'
   const allowlist = feishuStatus.value.allowAllUsers
     ? t('allow all users')
     : `${feishuStatus.value.allowedUsers} ${t('allowed user(s)')}`
   const mapped = `${feishuStatus.value.mappedChats} ${t('chat(s)')}, ${feishuStatus.value.mappedThreads} ${t('thread(s)')}, ${allowlist}`
   const error = feishuStatus.value.lastError ? `, ${t('error')}: ${feishuStatus.value.lastError}` : ''
-  return `${base}, ${mapped}${error}`
+  return `${base}, ${platform}, ${mapped}${error}`
 })
 
 onMounted(() => {
@@ -2439,6 +2465,7 @@ async function refreshFeishuStatus(): Promise<void> {
       mappedThreads: 0,
       allowedUsers: 0,
       allowAllUsers: false,
+      domain: 'feishu',
       lastError: message,
     }
   }
@@ -2447,6 +2474,7 @@ async function refreshFeishuStatus(): Promise<void> {
 async function refreshFeishuConfig(): Promise<void> {
   try {
     const config = await getFeishuConfig()
+    feishuDomainDraft.value = config.domain
     feishuAppIdDraft.value = config.appId
     feishuAppSecretDraft.value = config.appSecret
     feishuAllowedUserIdsDraft.value = config.allowedUserIds.map((value) => String(value)).join('\n')
@@ -2486,7 +2514,7 @@ async function saveFeishuConfig(): Promise<void> {
   isFeishuSaving.value = true
   feishuConfigError.value = ''
   try {
-    await configureFeishuBot(appId, appSecret, allowedUserIds)
+    await configureFeishuBot(appId, appSecret, feishuDomainDraft.value, allowedUserIds)
     feishuAllowedUserIdsDraft.value = allowedUserIds.map((value) => String(value)).join('\n')
     await Promise.all([
       refreshFeishuConfig(),

@@ -12,9 +12,12 @@ type FeishuThreadBridgeOptions = {
   onChatSeen?: (chatId: string) => void
 }
 
+export type FeishuBridgeDomain = 'feishu' | 'lark'
+
 export type FeishuBridgeStatus = {
   configured: boolean
   active: boolean
+  domain: FeishuBridgeDomain
   mappedChats: number
   mappedThreads: number
   allowedUsers: number
@@ -115,6 +118,19 @@ function getErrorMessage(payload: unknown, fallback: string): string {
   return fallback
 }
 
+export function normalizeFeishuDomain(value: unknown): FeishuBridgeDomain {
+  if (typeof value !== 'string') return 'feishu'
+  const normalized = value.trim().toLowerCase()
+  if (['lark', 'international', 'intl', 'global', 'open.larksuite.com', 'https://open.larksuite.com'].includes(normalized)) {
+    return 'lark'
+  }
+  return 'feishu'
+}
+
+function getLarkSdkDomain(domain: FeishuBridgeDomain): lark.Domain {
+  return domain === 'lark' ? lark.Domain.Lark : lark.Domain.Feishu
+}
+
 type NormalizedFeishuAllowlist = {
   allowAllUsers: boolean
   allowedUserIds: string[]
@@ -165,6 +181,7 @@ function splitFeishuText(text: string, maxLength = FEISHU_MESSAGE_MAX_LENGTH): s
 export class FeishuThreadBridge {
   private appId: string
   private appSecret: string
+  private domain: FeishuBridgeDomain
   private readonly appServer: AppServerLike
   private readonly defaultCwd: string
   private allowAllUsers = false
@@ -187,6 +204,7 @@ export class FeishuThreadBridge {
     this.appServer = appServer
     this.appId = process.env.FEISHU_APP_ID?.trim() ?? ''
     this.appSecret = process.env.FEISHU_APP_SECRET?.trim() ?? ''
+    this.domain = normalizeFeishuDomain(process.env.FEISHU_DOMAIN)
     this.defaultCwd = process.env.FEISHU_DEFAULT_CWD?.trim() ?? process.cwd()
     this.configureAllowedUserIds(
       (process.env.FEISHU_ALLOWED_USER_IDS ?? '')
@@ -200,12 +218,13 @@ export class FeishuThreadBridge {
   start(): void {
     if (!this.appId || !this.appSecret || this.active) return
     this.active = true
+    const domain = getLarkSdkDomain(this.domain)
 
     this.client = new lark.Client({
       appId: this.appId,
       appSecret: this.appSecret,
       appType: lark.AppType.SelfBuild,
-      domain: lark.Domain.Feishu,
+      domain,
     })
 
     const eventDispatcher = new lark.EventDispatcher({}).register({
@@ -224,6 +243,7 @@ export class FeishuThreadBridge {
     this.wsClient = new lark.WSClient({
       appId: this.appId,
       appSecret: this.appSecret,
+      domain,
       loggerLevel: lark.LoggerLevel.warn,
     })
 
@@ -240,23 +260,33 @@ export class FeishuThreadBridge {
     this.active = false
     this.unsubscribeNotifications?.()
     this.unsubscribeNotifications = null
+    this.wsClient?.close({ force: true })
     this.client = null
     this.wsClient = null
   }
 
-  configureApp(appId: string, appSecret: string): void {
+  configureApp(appId: string, appSecret: string, domain: unknown = this.domain): void {
     const normalizedAppId = appId.trim()
     const normalizedAppSecret = appSecret.trim()
+    const normalizedDomain = normalizeFeishuDomain(domain)
     if (!normalizedAppId) throw new Error('Feishu App ID is required')
     if (!normalizedAppSecret) throw new Error('Feishu App Secret is required')
+    const shouldRestart = this.active
+      && (this.appId !== normalizedAppId
+        || this.appSecret !== normalizedAppSecret
+        || this.domain !== normalizedDomain)
+    if (shouldRestart) this.stop()
     this.appId = normalizedAppId
     this.appSecret = normalizedAppSecret
+    this.domain = normalizedDomain
+    if (shouldRestart) this.start()
   }
 
   getStatus(): FeishuBridgeStatus {
     return {
       configured: this.appId.length > 0 && this.appSecret.length > 0,
       active: this.active,
+      domain: this.domain,
       mappedChats: this.threadIdByChatId.size,
       mappedThreads: this.chatIdsByThreadId.size,
       allowedUsers: this.allowedUserIds.size,

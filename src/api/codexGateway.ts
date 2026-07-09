@@ -370,9 +370,12 @@ export type TelegramConfig = {
   allowedUserIds: Array<number | '*'>
 }
 
+export type FeishuDomain = 'feishu' | 'lark'
+
 export type FeishuStatus = {
   configured: boolean
   active: boolean
+  domain: FeishuDomain
   mappedChats: number
   mappedThreads: number
   allowedUsers: number
@@ -383,6 +386,7 @@ export type FeishuStatus = {
 export type FeishuConfig = {
   appId: string
   appSecret: string
+  domain: FeishuDomain
   allowedUserIds: Array<string | '*'>
 }
 
@@ -3420,6 +3424,7 @@ export async function getTelegramStatus(): Promise<TelegramStatus> {
 export async function configureFeishuBot(
   appId: string,
   appSecret: string,
+  domain: FeishuDomain,
   allowedUserIds: Array<string | '*'>,
 ): Promise<void> {
   const response = await fetch('/codex-api/feishu/configure-bot', {
@@ -3428,6 +3433,7 @@ export async function configureFeishuBot(
     body: JSON.stringify({
       appId,
       appSecret,
+      domain,
       allowedUserIds,
     }),
   })
@@ -3463,6 +3469,7 @@ export async function getFeishuConfig(): Promise<FeishuConfig> {
   return {
     appId: typeof data.appId === 'string' ? data.appId : '',
     appSecret: typeof data.appSecret === 'string' ? data.appSecret : '',
+    domain: data.domain === 'lark' ? 'lark' : 'feishu',
     allowedUserIds,
   }
 }
@@ -3485,6 +3492,7 @@ export async function getFeishuStatus(): Promise<FeishuStatus> {
   return {
     configured: data.configured === true,
     active: data.active === true,
+    domain: data.domain === 'lark' ? 'lark' : 'feishu',
     mappedChats: typeof data.mappedChats === 'number' ? data.mappedChats : 0,
     mappedThreads: typeof data.mappedThreads === 'number' ? data.mappedThreads : 0,
     allowedUsers: typeof data.allowedUsers === 'number' ? data.allowedUsers : 0,
