@@ -178,6 +178,22 @@ function splitFeishuText(text: string, maxLength = FEISHU_MESSAGE_MAX_LENGTH): s
   return chunks
 }
 
+function formatDurationMs(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return ''
+  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))}ms`
+
+  const totalSeconds = Math.round(durationMs / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}s`
+
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+}
+
 export class FeishuThreadBridge {
   private appId: string
   private appSecret: string
@@ -186,6 +202,7 @@ export class FeishuThreadBridge {
   private readonly defaultCwd: string
   private allowAllUsers = false
   private readonly thinkingMessageIdByChatId = new Map<string, string>()
+  private readonly thinkingStartedAtMsByChatId = new Map<string, number>()
   private allowedUserIds = new Set<string>()
   private readonly threadIdByChatId = new Map<string, string>()
   private readonly chatIdsByThreadId = new Map<string, Set<string>>()
@@ -388,6 +405,22 @@ export class FeishuThreadBridge {
 
   private clearThinkingMessage(chatId: string): void {
     this.thinkingMessageIdByChatId.delete(chatId)
+    this.thinkingStartedAtMsByChatId.delete(chatId)
+  }
+
+  private markThinkingStarted(chatId: string): void {
+    this.thinkingStartedAtMsByChatId.set(chatId, Date.now())
+  }
+
+  private getThinkingDurationText(chatId: string): string {
+    const startedAtMs = this.thinkingStartedAtMsByChatId.get(chatId)
+    if (typeof startedAtMs !== 'number') return ''
+    return formatDurationMs(Date.now() - startedAtMs)
+  }
+
+  private getCompletedMessage(chatId: string): string {
+    const durationText = this.getThinkingDurationText(chatId)
+    return durationText ? `✅ Completed in ${durationText}` : '✅ Completed'
   }
 
   private async sendCardMessage(
@@ -568,6 +601,7 @@ export class FeishuThreadBridge {
 
     const threadId = await this.ensureThreadForChat(chatId)
     const existingThinkingId = this.getThinkingMessageId(chatId)
+    this.markThinkingStarted(chatId)
     if (existingThinkingId) {
       await this.updateMessage(existingThinkingId, '⏳ Thinking...')
     } else {
@@ -899,14 +933,14 @@ export class FeishuThreadBridge {
     if (turnId && lastForwardedTurnId === turnId) return
 
     const assistantReply = await this.readLatestAssistantMessage(threadId)
-    if (!assistantReply) return
     const chatIdList = Array.from(chatIds)
     for (const chatId of chatIdList) {
       const thinkingId = this.getThinkingMessageId(chatId)
       if (thinkingId) {
-        await this.updateMessage(thinkingId, assistantReply)
+        await this.updateMessage(thinkingId, this.getCompletedMessage(chatId))
         this.clearThinkingMessage(chatId)
-      } else {
+      }
+      if (assistantReply) {
         await this.sendFeishuMessage(chatId, assistantReply)
       }
     }
