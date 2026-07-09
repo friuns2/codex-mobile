@@ -475,6 +475,84 @@
                   </button>
                 </div>
               </div>
+              <button class="sidebar-settings-row" type="button" aria-live="polite" @click="isFeishuConfigOpen = !isFeishuConfigOpen">
+                <span class="sidebar-settings-label">{{ t('Feishu') }}</span>
+                <span class="sidebar-settings-value">{{ feishuStatusText }}</span>
+              </button>
+              <div v-if="isFeishuConfigOpen" class="sidebar-settings-telegram-panel">
+                <div class="sidebar-settings-row sidebar-settings-row--select" style="padding: 0">
+                  <span class="sidebar-settings-label">{{ t('Platform') }}</span>
+                  <div class="sidebar-settings-segmented" role="group" :aria-label="t('Feishu platform')">
+                    <button
+                      type="button"
+                      class="sidebar-settings-segmented-option"
+                      :class="{ 'is-active': feishuDomainDraft === 'feishu' }"
+                      :disabled="isFeishuSaving"
+                      @click="feishuDomainDraft = 'feishu'"
+                    >
+                      Feishu
+                    </button>
+                    <button
+                      type="button"
+                      class="sidebar-settings-segmented-option"
+                      :class="{ 'is-active': feishuDomainDraft === 'lark' }"
+                      :disabled="isFeishuSaving"
+                      @click="feishuDomainDraft = 'lark'"
+                    >
+                      Lark
+                    </button>
+                  </div>
+                </div>
+                <label class="sidebar-settings-field">
+                  <span class="sidebar-settings-field-label">{{ t('App ID') }}</span>
+                  <input
+                    v-model="feishuAppIdDraft"
+                    class="sidebar-settings-input"
+                    type="text"
+                    placeholder="cli_xxxxxxxxxx"
+                    autocomplete="off"
+                    spellcheck="false"
+                  >
+                </label>
+                <label class="sidebar-settings-field">
+                  <span class="sidebar-settings-field-label">{{ t('App Secret') }}</span>
+                  <input
+                    v-model="feishuAppSecretDraft"
+                    class="sidebar-settings-input"
+                    type="password"
+                    placeholder="xxxxxxxxxxxxxxxxxxxxxxxx"
+                    autocomplete="off"
+                    spellcheck="false"
+                  >
+                </label>
+                <label class="sidebar-settings-field">
+                  <span class="sidebar-settings-field-label">{{ t('Allowed Feishu user open_ids') }}</span>
+                  <textarea
+                    v-model="feishuAllowedUserIdsDraft"
+                    class="sidebar-settings-textarea"
+                    rows="3"
+                    placeholder="ou_xxxxxxxxxx&#10;ou_yyyyyyyyyy"
+                    spellcheck="false"
+                  />
+                </label>
+                <div class="sidebar-settings-field-help">
+                  {{ t('Put one Feishu open_id per line or separate them with commas. Use `*` to allow all Feishu users. You can find open_id in the bot rejection message.') }}
+                </div>
+                <div v-if="feishuConfigError" class="sidebar-settings-telegram-error">
+                  <span>{{ feishuConfigError }}</span>
+                  <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, feishuConfigError)">{{ t('Send feedback') }}</a>
+                </div>
+                <div class="sidebar-settings-telegram-actions">
+                  <button
+                    class="sidebar-settings-telegram-save"
+                    type="button"
+                    :disabled="isFeishuSaving"
+                    @click="saveFeishuConfig"
+                  >
+                    {{ isFeishuSaving ? t('Saving…') : t('Save Feishu config') }}
+                  </button>
+                </div>
+              </div>
               <div
                 v-if="showThreadContextBadge"
                 class="sidebar-settings-row sidebar-settings-context-row"
@@ -1193,6 +1271,7 @@ import {
   checkoutGitBranch,
   cloneGithubRepository,
   configureTelegramBot,
+  configureFeishuBot,
   createPermanentWorktree,
   createWorktree,
   createProjectlessThreadDirectory,
@@ -1209,8 +1288,10 @@ import {
   getFirstLaunchPluginsCardPreference,
   getHomeDirectory,
   getTelegramConfig,
+  getFeishuConfig,
   getProjectRootSuggestion,
   getTelegramStatus,
+  getFeishuStatus,
   getThreadTerminalQuickCommands,
   getThreadTerminalStatus,
   getWorkspaceRootsState,
@@ -1227,7 +1308,7 @@ import {
 } from './api/codexGateway'
 import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
-import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
+import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, TelegramStatus, FeishuStatus, FeishuDomain, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
@@ -1663,6 +1744,13 @@ const telegramBotTokenDraft = ref('')
 const telegramAllowedUserIdsDraft = ref('')
 const telegramConfigError = ref('')
 const isTelegramSaving = ref(false)
+const isFeishuConfigOpen = ref(false)
+const feishuDomainDraft = ref<FeishuDomain>('feishu')
+const feishuAppIdDraft = ref('')
+const feishuAppSecretDraft = ref('')
+const feishuAllowedUserIdsDraft = ref('')
+const feishuConfigError = ref('')
+const isFeishuSaving = ref(false)
 const isCreateFolderOpen = ref(false)
 const createFolderDraft = ref('')
 const createFolderError = ref('')
@@ -1705,6 +1793,16 @@ const hasVisibleFeedbackError = computed(() => visibleFeedbackErrors.some((entry
 const telegramStatus = ref<TelegramStatus>({
   configured: false,
   active: false,
+  mappedChats: 0,
+  mappedThreads: 0,
+  allowedUsers: 0,
+  allowAllUsers: false,
+  lastError: '',
+})
+const feishuStatus = ref<FeishuStatus>({
+  configured: false,
+  active: false,
+  domain: 'feishu',
   mappedChats: 0,
   mappedThreads: 0,
   allowedUsers: 0,
@@ -2121,6 +2219,17 @@ const telegramStatusText = computed(() => {
   const error = telegramStatus.value.lastError ? `, ${t('error')}: ${telegramStatus.value.lastError}` : ''
   return `${base}, ${mapped}${error}`
 })
+const feishuStatusText = computed(() => {
+  if (!feishuStatus.value.configured) return t('Not configured')
+  const base = feishuStatus.value.active ? t('Online') : t('Configured (offline)')
+  const platform = feishuStatus.value.domain === 'lark' ? 'Lark' : 'Feishu'
+  const allowlist = feishuStatus.value.allowAllUsers
+    ? t('allow all users')
+    : `${feishuStatus.value.allowedUsers} ${t('allowed user(s)')}`
+  const mapped = `${feishuStatus.value.mappedChats} ${t('chat(s)')}, ${feishuStatus.value.mappedThreads} ${t('thread(s)')}, ${allowlist}`
+  const error = feishuStatus.value.lastError ? `, ${t('error')}: ${feishuStatus.value.lastError}` : ''
+  return `${base}, ${platform}, ${mapped}${error}`
+})
 
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown)
@@ -2141,6 +2250,8 @@ onMounted(() => {
   void refreshDefaultProjectName()
   void refreshTelegramConfig()
   void refreshTelegramStatus()
+  void refreshFeishuConfig()
+  void refreshFeishuStatus()
   void loadFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
@@ -2339,6 +2450,82 @@ async function saveTelegramConfig(): Promise<void> {
     void refreshTelegramStatus()
   } finally {
     isTelegramSaving.value = false
+  }
+}
+
+async function refreshFeishuStatus(): Promise<void> {
+  try {
+    feishuStatus.value = await getFeishuStatus()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to load Feishu status'
+    feishuStatus.value = {
+      configured: false,
+      active: false,
+      mappedChats: 0,
+      mappedThreads: 0,
+      allowedUsers: 0,
+      allowAllUsers: false,
+      domain: 'feishu',
+      lastError: message,
+    }
+  }
+}
+
+async function refreshFeishuConfig(): Promise<void> {
+  try {
+    const config = await getFeishuConfig()
+    feishuDomainDraft.value = config.domain
+    feishuAppIdDraft.value = config.appId
+    feishuAppSecretDraft.value = config.appSecret
+    feishuAllowedUserIdsDraft.value = config.allowedUserIds.map((value) => String(value)).join('\n')
+    feishuConfigError.value = ''
+  } catch (error) {
+    feishuConfigError.value = error instanceof Error ? error.message : 'Failed to load Feishu configuration'
+  }
+}
+
+function parseFeishuAllowedUserIdsInput(value: string): Array<string | '*'> {
+  const rawEntries = value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  const allowAllUsers = rawEntries.includes('*')
+  const normalizedUserIds = Array.from(new Set(rawEntries.filter((entry) => entry !== '*')))
+  return allowAllUsers ? ['*', ...normalizedUserIds] : normalizedUserIds
+}
+
+async function saveFeishuConfig(): Promise<void> {
+  const appId = feishuAppIdDraft.value.trim()
+  const appSecret = feishuAppSecretDraft.value.trim()
+  const allowedUserIds = parseFeishuAllowedUserIdsInput(feishuAllowedUserIdsDraft.value)
+  if (!appId) {
+    feishuConfigError.value = t('Feishu App ID is required.')
+    return
+  }
+  if (!appSecret) {
+    feishuConfigError.value = t('Feishu App Secret is required.')
+    return
+  }
+  if (allowedUserIds.length === 0) {
+    feishuConfigError.value = t('At least one allowed Feishu user open_id or * is required.')
+    return
+  }
+
+  isFeishuSaving.value = true
+  feishuConfigError.value = ''
+  try {
+    await configureFeishuBot(appId, appSecret, feishuDomainDraft.value, allowedUserIds)
+    feishuAllowedUserIdsDraft.value = allowedUserIds.map((value) => String(value)).join('\n')
+    await Promise.all([
+      refreshFeishuConfig(),
+      refreshFeishuStatus(),
+    ])
+    window.alert(t('Feishu bot configured. Only allowlisted Feishu users can use the bridge.'))
+  } catch (error) {
+    feishuConfigError.value = error instanceof Error ? error.message : t('Failed to connect Feishu bot')
+    void refreshFeishuStatus()
+  } finally {
+    isFeishuSaving.value = false
   }
 }
 
