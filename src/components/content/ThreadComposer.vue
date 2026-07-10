@@ -287,12 +287,12 @@
           />
 
           <ComposerDropdown
-            class="thread-composer-control"
+            class="thread-composer-control thread-composer-thinking-control"
             :model-value="selectedReasoningEffort"
             :options="reasoningOptions"
             :placeholder="t('Thinking')"
             open-direction="up"
-            :disabled="isComposerConfigDisabled"
+            :disabled="isComposerConfigDisabled || reasoningOptions.length === 0"
             @update:model-value="onReasoningEffortSelect"
           />
         </template>
@@ -438,6 +438,7 @@ const props = defineProps<{
   collaborationModes?: CollaborationModeOption[]
   selectedCollaborationMode: CollaborationModeKind
   models: string[]
+  modelReasoningEfforts?: Record<string, ReasoningEffort[]>
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
   selectedSpeedMode: SpeedMode
@@ -585,14 +586,22 @@ const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.
 const DRAFT_STORAGE_PREFIX = 'codex-web-local.thread-draft.v1.'
 let lastActiveThreadId = ''
 
-const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
+const reasoningOptionCatalog: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
   { value: 'xhigh', label: 'Extra high' },
+  { value: 'max', label: 'Max' },
+  { value: 'ultra', label: 'Ultra' },
 ]
+const reasoningOptions = computed(() => {
+  const supportedEfforts = props.modelReasoningEfforts?.[props.selectedModel]
+  if (supportedEfforts === undefined) return reasoningOptionCatalog
+  const supportedSet = new Set(supportedEfforts)
+  return reasoningOptionCatalog.filter((option) => supportedSet.has(option.value))
+})
 function formatModelLabel(modelId: string): string {
   return modelId.trim().replace(/^gpt/i, 'GPT')
 }
@@ -2214,6 +2223,9 @@ watch(
   @apply truncate;
 }
 
+.thread-composer-thinking-control :deep(.composer-dropdown-options) {
+  @apply max-h-64;
+}
 
 .thread-composer-actions {
   @apply ml-auto flex min-w-0 items-center gap-2;

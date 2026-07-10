@@ -34,3 +34,4 @@ Return to the [manual test index](../../tests.md).
 | [Thread-locked providers across Zen, Codex, and OpenRouter](thread-locked-providers-across-zen-codex-and-openrouter.md) |
 | [Selected thread loads do not refetch provider models](selected-thread-loads-do-not-refetch-provider-models.md) |
 | [Provider-backed scheduled refreshes keep model menus populated](provider-backed-scheduled-refreshes-keep-model-menus-populated.md) |
+| [GPT-5.6 Max and Ultra thinking levels](gpt-5-6-max-and-ultra-thinking-levels.md) |

@@ -12,7 +12,6 @@ import type {
   ConfigReadResponse,
   GetAccountRateLimitsResponse,
   ModelListResponse,
-  ReasoningEffort,
   ThreadForkResponse,
   ThreadListResponse,
   ThreadReadResponse,
@@ -20,6 +19,7 @@ import type {
   ThreadStartResponse,
   Turn,
 } from './appServerDtos'
+import { isReasoningEffort } from '../types/codex'
 import { extractErrorMessage, normalizeCodexApiError } from './codexErrors'
 import {
   readActiveTurnIdFromResponse,
@@ -53,6 +53,7 @@ import type {
   UiReviewWorkspaceView,
   UiRateLimitSnapshot,
   UiRateLimitWindow,
+  ReasoningEffort,
   UiThreadAutomation,
   UiThreadAutomationStatus,
 } from '../types/codex'
@@ -250,6 +251,12 @@ type DirectoryComposioConnectorPage = {
 type ProviderModelsResponse = {
   data?: unknown
   exclusive?: unknown
+}
+
+export type AvailableModel = {
+  id: string
+  supportedReasoningEfforts: ReasoningEffort[] | null
+  defaultReasoningEffort: ReasoningEffort | null
 }
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
@@ -700,10 +707,7 @@ async function enrichThreadMessagesWithFallback(threadId: string, messages: UiMe
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
-  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
-  return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
-    ? (value as ReasoningEffort)
-    : ''
+  return isReasoningEffort(value) ? value : ''
 }
 
 function normalizeSpeedMode(value: unknown): SpeedMode {
@@ -2036,28 +2040,65 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
   return null
 }
 
-export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
+function normalizeAvailableModel(value: unknown): AvailableModel | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const id = readString(record.id ?? record.model)?.trim() ?? ''
+  if (!id) return null
+
+  const rawEfforts = record.supportedReasoningEfforts ?? record.supported_reasoning_efforts
+  const supportedReasoningEfforts = Array.isArray(rawEfforts)
+    ? rawEfforts.flatMap((candidate) => {
+        const option = asRecord(candidate)
+        const effort = option
+          ? option.reasoningEffort ?? option.reasoning_effort ?? option.effort
+          : candidate
+        return isReasoningEffort(effort) ? [effort] : []
+      }).filter((effort, index, efforts) => efforts.indexOf(effort) === index)
+    : null
+  const rawDefault = record.defaultReasoningEffort ?? record.default_reasoning_effort
+
+  return {
+    id,
+    supportedReasoningEfforts,
+    defaultReasoningEffort: isReasoningEffort(rawDefault) ? rawDefault : null,
+  }
+}
+
+function providerAvailableModel(id: string): AvailableModel {
+  return {
+    id,
+    supportedReasoningEfforts: null,
+    defaultReasoningEffort: null,
+  }
+}
+
+export async function getAvailableModels(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<AvailableModel[]> {
   const shouldIncludeProviderModels = options.includeProviderModels !== false
   const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
 
   if (providerModels?.exclusive || options.requireProviderModels) {
-    return providerModels?.ids ?? []
+    return (providerModels?.ids ?? []).map(providerAvailableModel)
   }
 
   const payload = await callRpc<ModelListResponse>('model/list', {})
-  const ids: string[] = []
+  const models: AvailableModel[] = []
   for (const row of payload.data) {
-    const candidate = row.id || row.model
-    if (!candidate || ids.includes(candidate)) continue
-    ids.push(candidate)
+    const model = normalizeAvailableModel(row)
+    if (!model || models.some((candidate) => candidate.id === model.id)) continue
+    models.push(model)
   }
 
-  if (!shouldIncludeProviderModels || !providerModels) return ids
+  if (!shouldIncludeProviderModels || !providerModels) return models
 
-  for (const candidate of providerModels.ids) {
-    if (!ids.includes(candidate)) ids.push(candidate)
+  for (const id of providerModels.ids) {
+    if (!models.some((candidate) => candidate.id === id)) models.push(providerAvailableModel(id))
   }
-  return ids
+  return models
+}
+
+export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
+  return (await getAvailableModels(options)).map((model) => model.id)
 }
 
 export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {
