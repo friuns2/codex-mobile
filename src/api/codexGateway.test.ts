@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { getAvailableModelIds, getCurrentModelConfig, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -57,6 +57,48 @@ describe('startThreadTurn collaboration mode payloads', () => {
         reasoning_effort: 'medium',
         developer_instructions: null,
       },
+    })
+  })
+
+  it('passes GPT-5.6 ultra reasoning through to Codex', async () => {
+    const { requests } = mockRpcFetch()
+
+    await startThreadTurn('thread-1', 'solve it', [], 'gpt-5.6-sol', 'ultra', undefined, [], 'default')
+
+    expect(requests[0].params.effort).toBe('ultra')
+    expect(requests[0].params.collaborationMode).toEqual({
+      mode: 'default',
+      settings: {
+        model: 'gpt-5.6-sol',
+        reasoning_effort: 'ultra',
+        developer_instructions: null,
+      },
+    })
+  })
+})
+
+describe('getCurrentModelConfig', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it.each(['max', 'ultra'] as const)('keeps the GPT-5.6 %s reasoning level', async (reasoningEffort) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      result: {
+        config: {
+          model: 'gpt-5.6-sol',
+          model_provider: 'openai',
+          model_reasoning_effort: reasoningEffort,
+        },
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(getCurrentModelConfig()).resolves.toMatchObject({
+      model: 'gpt-5.6-sol',
+      reasoningEffort,
     })
   })
 })

@@ -12,7 +12,6 @@ import type {
   ConfigReadResponse,
   GetAccountRateLimitsResponse,
   ModelListResponse,
-  ReasoningEffort,
   ThreadForkResponse,
   ThreadListResponse,
   ThreadReadResponse,
@@ -20,6 +19,7 @@ import type {
   ThreadStartResponse,
   Turn,
 } from './appServerDtos'
+import { isReasoningEffort } from '../types/codex'
 import { extractErrorMessage, normalizeCodexApiError } from './codexErrors'
 import {
   readActiveTurnIdFromResponse,
@@ -53,6 +53,7 @@ import type {
   UiReviewWorkspaceView,
   UiRateLimitSnapshot,
   UiRateLimitWindow,
+  ReasoningEffort,
   UiThreadAutomation,
   UiThreadAutomationStatus,
 } from '../types/codex'
@@ -700,10 +701,7 @@ async function enrichThreadMessagesWithFallback(threadId: string, messages: UiMe
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
-  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
-  return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
-    ? (value as ReasoningEffort)
-    : ''
+  return isReasoningEffort(value) ? value : ''
 }
 
 function normalizeSpeedMode(value: unknown): SpeedMode {
