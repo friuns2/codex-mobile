@@ -27,6 +27,7 @@ Return to the [manual test index](../../tests.md).
 | [Feature: Inline thread image payloads are rewritten to renderable local file URLs](inline-thread-image-payloads-are-rewritten-to-renderable-local-file-urls.md) |
 | [Feature: Markdown file links with spaces and parentheses in path](markdown-file-links-with-spaces-and-parentheses-in-path.md) |
 | [Feature: Markdown link with backticked label renders as file link](markdown-link-with-backticked-label-renders-as-file-link.md) |
+| [Feature: Windows absolute file links open through local browse](windows-absolute-file-links-open-local-browse.md) |
 | [Feature: Backticked bare filenames render as file links](backticked-bare-filenames-render-as-file-links.md) |
 | [Feature: Lazy message rendering (windowed conversation)](lazy-message-rendering-windowed-conversation.md) |
 | [Assistant generated image rendering](assistant-generated-image-rendering.md) |
