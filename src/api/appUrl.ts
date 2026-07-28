@@ -30,6 +30,12 @@ export function appWebSocketUrl(path: string): string {
   return url.toString()
 }
 
+export function isAppPathname(pathname: string, appPath: string): boolean {
+  const rootPathname = new URL(`http://localhost/${normalizeAppPath(appPath)}`).pathname
+  const resolvedPathname = new URL(appHttpUrl(appPath), 'http://localhost').pathname
+  return pathname === rootPathname || pathname === resolvedPathname
+}
+
 export function appFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const resolvedInput = typeof input === 'string' && input.startsWith('/')
     ? appHttpUrl(input)

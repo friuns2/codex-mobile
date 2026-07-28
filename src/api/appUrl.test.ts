@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { appFetch, appHttpUrl, appWebSocketUrl } from './appUrl'
+import { appFetch, appHttpUrl, appWebSocketUrl, isAppPathname } from './appUrl'
 
 function setBrowserLocation(baseURI: string, protocol = 'https:'): void {
   vi.stubGlobal('document', { baseURI })
@@ -33,6 +33,14 @@ describe('app URL helpers', () => {
     expect(appWebSocketUrl('/codex-api/ws')).toBe(
       'wss://host/user/alice/codex/codex-api/ws',
     )
+  })
+
+  it('recognizes both proxied and legacy root-relative application paths', () => {
+    setBrowserLocation('https://host/user/alice/codex/')
+
+    expect(isAppPathname('/user/alice/codex/codex-local-image', '/codex-local-image')).toBe(true)
+    expect(isAppPathname('/codex-local-image', '/codex-local-image')).toBe(true)
+    expect(isAppPathname('/user/bob/codex/codex-local-image', '/codex-local-image')).toBe(false)
   })
 
   it('keeps root-relative paths when no browser document exists', () => {

@@ -1,4 +1,5 @@
 import { onBeforeUnmount, ref } from 'vue'
+import { appFetch as fetch } from '../api/appUrl'
 
 export type DictationState = 'idle' | 'recording' | 'transcribing'
 const DICTATION_SILENCE_THRESHOLD = 0.0025

@@ -91,6 +91,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { appFetch as fetch, appHttpUrl } from '../../api/appUrl'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import IconTablerX from '../icons/IconTablerX.vue'
 
@@ -216,7 +217,7 @@ function onTry(): void {
 function onBrowseFiles(): void {
   const dir = skillDirPath.value
   if (!dir) return
-  window.open(`/codex-local-browse${encodeURI(dir)}`, '_blank', 'noopener,noreferrer')
+  window.open(appHttpUrl(`/codex-local-browse${encodeURI(dir)}`), '_blank', 'noopener,noreferrer')
 }
 </script>
 

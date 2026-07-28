@@ -919,6 +919,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
+import { appHttpUrl } from '../../api/appUrl'
 import { updateThreadFileChanges } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
@@ -2845,20 +2846,22 @@ function toRenderableImageUrl(value: string): string {
     normalized.startsWith('data:') ||
     normalized.startsWith('blob:') ||
     normalized.startsWith('http://') ||
-    normalized.startsWith('https://') ||
-    normalized.startsWith('/codex-local-image?')
+    normalized.startsWith('https://')
   ) {
     return normalized
   }
+  if (normalized.startsWith('/codex-local-image?')) {
+    return appHttpUrl(normalized)
+  }
 
   if (normalized.startsWith('file://')) {
-    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
+    return appHttpUrl(`/codex-local-image?path=${encodeURIComponent(normalized)}`)
   }
 
   const looksLikeUnixAbsolute = normalized.startsWith('/')
   const looksLikeWindowsAbsolute = /^[A-Za-z]:[\\/]/u.test(normalized)
   if (looksLikeUnixAbsolute || looksLikeWindowsAbsolute) {
-    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
+    return appHttpUrl(`/codex-local-image?path=${encodeURIComponent(normalized)}`)
   }
 
   return normalized
@@ -2877,7 +2880,7 @@ function toBrowseUrl(pathValue: string): string {
 
   if (looksLikeAbsolutePath(resolved)) {
     const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
-    return `/codex-local-browse${encodeURI(normalizedResolved)}`
+    return appHttpUrl(`/codex-local-browse${encodeURI(normalizedResolved)}`)
   }
 
   return '#'
@@ -2893,9 +2896,10 @@ function toEditUrlFromBrowseHref(href: string): string {
   if (!normalizedHref) return ''
   try {
     const resolved = new URL(normalizedHref, window.location.href)
-    if (!resolved.pathname.startsWith('/codex-local-browse')) return ''
-    const editPath = `/codex-local-edit${resolved.pathname.slice('/codex-local-browse'.length)}`
-    return `${editPath}${resolved.search}${resolved.hash}`
+    const browsePath = new URL(appHttpUrl('/codex-local-browse')).pathname
+    if (!resolved.pathname.startsWith(browsePath)) return ''
+    const editPath = `/codex-local-edit${resolved.pathname.slice(browsePath.length)}`
+    return appHttpUrl(`${editPath}${resolved.search}${resolved.hash}`)
   } catch {
     return ''
   }

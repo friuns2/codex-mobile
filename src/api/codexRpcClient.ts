@@ -1,4 +1,5 @@
 import type { RpcEnvelope, RpcMethodCatalog } from '../types/codex'
+import { appFetch as fetch, appHttpUrl, appWebSocketUrl } from './appUrl'
 import { CodexApiError, extractErrorMessage } from './codexErrors'
 
 type RpcRequestBody = {
@@ -191,7 +192,7 @@ export function subscribeRpcNotifications(onNotification: (value: RpcNotificatio
   const attachSse = (attempt = 0) => {
     if (typeof EventSource === 'undefined' || closed) return
     cleanup?.()
-    const source = new EventSource('/codex-api/events')
+    const source = new EventSource(appHttpUrl('/codex-api/events'))
     let isConnectionClosed = false
 
     source.onmessage = (event) => {
@@ -233,8 +234,7 @@ export function subscribeRpcNotifications(onNotification: (value: RpcNotificatio
     }
 
     cleanup?.()
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(`${protocol}//${window.location.host}/codex-api/ws`)
+    const socket = new WebSocket(appWebSocketUrl('/codex-api/ws'))
     let didOpen = false
     let intentionallyClosed = false
     let fallbackTimer: number | null = window.setTimeout(() => {

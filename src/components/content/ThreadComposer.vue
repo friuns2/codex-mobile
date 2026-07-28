@@ -391,6 +391,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { appHttpUrl } from '../../api/appUrl'
 import type {
   CollaborationModeKind,
   CollaborationModeOption,
@@ -1214,7 +1215,7 @@ function skillMarkdownPath(path: string): string {
 function openSkillMarkdown(skill: SkillItem): void {
   const markdownPath = skillMarkdownPath(skill.path)
   if (!markdownPath || typeof window === 'undefined') return
-  window.open(`/codex-local-browse${encodeURI(markdownPath)}`, '_blank', 'noopener,noreferrer')
+  window.open(appHttpUrl(`/codex-local-browse${encodeURI(markdownPath)}`), '_blank', 'noopener,noreferrer')
 }
 
 function removeFileAttachment(fsPath: string): void {
@@ -1347,7 +1348,7 @@ async function attachImageFile(file: File, sessionToken: number): Promise<void> 
       {
         id: createAttachmentId(),
         name: normalizedFile.name,
-        url: `/codex-local-image?path=${encodeURIComponent(serverPath)}`,
+        url: appHttpUrl(`/codex-local-image?path=${encodeURIComponent(serverPath)}`),
       },
     ]
     recordAttachmentBatchResult('success')

@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { appFetch as fetch } from '../api/appUrl'
 
 type ToastType = 'success' | 'error'
 

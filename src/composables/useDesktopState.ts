@@ -38,6 +38,7 @@ import {
   type WorkspaceRootsState,
 } from '../api/codexGateway'
 import { CodexApiError } from '../api/codexErrors'
+import { appHttpUrl, isAppPathname } from '../api/appUrl'
 import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
 import type {
   CollaborationModeKind,
@@ -1483,7 +1484,7 @@ export function useDesktopState() {
   function extractLocalImagePathFromUrl(value: string): string {
     try {
       const parsed = new URL(value, 'http://localhost')
-      if (parsed.pathname !== '/codex-local-image') return ''
+      if (!isAppPathname(parsed.pathname, '/codex-local-image')) return ''
       return parsed.searchParams.get('path')?.trim() ?? ''
     } catch {
       return ''
@@ -3524,7 +3525,7 @@ export function useDesktopState() {
   }
 
   function toLocalImageUrl(path: string): string {
-    return `/codex-local-image?path=${encodeURIComponent(path)}`
+    return appHttpUrl(`/codex-local-image?path=${encodeURIComponent(path)}`)
   }
 
   function toImageGenerationUrl(value: string): string {

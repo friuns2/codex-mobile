@@ -17,6 +17,7 @@ import type {
   UiProjectGroup,
   UiThread,
 } from '../../types/codex'
+import { appHttpUrl } from '../appUrl'
 import { normalizePathForComparison, normalizePathForUi, toProjectName } from '../../pathUtils.js'
 
 function toIso(seconds: number): string {
@@ -74,7 +75,7 @@ function extractCodexUserRequestText(value: string): string {
 }
 
 function toLocalImageUrl(path: string): string {
-  return `/codex-local-image?path=${encodeURIComponent(path)}`
+  return appHttpUrl(`/codex-local-image?path=${encodeURIComponent(path)}`)
 }
 
 function toImageGenerationUrl(value: string): string {
