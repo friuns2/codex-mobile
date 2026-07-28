@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import {
+  clearThreadGoal,
+  compactThread,
+  getAvailableModelIds,
+  getThreadDetail,
+  getThreadGoal,
+  listDirectoryComposioConnectors,
+  resumeThread,
+  setThreadGoal,
+  startThreadTurn,
+} from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -58,6 +68,61 @@ describe('startThreadTurn collaboration mode payloads', () => {
         developer_instructions: null,
       },
     })
+  })
+})
+
+describe('thread goal RPCs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('normalizes goal reads and sends lifecycle updates through app-server', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const goal = {
+      threadId: 'thread-1',
+      objective: 'Ship Goal mode',
+      status: 'active',
+      tokenBudget: 5000,
+      tokensUsed: 120,
+      timeUsedSeconds: 9,
+      createdAt: 10,
+      updatedAt: 11,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> }
+      requests.push(request)
+      const result = request.method === 'thread/goal/clear' ? { cleared: true } : { goal }
+      return new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(getThreadGoal('thread-1')).resolves.toEqual(goal)
+    await expect(setThreadGoal('thread-1', { status: 'paused' })).resolves.toEqual(goal)
+    await expect(clearThreadGoal('thread-1')).resolves.toBe(true)
+
+    expect(requests).toEqual([
+      { method: 'thread/goal/get', params: { threadId: 'thread-1' } },
+      { method: 'thread/goal/set', params: { threadId: 'thread-1', status: 'paused' } },
+      { method: 'thread/goal/clear', params: { threadId: 'thread-1' } },
+    ])
+  })
+})
+
+describe('thread compaction RPC', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('starts app-server compaction for the selected thread', async () => {
+    const { requests } = mockRpcFetch()
+
+    await compactThread('thread-compact')
+
+    expect(requests).toEqual([
+      { method: 'thread/compact/start', params: { threadId: 'thread-compact' } },
+    ])
   })
 })
 

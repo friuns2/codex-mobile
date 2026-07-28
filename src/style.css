@@ -437,6 +437,53 @@
   @apply border-zinc-600 bg-zinc-800;
 }
 
+:root.dark .thread-composer-slash-menu {
+  @apply border-zinc-600 bg-zinc-800;
+}
+
+:root.dark .thread-composer-slash-heading,
+:root.dark .thread-composer-slash-description,
+:root.dark .thread-composer-slash-help {
+  @apply text-zinc-400;
+}
+
+:root.dark .thread-composer-slash-heading,
+:root.dark .thread-composer-slash-help {
+  @apply bg-zinc-800;
+}
+
+:root.dark .thread-composer-slash-row {
+  @apply text-zinc-300 hover:bg-amber-950/40;
+}
+
+:root.dark .thread-composer-slash-row.is-active {
+  @apply bg-amber-950/40;
+}
+
+:root.dark .thread-composer-slash-title {
+  @apply text-zinc-100;
+}
+
+:root.dark .thread-composer-slash-title code {
+  @apply bg-zinc-700 text-zinc-300;
+}
+
+:root.dark .thread-composer-slash-help {
+  @apply border-zinc-700;
+}
+
+:root.dark .thread-composer-slash-icon {
+  @apply bg-amber-950/70 text-amber-300;
+}
+
+:root.dark .thread-composer-command-preview {
+  @apply border-amber-800/70 bg-amber-950/60;
+}
+
+:root.dark .thread-composer-command-preview kbd {
+  @apply border-amber-800 bg-zinc-800 text-amber-300;
+}
+
 :root.dark .thread-composer-file-mention-row {
   @apply text-zinc-300 hover:bg-zinc-700;
 }

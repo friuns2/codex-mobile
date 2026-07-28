@@ -13,6 +13,7 @@ import type { WorkspaceRootsState } from '../api/codexGateway'
 
 const gatewayMocks = vi.hoisted(() => ({
   archiveThread: vi.fn(),
+  compactThread: vi.fn(),
   forkThread: vi.fn(),
   getAccountRateLimits: vi.fn(),
   getAvailableCollaborationModes: vi.fn(),
@@ -21,6 +22,7 @@ const gatewayMocks = vi.hoisted(() => ({
   getPendingServerRequests: vi.fn(),
   getSkillsList: vi.fn(),
   getThreadDetail: vi.fn(),
+  getThreadGoal: vi.fn(),
   getThreadGroupsPage: vi.fn(),
   getThreadQueueState: vi.fn(),
   getThreadTitleCache: vi.fn(),
@@ -35,8 +37,11 @@ const gatewayMocks = vi.hoisted(() => ({
   rollbackThread: vi.fn(),
   setCodexSpeedMode: vi.fn(),
   setThreadQueueState: vi.fn(),
+  setThreadGoal: vi.fn(),
+  clearThreadGoal: vi.fn(),
   setWorkspaceRootsState: vi.fn(),
   startThread: vi.fn(),
+  startThreadReview: vi.fn(),
   startThreadTurn: vi.fn(),
   subscribeCodexNotifications: vi.fn(),
 }))
@@ -45,6 +50,7 @@ vi.mock('../api/codexGateway', () => ({
   ...gatewayMocks,
   getBackgroundThreadListLimit: vi.fn(() => 100),
   pickCodexRateLimitSnapshot: vi.fn(() => null),
+  normalizeThreadGoal: vi.fn((value) => value),
 }))
 
 function thread(id: string, cwd: string, options: { hasWorktree?: boolean } = {}) {
@@ -82,6 +88,7 @@ function installTestWindow(initialStorage: Record<string, string> = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
+  gatewayMocks.getThreadGoal.mockResolvedValue(null)
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
 })
@@ -615,6 +622,108 @@ describe('startup request deduplication', () => {
     } finally {
       nowSpy.mockRestore()
     }
+  })
+})
+
+describe('thread goals', () => {
+  const goal = {
+    threadId: 'thread-goal',
+    objective: 'Ship Goal mode',
+    status: 'active' as const,
+    tokenBudget: null,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  }
+
+  it('loads once per selected thread and applies notifications without a broad refresh', async () => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.getThreadGoal.mockResolvedValue(goal)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-goal')
+    state.startPolling()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(gatewayMocks.getThreadGoal).toHaveBeenCalledTimes(1)
+    expect(state.selectedThreadGoal.value).toEqual(goal)
+    const threadListCalls = gatewayMocks.getThreadGroupsPage.mock.calls.length
+
+    notificationHandler({
+      method: 'thread/goal/updated',
+      params: { threadId: 'thread-goal', goal: { ...goal, status: 'paused', updatedAt: 2 } },
+    })
+
+    expect(state.selectedThreadGoal.value?.status).toBe('paused')
+    expect(gatewayMocks.getThreadGroupsPage).toHaveBeenCalledTimes(threadListCalls)
+  })
+
+  it('lets app-server start a slash-command goal without duplicating turn/start', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGoal.mockResolvedValue(null)
+    gatewayMocks.setThreadGoal.mockResolvedValue(goal)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-goal')
+    await state.sendMessageToSelectedThread('/goal Ship Goal mode')
+
+    expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-goal', {
+      objective: 'Ship Goal mode',
+      status: 'active',
+    })
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+  })
+
+  it('executes Codex slash commands through native app-server methods', async () => {
+    installTestWindow()
+    gatewayMocks.compactThread.mockResolvedValue(undefined)
+    gatewayMocks.startThreadReview.mockResolvedValue(undefined)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-goal')
+
+    await state.sendMessageToSelectedThread('/compact')
+    await state.sendMessageToSelectedThread('/review')
+    await state.sendMessageToSelectedThread('/rename Release prep')
+
+    expect(gatewayMocks.compactThread).toHaveBeenCalledWith('thread-goal')
+    expect(gatewayMocks.startThreadReview).toHaveBeenCalledWith(
+      'thread-goal',
+      'workspace',
+      'unstaged',
+    )
+    expect(gatewayMocks.renameThread).toHaveBeenCalledWith('thread-goal', 'Release prep')
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+  })
+
+  it('strips /plan and starts the turn in Plan mode', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: 'gpt-5.4',
+      modelProvider: 'openai',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+    gatewayMocks.startThreadTurn.mockResolvedValue({ id: 'turn-plan' })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-goal')
+    await state.sendMessageToSelectedThread('/plan Design the migration')
+
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalled()
+    expect(gatewayMocks.startThreadTurn.mock.calls[0]?.[1]).toBe('Design the migration')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0]?.[7]).toBe('plan')
   })
 })
 

@@ -1012,6 +1012,14 @@
                     @hide="onHideSelectedThreadTerminal"
                     @terminal-focus-change="onTerminalFocusChange"
                   />
+                  <ThreadGoalBar
+                    v-if="selectedThreadGoal"
+                    :goal="selectedThreadGoal"
+                    :disabled="isUpdatingThreadGoal"
+                    @edit="onEditThreadGoal"
+                    @toggle-paused="onToggleThreadGoalPaused"
+                    @clear="onClearThreadGoal"
+                  />
                   <ThreadPendingRequestPanel
                     v-if="selectedThreadPendingRequest"
                     :request="selectedThreadPendingRequest"
@@ -1173,6 +1181,7 @@ import DesktopLayout from './components/layout/DesktopLayout.vue'
 import SidebarThreadTree from './components/sidebar/SidebarThreadTree.vue'
 import ContentHeader from './components/content/ContentHeader.vue'
 import ThreadComposer from './components/content/ThreadComposer.vue'
+import ThreadGoalBar from './components/content/ThreadGoalBar.vue'
 import ThreadPendingRequestPanel from './components/content/ThreadPendingRequestPanel.vue'
 import QueuedMessages from './components/content/QueuedMessages.vue'
 import RateLimitStatus from './components/content/RateLimitStatus.vue'
@@ -1411,6 +1420,7 @@ const {
   projectDisplayNameById,
   selectedThread,
   selectedThreadTokenUsage,
+  selectedThreadGoal,
   selectedThreadTerminalOpen,
   selectedThreadServerRequests,
   selectedLiveOverlay,
@@ -1469,6 +1479,9 @@ const {
   stopPolling,
   primeSelectedThread,
   rollbackSelectedThread,
+  updateSelectedThreadGoalObjective,
+  toggleSelectedThreadGoalPaused,
+  clearSelectedThreadGoal,
 } = useDesktopState()
 
 const route = useRoute()
@@ -1506,6 +1519,7 @@ function prepareFeedbackLink(event: MouseEvent, message?: string): void {
 }
 const homeThreadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadComposerRef = ref<ThreadComposerExposed | null>(null)
+const isUpdatingThreadGoal = ref(false)
 const threadConversationRef = ref<{ jumpToLatest: () => void } | null>(null)
 const homeTerminalPanelRef = ref<ThreadTerminalPanelExposed | null>(null)
 const threadTerminalPanelRef = ref<ThreadTerminalPanelExposed | null>(null)
@@ -3428,6 +3442,31 @@ function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fil
     return
   }
   void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
+}
+
+async function runThreadGoalUpdate(update: () => Promise<void>): Promise<void> {
+  if (isUpdatingThreadGoal.value) return
+  isUpdatingThreadGoal.value = true
+  try {
+    await update()
+  } catch {
+    // The shared desktop error state already contains the app-server failure.
+  } finally {
+    isUpdatingThreadGoal.value = false
+  }
+}
+
+function onEditThreadGoal(objective: string): void {
+  void runThreadGoalUpdate(() => updateSelectedThreadGoalObjective(objective))
+}
+
+function onToggleThreadGoalPaused(): void {
+  void runThreadGoalUpdate(toggleSelectedThreadGoalPaused)
+}
+
+function onClearThreadGoal(): void {
+  if (!window.confirm('Clear this thread goal?')) return
+  void runThreadGoalUpdate(clearSelectedThreadGoal)
 }
 
 function onEditQueuedMessage(messageId: string): void {

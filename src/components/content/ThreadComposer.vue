@@ -96,6 +96,45 @@
         <div v-if="isDragActive" class="thread-composer-drop-overlay" aria-hidden="true">
           <span class="thread-composer-drop-overlay-copy">Drop images or files</span>
         </div>
+        <div
+          v-if="isSlashCommandMenuOpen"
+          class="thread-composer-slash-menu"
+          role="listbox"
+          aria-label="Slash commands"
+        >
+          <div class="thread-composer-slash-heading">
+            <span>Slash commands</span>
+            <span>Codex</span>
+          </div>
+          <button
+            v-for="(option, index) in slashCommandSuggestions"
+            :key="option.id"
+            class="thread-composer-slash-row"
+            :class="{ 'is-active': index === slashCommandHighlightedIndex }"
+            type="button"
+            role="option"
+            :aria-selected="index === slashCommandHighlightedIndex"
+            @mousedown.prevent="applySlashCommandOption(option)"
+          >
+            <span class="thread-composer-slash-icon" aria-hidden="true">◎</span>
+            <span class="thread-composer-slash-copy">
+              <span class="thread-composer-slash-title">
+                <strong>{{ option.label }}</strong>
+                <code>{{ option.command }}</code>
+              </span>
+              <span class="thread-composer-slash-description">{{ option.description }}</span>
+            </span>
+          </button>
+          <div class="thread-composer-slash-help">↑↓ Navigate · Tab select · Esc close</div>
+        </div>
+        <div v-else-if="isSlashCommandPreviewOpen && slashCommandPreview" class="thread-composer-command-preview" role="status">
+          <span class="thread-composer-slash-icon" aria-hidden="true">◎</span>
+          <span class="thread-composer-slash-copy">
+            <span class="thread-composer-slash-title"><strong>{{ slashCommandPreview.label }}</strong></span>
+            <span class="thread-composer-slash-description">{{ slashCommandPreview.description }}</span>
+          </span>
+          <kbd>Enter</kbd>
+        </div>
         <div v-if="isFileMentionOpen" class="thread-composer-file-mentions">
           <template v-if="fileMentionSuggestions.length > 0">
             <button
@@ -405,6 +444,11 @@ import { useDictation } from '../../composables/useDictation'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import {
+  describeSlashCommand,
+  getSlashCommandSuggestions,
+  type SlashCommandOption,
+} from '../../utils/slashCommand'
+import {
   createComposerPrompt,
   getComposerPrompts,
   removeComposerPrompt,
@@ -572,6 +616,8 @@ const mentionQuery = ref('')
 const fileMentionSuggestions = ref<ComposerFileSuggestion[]>([])
 const isFileMentionOpen = ref(false)
 const fileMentionHighlightedIndex = ref(0)
+const slashCommandHighlightedIndex = ref(0)
+const dismissedSlashCommandDraft = ref('')
 const isComposerExpanded = ref(false)
 const isDraftOverflowing = ref(false)
 let composerOverflowMeasurementQueued = false
@@ -584,6 +630,21 @@ let attachmentSessionToken = 0
 const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 const DRAFT_STORAGE_PREFIX = 'codex-web-local.thread-draft.v1.'
 let lastActiveThreadId = ''
+
+const slashCommandSuggestions = computed(() => getSlashCommandSuggestions(draft.value))
+const slashCommandPreview = computed(() => describeSlashCommand(draft.value))
+const isSlashCommandDismissed = computed(() => dismissedSlashCommandDraft.value === draft.value)
+const isSlashCommandMenuOpen = computed(() =>
+  !isFileMentionOpen.value
+  && !isSlashCommandDismissed.value
+  && slashCommandSuggestions.value.length > 0,
+)
+const isSlashCommandPreviewOpen = computed(() =>
+  !isFileMentionOpen.value
+  && !isSlashCommandDismissed.value
+  && slashCommandSuggestions.value.length === 0
+  && slashCommandPreview.value !== null,
+)
 
 const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'none', label: 'None' },
@@ -1552,6 +1613,41 @@ function onInputChange(): void {
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
+  if (isSlashCommandMenuOpen.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      dismissedSlashCommandDraft.value = draft.value
+      return
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const size = slashCommandSuggestions.value.length
+      if (size > 0) {
+        const offset = event.key === 'ArrowDown' ? 1 : size - 1
+        slashCommandHighlightedIndex.value = (slashCommandHighlightedIndex.value + offset) % size
+      }
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      const selected = slashCommandSuggestions.value[slashCommandHighlightedIndex.value]
+      if (selected) applySlashCommandOption(selected)
+      return
+    }
+    if (event.key === 'Enter') {
+      const selected = slashCommandSuggestions.value[slashCommandHighlightedIndex.value]
+      const normalizedDraft = draft.value.trim()
+      const exactOption = describeSlashCommand(normalizedDraft)
+      const isRunnableExact = exactOption?.requiresArgument === false
+        && exactOption.insertText.trim() === normalizedDraft
+      if (!isRunnableExact) {
+        event.preventDefault()
+        if (selected) applySlashCommandOption(selected)
+        return
+      }
+    }
+  }
+
   if (isFileMentionOpen.value) {
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -1594,6 +1690,18 @@ function onInputKeydown(event: KeyboardEvent): void {
     onSubmit(props.isTurnInProgress ? activeInProgressMode.value : 'steer')
     return
   }
+}
+
+function applySlashCommandOption(option: SlashCommandOption): void {
+  draft.value = option.insertText
+  dismissedSlashCommandDraft.value = option.insertText
+  slashCommandHighlightedIndex.value = 0
+  void nextTick(() => {
+    const input = inputRef.value
+    input?.focus()
+    const cursor = option.insertText.length
+    input?.setSelectionRange(cursor, cursor)
+  })
 }
 
 function closeFileMention(): void {
@@ -1837,6 +1945,7 @@ watch(
   () => props.activeThreadId,
   (nextThreadId) => {
     cancelDictation()
+    dismissedSlashCommandDraft.value = ''
     if (lastActiveThreadId) {
       persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
     }
@@ -1858,6 +1967,7 @@ watch([draft, selectedImages, fileAttachments, selectedSkills], () => {
 
 watch(draft, () => {
   queueComposerOverflowMeasurement()
+  slashCommandHighlightedIndex.value = 0
 })
 
 watch(
@@ -2043,6 +2153,58 @@ watch(
 
 .thread-composer-file-mentions {
   @apply absolute left-0 right-0 bottom-[calc(100%+8px)] z-40 max-h-52 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
+}
+
+.thread-composer-slash-menu {
+  @apply absolute left-0 right-0 bottom-[calc(100%+8px)] z-40 max-h-80 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-xl sm:max-h-[26rem];
+}
+
+.thread-composer-slash-heading {
+  @apply sticky top-0 z-10 flex items-center justify-between bg-white px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400;
+}
+
+.thread-composer-slash-row {
+  @apply flex w-full items-start gap-2 rounded-lg border-0 bg-transparent px-2 py-2 text-left text-zinc-700 transition hover:bg-amber-50;
+}
+
+.thread-composer-slash-row.is-active {
+  @apply bg-amber-50;
+}
+
+.thread-composer-slash-icon {
+  @apply mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-sm leading-none text-amber-700;
+}
+
+.thread-composer-slash-copy {
+  @apply min-w-0 flex-1;
+}
+
+.thread-composer-slash-title {
+  @apply flex min-w-0 items-baseline gap-2 text-xs text-zinc-900;
+}
+
+.thread-composer-slash-title strong {
+  @apply shrink-0 font-medium;
+}
+
+.thread-composer-slash-title code {
+  @apply truncate rounded bg-zinc-100 px-1 py-0.5 font-mono text-[10px] text-zinc-500;
+}
+
+.thread-composer-slash-description {
+  @apply mt-0.5 block text-[11px] leading-4 text-zinc-500;
+}
+
+.thread-composer-slash-help {
+  @apply sticky bottom-0 z-10 border-t border-zinc-100 bg-white px-2 pb-1 pt-1.5 text-[10px] text-zinc-400;
+}
+
+.thread-composer-command-preview {
+  @apply absolute left-0 right-0 bottom-[calc(100%+8px)] z-40 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 shadow-lg;
+}
+
+.thread-composer-command-preview kbd {
+  @apply ml-auto mt-1 shrink-0 rounded border border-amber-200 bg-white px-1.5 py-0.5 font-sans text-[10px] text-amber-700 shadow-sm;
 }
 
 .thread-composer-file-mention-row {

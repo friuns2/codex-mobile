@@ -40,6 +40,8 @@ import type {
   UiMessage,
   UiProjectGroup,
   UiThread,
+  UiThreadGoal,
+  ThreadGoalStatus,
   UiReviewAction,
   UiReviewActionLevel,
   UiReviewFile,
@@ -553,6 +555,57 @@ async function callRpc<T>(method: string, params?: unknown): Promise<T> {
   } catch (error) {
     throw normalizeCodexApiError(error, `RPC ${method} failed`, method)
   }
+}
+
+const THREAD_GOAL_STATUSES = new Set<ThreadGoalStatus>([
+  'active',
+  'paused',
+  'blocked',
+  'usageLimited',
+  'budgetLimited',
+  'complete',
+])
+
+export function normalizeThreadGoal(value: unknown): UiThreadGoal | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const threadId = readString(record.threadId)
+  const objective = readString(record.objective)
+  const rawStatus = readString(record.status)
+  if (!threadId || objective === null || !rawStatus || !THREAD_GOAL_STATUSES.has(rawStatus as ThreadGoalStatus)) {
+    return null
+  }
+
+  return {
+    threadId,
+    objective,
+    status: rawStatus as ThreadGoalStatus,
+    tokenBudget: readNumber(record.tokenBudget),
+    tokensUsed: readNumber(record.tokensUsed) ?? 0,
+    timeUsedSeconds: readNumber(record.timeUsedSeconds) ?? 0,
+    createdAt: readNumber(record.createdAt) ?? 0,
+    updatedAt: readNumber(record.updatedAt) ?? 0,
+  }
+}
+
+export async function getThreadGoal(threadId: string): Promise<UiThreadGoal | null> {
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/get', { threadId })
+  return normalizeThreadGoal(payload.goal)
+}
+
+export async function setThreadGoal(
+  threadId: string,
+  update: { objective?: string | null; status?: ThreadGoalStatus | null; tokenBudget?: number | null },
+): Promise<UiThreadGoal> {
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/set', { threadId, ...update })
+  const goal = normalizeThreadGoal(payload.goal)
+  if (!goal) throw new Error('RPC thread/goal/set returned an invalid goal')
+  return goal
+}
+
+export async function clearThreadGoal(threadId: string): Promise<boolean> {
+  const payload = await callRpc<{ cleared?: boolean }>('thread/goal/clear', { threadId })
+  return payload.cleared === true
 }
 
 function normalizeFallbackFileChange(value: unknown): UiFileChange | null {
@@ -1548,6 +1601,10 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
 
 export async function archiveThread(threadId: string): Promise<void> {
   await callRpc('thread/archive', { threadId })
+}
+
+export async function compactThread(threadId: string): Promise<void> {
+  await callRpc('thread/compact/start', { threadId })
 }
 
 export async function renameThread(threadId: string, threadName: string): Promise<void> {

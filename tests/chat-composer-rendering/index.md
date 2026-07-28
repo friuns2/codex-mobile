@@ -8,6 +8,7 @@ Return to the [manual test index](../../tests.md).
 
 | Section |
 | --- |
+| [Feature: Thread goal mode](thread-goal-mode.md) |
 | [Codex thread deep links render as local web thread URLs](codex-thread-deep-links-render-as-local-web-thread-urls.md) |
 | [Bold-wrapped Markdown links render without literal markers](bold-wrapped-markdown-links-render-without-literal-markers.md) |
 | [Composer expands long drafts to full screen](composer-expands-long-drafts-to-full-screen.md) |
@@ -27,6 +28,7 @@ Return to the [manual test index](../../tests.md).
 | [Feature: Inline thread image payloads are rewritten to renderable local file URLs](inline-thread-image-payloads-are-rewritten-to-renderable-local-file-urls.md) |
 | [Feature: Markdown file links with spaces and parentheses in path](markdown-file-links-with-spaces-and-parentheses-in-path.md) |
 | [Feature: Markdown link with backticked label renders as file link](markdown-link-with-backticked-label-renders-as-file-link.md) |
+| [Feature: Windows absolute file links open through local browse](windows-absolute-file-links-open-local-browse.md) |
 | [Feature: Backticked bare filenames render as file links](backticked-bare-filenames-render-as-file-links.md) |
 | [Feature: Lazy message rendering (windowed conversation)](lazy-message-rendering-windowed-conversation.md) |
 | [Assistant generated image rendering](assistant-generated-image-rendering.md) |

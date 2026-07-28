@@ -6,6 +6,19 @@ export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | '
 export type SpeedMode = 'standard' | 'fast'
 export type CollaborationModeKind = 'default' | 'plan'
 
+export type ThreadGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete'
+
+export type UiThreadGoal = {
+  threadId: string
+  objective: string
+  status: ThreadGoalStatus
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+}
+
 export type RpcMethodCatalog = {
   data: string[]
 }
