@@ -267,6 +267,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
   <title>Index of ${escapeHtml(localPath)}</title>
   <style>
     body { font-family: ui-monospace, Menlo, Monaco, monospace; margin: 16px; background: #0b1020; color: #dbe6ff; }
@@ -375,6 +376,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
   <title>Edit ${escapeHtml(localPath)}</title>
   <style>
     html, body { width: 100%; height: 100%; margin: 0; }
