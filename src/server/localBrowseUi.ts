@@ -244,6 +244,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   const newProjectName = normalizeNewProjectName(options?.newProjectName ?? '')
   const items = await getDirectoryItems(localPath)
   const parentPath = dirname(localPath)
+  const browseRoutePathLiteral = escapeForInlineScriptString(toBrowseHref(localPath))
   const rows = items
     .map((item) => {
       const suffix = item.isDirectory ? '/' : ''
@@ -267,6 +268,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
   <title>Index of ${escapeHtml(localPath)}</title>
   <style>
     body { font-family: ui-monospace, Menlo, Monaco, monospace; margin: 16px; background: #0b1020; color: #dbe6ff; }
@@ -316,6 +318,15 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   <p id="status" class="status"></p>
   <ul>${rows}</ul>
   <script>
+    const appRoutePath = ${browseRoutePathLiteral};
+    const appRouteIndex = location.pathname.endsWith(appRoutePath)
+      ? location.pathname.length - appRoutePath.length
+      : -1;
+    const appBasePath = appRouteIndex >= 0 ? location.pathname.slice(0, appRouteIndex + 1) : '/';
+    const appUrl = (path) => appBasePath + path.replace(/^\\/+/, '');
+    document.querySelectorAll('a[href^="/codex-"]').forEach((link) => {
+      link.setAttribute('href', appUrl(link.getAttribute('href') || ''));
+    });
     const status = document.getElementById('status');
     document.addEventListener('click', async (event) => {
       const target = event.target;
@@ -331,7 +342,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       button.disabled = true;
       status.textContent = statusText;
       try {
-        const response = await fetch('/codex-api/project-root', {
+        const response = await fetch(appUrl('/codex-api/project-root'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -346,7 +357,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
           return;
         }
         status.textContent = 'Folder opened. Returning to Codex...';
-        const nextUrl = '/?openProjectPath=' + encodeURIComponent(path) + '#/';
+        const nextUrl = appUrl('/?openProjectPath=' + encodeURIComponent(path) + '#/');
         window.location.assign(nextUrl);
       } catch {
         status.textContent = errorText;
@@ -363,11 +374,13 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   const parentPath = dirname(localPath)
   const language = languageForPath(localPath)
   const safeContentLiteral = escapeForInlineScriptString(content)
+  const editRoutePathLiteral = escapeForInlineScriptString(toEditHref(localPath))
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
   <title>Edit ${escapeHtml(localPath)}</title>
   <style>
     html, body { width: 100%; height: 100%; margin: 0; }
@@ -397,6 +410,15 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   <div id="editor"></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.36.2/ace.js"></script>
   <script>
+    const appRoutePath = ${editRoutePathLiteral};
+    const appRouteIndex = location.pathname.endsWith(appRoutePath)
+      ? location.pathname.length - appRoutePath.length
+      : -1;
+    const appBasePath = appRouteIndex >= 0 ? location.pathname.slice(0, appRouteIndex + 1) : '/';
+    const appUrl = (path) => appBasePath + path.replace(/^\\/+/, '');
+    document.querySelectorAll('a[href^="/codex-"]').forEach((link) => {
+      link.setAttribute('href', appUrl(link.getAttribute('href') || ''));
+    });
     const saveBtn = document.getElementById('saveBtn');
     const status = document.getElementById('status');
     const editor = ace.edit('editor');

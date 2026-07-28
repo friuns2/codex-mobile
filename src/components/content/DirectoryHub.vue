@@ -660,6 +660,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { appHttpUrl } from '../../api/appUrl'
 import {
   getDirectoryComposioStatus,
   getMethodCatalog,
@@ -1169,10 +1170,10 @@ function showToast(text: string, type: 'success' | 'error' = 'success'): void {
 
 function localAssetSrc(path: string): string {
   if (!path) return ''
-  if (path.startsWith('connectors://')) return `/codex-api/connector-logo?src=${encodeURIComponent(path)}`
+  if (path.startsWith('connectors://')) return appHttpUrl(`/codex-api/connector-logo?src=${encodeURIComponent(path)}`)
   if (/^https?:\/\//i.test(path) || path.startsWith('data:')) return path
   if (!path.startsWith('/')) return ''
-  return `/codex-local-image?path=${encodeURIComponent(path)}`
+  return appHttpUrl(`/codex-local-image?path=${encodeURIComponent(path)}`)
 }
 
 function pluginIconSrc(plugin: DirectoryPluginSummary | null): string {

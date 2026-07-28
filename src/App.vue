@@ -1189,6 +1189,7 @@ import { useDesktopState } from './composables/useDesktopState'
 import { useMobile } from './composables/useMobile'
 import { useUiLanguage } from './composables/useUiLanguage'
 import { useFeedbackDiagnostics } from './composables/useFeedbackDiagnostics'
+import { appHttpUrl } from './api/appUrl'
 import {
   checkoutGitBranch,
   cloneGithubRepository,
@@ -2787,7 +2788,7 @@ function onBrowseThreadFiles(threadId: string): void {
     }
   }
   if (!targetCwd || typeof window === 'undefined') return
-  window.open(`/codex-local-browse${encodeURI(targetCwd)}`, '_blank', 'noopener,noreferrer')
+  window.open(appHttpUrl(`/codex-local-browse${encodeURI(targetCwd)}`), '_blank', 'noopener,noreferrer')
 }
 
 function getProjectCwd(projectName: string): string {
@@ -2819,7 +2820,7 @@ function toWorktreeFolderNameDraft(projectName: string): string {
 function onBrowseProjectFiles(projectName: string): void {
   const targetCwd = getProjectCwd(projectName)
   if (!targetCwd || typeof window === 'undefined') return
-  window.open(`/codex-local-browse${encodeURI(targetCwd)}`, '_blank', 'noopener,noreferrer')
+  window.open(appHttpUrl(`/codex-local-browse${encodeURI(targetCwd)}`), '_blank', 'noopener,noreferrer')
 }
 
 async function onSaveProject(projectName: string): Promise<void> {

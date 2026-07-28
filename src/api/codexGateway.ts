@@ -7,6 +7,7 @@ import {
   subscribeRpcNotifications,
   type RpcNotification,
 } from './codexRpcClient'
+import { appFetch as fetch, appHttpUrl, isAppPathname } from './appUrl'
 import type {
   CollaborationModeListResponse,
   ConfigReadResponse,
@@ -1755,7 +1756,7 @@ function extractLocalImagePathFromUrl(value: string): string | null {
   if (!value) return null
   try {
     const parsed = new URL(value, 'http://localhost')
-    if (parsed.pathname !== '/codex-local-image') return null
+    if (!isAppPathname(parsed.pathname, '/codex-local-image')) return null
     const path = parsed.searchParams.get('path')?.trim() ?? ''
     return path.length > 0 ? path : null
   } catch {
@@ -3081,7 +3082,7 @@ export async function openProjectRoot(path: string, options?: { createIfMissing?
 
 export function getProjectZipDownloadUrl(cwd: string): string {
   const query = new URLSearchParams({ cwd })
-  return `/codex-api/project-zip?${query.toString()}`
+  return appHttpUrl(`/codex-api/project-zip?${query.toString()}`)
 }
 
 function readDownloadFileName(response: Response, fallback: string): string {

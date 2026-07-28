@@ -1,11 +1,20 @@
-const CACHE_NAME = 'codexweb-shell-v2'
-const APP_SHELL_PATHS = ['/', '/manifest.webmanifest']
+const CACHE_NAME = 'codexweb-shell-v3'
+const APP_SCOPE_URL = new URL(self.registration.scope)
+const appUrl = (path) => new URL(path.replace(/^\/+/u, ''), APP_SCOPE_URL)
+const APP_SHELL_URLS = [APP_SCOPE_URL.href, appUrl('manifest.webmanifest').href]
+const MANIFEST_PATHNAME = appUrl('manifest.webmanifest').pathname
 const STATIC_DESTINATIONS = new Set(['document', 'script', 'style', 'image', 'font'])
-const BYPASS_PREFIXES = ['/codex-api/', '/codex-local-image', '/codex-local-file', '/codex-local-browse/', '/codex-local-edit/']
+const BYPASS_PREFIXES = [
+  'codex-api/',
+  'codex-local-image',
+  'codex-local-file',
+  'codex-local-browse/',
+  'codex-local-edit/',
+].map((path) => appUrl(path).pathname)
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL_PATHS)),
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL_URLS)),
   )
   self.skipWaiting()
 })
@@ -41,7 +50,7 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (STATIC_DESTINATIONS.has(request.destination) || url.pathname === '/manifest.webmanifest') {
+  if (STATIC_DESTINATIONS.has(request.destination) || url.pathname === MANIFEST_PATHNAME) {
     event.respondWith(staleWhileRevalidate(request))
   }
 })
@@ -50,10 +59,10 @@ async function networkFirstNavigation(request) {
   const cache = await caches.open(CACHE_NAME)
   try {
     const response = await fetch(request)
-    cache.put('/', response.clone())
+    cache.put(APP_SCOPE_URL.href, response.clone())
     return response
   } catch {
-    return (await cache.match('/')) || Response.error()
+    return (await cache.match(APP_SCOPE_URL.href)) || Response.error()
   }
 }
 
