@@ -244,6 +244,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   const newProjectName = normalizeNewProjectName(options?.newProjectName ?? '')
   const items = await getDirectoryItems(localPath)
   const parentPath = dirname(localPath)
+  const browseRoutePathLiteral = escapeForInlineScriptString(toBrowseHref(localPath))
   const rows = items
     .map((item) => {
       const suffix = item.isDirectory ? '/' : ''
@@ -317,8 +318,10 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   <p id="status" class="status"></p>
   <ul>${rows}</ul>
   <script>
-    const appRouteMarker = '/codex-local-browse';
-    const appRouteIndex = location.pathname.indexOf(appRouteMarker);
+    const appRoutePath = ${browseRoutePathLiteral};
+    const appRouteIndex = location.pathname.endsWith(appRoutePath)
+      ? location.pathname.length - appRoutePath.length
+      : -1;
     const appBasePath = appRouteIndex >= 0 ? location.pathname.slice(0, appRouteIndex + 1) : '/';
     const appUrl = (path) => appBasePath + path.replace(/^\\/+/, '');
     document.querySelectorAll('a[href^="/codex-"]').forEach((link) => {
@@ -371,6 +374,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   const parentPath = dirname(localPath)
   const language = languageForPath(localPath)
   const safeContentLiteral = escapeForInlineScriptString(content)
+  const editRoutePathLiteral = escapeForInlineScriptString(toEditHref(localPath))
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -406,8 +410,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   <div id="editor"></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.36.2/ace.js"></script>
   <script>
-    const appRouteMarker = '/codex-local-edit';
-    const appRouteIndex = location.pathname.indexOf(appRouteMarker);
+    const appRoutePath = ${editRoutePathLiteral};
+    const appRouteIndex = location.pathname.endsWith(appRoutePath)
+      ? location.pathname.length - appRoutePath.length
+      : -1;
     const appBasePath = appRouteIndex >= 0 ? location.pathname.slice(0, appRouteIndex + 1) : '/';
     const appUrl = (path) => appBasePath + path.replace(/^\\/+/, '');
     document.querySelectorAll('a[href^="/codex-"]').forEach((link) => {
