@@ -381,6 +381,57 @@
   @apply text-zinc-400;
 }
 
+:root.dark .banked-reset-card {
+  @apply border-violet-800 bg-violet-950/70;
+}
+
+:root.dark .banked-reset-eyebrow,
+:root.dark .banked-reset-expiry,
+:root.dark .banked-reset-empty,
+:root.dark .banked-reset-hidden {
+  @apply text-violet-300;
+}
+
+:root.dark .banked-reset-count {
+  @apply text-violet-100;
+}
+
+:root.dark .banked-reset-icon {
+  @apply bg-violet-900 text-violet-200;
+}
+
+:root.dark .banked-reset-explanation {
+  @apply text-violet-200;
+}
+
+:root.dark .banked-reset-entry {
+  @apply border-violet-800 bg-zinc-900/80;
+}
+
+:root.dark .banked-reset-entry-copy strong {
+  @apply text-zinc-100;
+}
+
+:root.dark .banked-reset-entry-copy span {
+  @apply text-zinc-300;
+}
+
+:root.dark .banked-reset-use {
+  @apply bg-violet-600 hover:bg-violet-500;
+}
+
+:root.dark .banked-reset-notice {
+  @apply border-emerald-800 bg-emerald-950 text-emerald-200;
+}
+
+:root.dark .banked-reset-notice[data-type='info'] {
+  @apply border-amber-800 bg-amber-950 text-amber-200;
+}
+
+:root.dark .banked-reset-notice[data-type='error'] {
+  @apply border-rose-800 bg-rose-950 text-rose-200;
+}
+
 :root.dark .thread-composer-attach-menu {
   @apply border-zinc-600 bg-zinc-800;
 }

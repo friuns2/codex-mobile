@@ -183,9 +183,11 @@ export function recoverRateLimitsFromPlanTypeDecodeError(error: unknown): unknow
     }
   }
 
+  const resetCredits = asRecord(body.rate_limit_reset_credits ?? body.rateLimitResetCredits)
   return {
     rateLimits: primarySnapshot,
     rateLimitsByLimitId,
+    ...(resetCredits ? { rateLimitResetCredits: resetCredits } : {}),
   }
 }
 

@@ -29,3 +29,39 @@ The thread overflow menu includes a `Copy chat` item that copies the selected ch
 - Restore any previous clipboard contents manually if needed
 
 ---
+
+### Continue in ChatGPT Pro handoff
+
+#### Feature/Change Name
+The selected thread menu includes `Continue in ChatGPT Pro…`, which packages the persisted thread and local repository state into a clipboard handoff and opens ChatGPT.
+
+#### Prerequisites/Setup
+1. App is running at the active local URL.
+2. Open a persisted thread whose working directory is a Git repository.
+3. The thread has an active Goal and at least one user/assistant turn.
+4. Make a harmless uncommitted change in the repository.
+5. Browser clipboard access and popups are allowed.
+
+#### Steps
+1. In light theme, open the selected thread's overflow menu.
+2. Click `Continue in ChatGPT Pro…`.
+3. Confirm a new tab opens at `https://chatgpt.com/`.
+4. Paste the clipboard into a temporary editor without sending it.
+5. Verify the handoff contains the thread ID, working directory, Goal, persisted user/assistant transcript, branch, status, recent commits, changed-file list, diff, and applicable `AGENTS.md`.
+6. Verify raw reasoning items and excessively long command output are absent or explicitly truncated.
+7. Open a non-selected thread's menu and verify the action is disabled.
+8. Repeat the selected-thread menu check in dark theme.
+9. Temporarily block popups and retry; confirm the handoff is still copied and the notice tells you to open ChatGPT manually.
+
+#### Expected Results
+- The menu closes immediately and a visible packaging notice appears.
+- The clipboard contains a self-contained Markdown prompt beginning with `Codex → ChatGPT Pro handoff`.
+- The prompt asks ChatGPT to switch to GPT-5.6 Sol Pro and continue without redoing completed work.
+- Repository inspection occurs only after the explicit menu click.
+- The new ChatGPT tab opens when popups are allowed; clipboard copy still succeeds when they are blocked.
+- Failures close the blank tab and surface a visible error notice.
+- The action and notice remain readable in light and dark themes.
+
+#### Rollback/Cleanup
+- Revert the harmless test change if it was created only for this check.
+- Restore popup permissions and previous clipboard contents if needed.

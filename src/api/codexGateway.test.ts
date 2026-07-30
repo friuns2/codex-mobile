@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import {
+  consumeRateLimitResetCredit,
+  getAccountRateLimitsState,
+  getAvailableModelIds,
+  getAvailableModels,
+  getThreadDetail,
+  listDirectoryComposioConnectors,
+  resumeThread,
+  startThreadTurn,
+} from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -58,6 +67,78 @@ describe('startThreadTurn collaboration mode payloads', () => {
         developer_instructions: null,
       },
     })
+  })
+})
+
+describe('banked rate-limit resets', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves the authoritative reset count and optional credit details', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { method: string }
+      expect(request.method).toBe('account/rateLimits/read')
+      return new Response(JSON.stringify({
+        result: {
+          rateLimits: {
+            limitId: 'codex',
+            primary: { usedPercent: 75, windowDurationMins: 300, resetsAt: 1780000000 },
+          },
+          rateLimitResetCredits: {
+            availableCount: 2,
+            credits: [{
+              id: 'RateLimitResetCredit_1',
+              resetType: 'codexRateLimits',
+              status: 'available',
+              grantedAt: 1779000000,
+              expiresAt: 1781000000,
+              title: 'Full reset',
+              description: 'Reset an eligible Codex rate-limit window.',
+            }],
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(getAccountRateLimitsState()).resolves.toMatchObject({
+      codexSnapshot: {
+        limitId: 'codex',
+        primary: { usedPercent: 75 },
+      },
+      snapshots: [{ limitId: 'codex' }],
+      resetCredits: {
+        availableCount: 2,
+        credits: [{
+          id: 'RateLimitResetCredit_1',
+          title: 'Full reset',
+          expiresAt: 1781000000,
+        }],
+      },
+    })
+  })
+
+  it('uses the selected opaque credit ID and caller-provided idempotency key', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> })
+      return new Response(JSON.stringify({ result: { outcome: 'reset' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(consumeRateLimitResetCredit('RateLimitResetCredit_1', 'reset-attempt-1')).resolves.toBe('reset')
+    expect(requests).toEqual([{
+      method: 'account/rateLimitResetCredit/consume',
+      params: {
+        idempotencyKey: 'reset-attempt-1',
+        creditId: 'RateLimitResetCredit_1',
+      },
+    }])
   })
 })
 
@@ -172,6 +253,45 @@ describe('getAvailableModelIds', () => {
       includeProviderModels: true,
     })).resolves.toEqual(['gpt-5.5', 'gpt-5.4-mini'])
     expect(requests).toEqual(['/codex-api/provider-models', '/codex-api/rpc'])
+  })
+
+  it('preserves server-provided reasoning effort order including max and ultra', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string }
+        : { method: '' }
+      expect(body.method).toBe('model/list')
+      return new Response(JSON.stringify({
+        result: {
+          data: [{
+            id: 'gpt-5.6-sol',
+            displayName: 'GPT-5.6 Sol',
+            description: 'Frontier coding model',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low', description: 'Fast' },
+              { reasoningEffort: 'max', description: 'Deep' },
+              { reasoningEffort: 'ultra', description: 'Deepest' },
+            ],
+            defaultReasoningEffort: 'low',
+          }],
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(getAvailableModels({ includeProviderModels: false })).resolves.toEqual([{
+      id: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6 Sol',
+      description: 'Frontier coding model',
+      supportedReasoningEfforts: [
+        { value: 'low', description: 'Fast' },
+        { value: 'max', description: 'Deep' },
+        { value: 'ultra', description: 'Deepest' },
+      ],
+      defaultReasoningEffort: 'low',
+    }])
   })
 })
 

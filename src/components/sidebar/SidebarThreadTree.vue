@@ -633,6 +633,15 @@
         >
           Copy chat
         </button>
+        <button
+          class="thread-menu-item"
+          type="button"
+          :disabled="openThreadMenuThread.id !== selectedThreadId"
+          :title="openThreadMenuThread.id === selectedThreadId ? 'Package this thread and open ChatGPT' : 'Open this chat before continuing in ChatGPT Pro'"
+          @click="onContinueInChatGptPro(openThreadMenuThread.id)"
+        >
+          Continue in ChatGPT Pro…
+        </button>
         <button class="thread-menu-item" type="button" @click="onForkThread(openThreadMenuThread.id)">
           Create chat fork
         </button>
@@ -935,6 +944,7 @@ const emit = defineEmits<{
   'remove-project': [projectName: string]
   'reorder-project': [payload: { projectName: string; toIndex: number }]
   'copy-thread-chat': [threadId: string]
+  'continue-in-chatgpt-pro': [threadId: string]
   'fork-thread': [threadId: string]
   'start-new-chat': []
   'automations-changed': []
@@ -1714,6 +1724,12 @@ function setAutomationScheduleMode(mode: AutomationScheduleMode): void {
 function onCopyThreadChat(threadId: string): void {
   if (threadId !== props.selectedThreadId) return
   emit('copy-thread-chat', threadId)
+  closeThreadMenu()
+}
+
+function onContinueInChatGptPro(threadId: string): void {
+  if (threadId !== props.selectedThreadId) return
+  emit('continue-in-chatgpt-pro', threadId)
   closeThreadMenu()
 }
 

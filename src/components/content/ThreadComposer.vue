@@ -396,8 +396,10 @@ import type {
   CollaborationModeOption,
   ReasoningEffort,
   SpeedMode,
+  UiModelOption,
   UiRateLimitSnapshot,
   UiRateLimitWindow,
+  UiReasoningEffortOption,
   UiThreadTokenUsage,
   UiTokenUsageBreakdown,
 } from '../../types/codex'
@@ -437,7 +439,8 @@ const props = defineProps<{
   cwd?: string
   collaborationModes?: CollaborationModeOption[]
   selectedCollaborationMode: CollaborationModeKind
-  models: string[]
+  models: UiModelOption[]
+  reasoningEfforts: UiReasoningEffortOption[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
   selectedSpeedMode: SpeedMode
@@ -585,20 +588,27 @@ const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.
 const DRAFT_STORAGE_PREFIX = 'codex-web-local.thread-draft.v1.'
 let lastActiveThreadId = ''
 
-const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
-  { value: 'none', label: 'None' },
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra high' },
-]
+function formatReasoningEffortLabel(effort: ReasoningEffort): string {
+  if (effort === 'xhigh') return 'Extra high'
+  return `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`
+}
+
+const reasoningOptions = computed(() =>
+  props.reasoningEfforts.map((option) => ({
+    value: option.value,
+    label: formatReasoningEffortLabel(option.value),
+  })),
+)
+
 function formatModelLabel(modelId: string): string {
   return modelId.trim().replace(/^gpt/i, 'GPT')
 }
 
 const modelOptions = computed(() =>
-  props.models.map((modelId) => ({ value: modelId, label: formatModelLabel(modelId) })),
+  props.models.map((model) => ({
+    value: model.id,
+    label: model.displayName.trim() || formatModelLabel(model.id),
+  })),
 )
 const isPlanModeSelected = computed(() => props.selectedCollaborationMode === 'plan')
 

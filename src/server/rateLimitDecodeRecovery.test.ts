@@ -51,6 +51,18 @@ const proliteDecodeError = new Error(`failed to fetch codex rate limits: Decode 
     "has_credits": false,
     "unlimited": false,
     "balance": "0"
+  },
+  "rate_limit_reset_credits": {
+    "available_count": 1,
+    "credits": [{
+      "id": "RateLimitResetCredit_1",
+      "reset_type": "codexRateLimits",
+      "status": "available",
+      "granted_at": 1779000000,
+      "expires_at": 1781000000,
+      "title": "Full reset",
+      "description": "Reset an eligible Codex rate-limit window."
+    }]
   }
 }`)
 
@@ -142,6 +154,18 @@ describe('recoverRateLimitsFromPlanTypeDecodeError', () => {
           credits: null,
           planType: 'prolite',
         },
+      },
+      rateLimitResetCredits: {
+        available_count: 1,
+        credits: [{
+          id: 'RateLimitResetCredit_1',
+          reset_type: 'codexRateLimits',
+          status: 'available',
+          granted_at: 1779000000,
+          expires_at: 1781000000,
+          title: 'Full reset',
+          description: 'Reset an eligible Codex rate-limit window.',
+        }],
       },
     })
   })

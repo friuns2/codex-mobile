@@ -38,6 +38,11 @@ import {
   type FreeModeState,
 } from './freeMode.js'
 import { handleOpenRouterProxyRequest } from './openRouterProxy.js'
+import {
+  buildChatGptProHandoff,
+  type ProHandoffContextFile,
+  type ProHandoffRepositorySnapshot,
+} from './proHandoff.js'
 import { handleZenProxyRequest } from './zenProxy.js'
 import { handleCustomEndpointProxyRequest } from './customEndpointProxy.js'
 import { ThreadTerminalManager } from './terminalManager.js'
@@ -4256,6 +4261,141 @@ async function runCommandCaptureRaw(command: string, args: string[], options: { 
   })
 }
 
+async function runBoundedCommandCapture(
+  command: string,
+  args: string[],
+  options: { cwd?: string; maxCharacters?: number; timeoutMs?: number } = {},
+): Promise<{ output: string; truncated: boolean }> {
+  const maxCharacters = Math.max(1, options.maxCharacters ?? 200_000)
+  const timeoutMs = Math.max(1000, options.timeoutMs ?? 10_000)
+  return await new Promise((resolveCommand, rejectCommand) => {
+    const proc = spawn(command, args, {
+      cwd: options.cwd,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let truncated = false
+    let settled = false
+    const append = (target: 'stdout' | 'stderr', chunk: Buffer) => {
+      const value = chunk.toString()
+      if (target === 'stdout') {
+        const remaining = maxCharacters - stdout.length
+        if (remaining > 0) stdout += value.slice(0, remaining)
+        if (value.length > remaining) truncated = true
+      } else {
+        const remaining = Math.min(32_000, maxCharacters) - stderr.length
+        if (remaining > 0) stderr += value.slice(0, remaining)
+      }
+    }
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      proc.kill()
+      rejectCommand(new Error(`Command timed out (${command} ${args.join(' ')})`))
+    }, timeoutMs)
+    timer.unref?.()
+    proc.stdout.on('data', (chunk: Buffer) => append('stdout', chunk))
+    proc.stderr.on('data', (chunk: Buffer) => append('stderr', chunk))
+    proc.on('error', (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      rejectCommand(error)
+    })
+    proc.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (code === 0) {
+        resolveCommand({ output: stdout.trim(), truncated })
+        return
+      }
+      const details = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
+      rejectCommand(new Error(details || `Command failed (${command} ${args.join(' ')})`))
+    })
+  })
+}
+
+async function buildProHandoffRepositorySnapshot(cwd: string): Promise<ProHandoffRepositorySnapshot | null> {
+  const gitArgs = (args: string[]) => ['-c', 'safe.directory=*', ...args]
+  let root = ''
+  try {
+    root = (await runBoundedCommandCapture('git', gitArgs(['rev-parse', '--show-toplevel']), {
+      cwd,
+      maxCharacters: 32_000,
+    })).output
+  } catch {
+    return null
+  }
+  if (!root) return null
+
+  const readGit = async (args: string[], maxCharacters = 64_000) => {
+    try {
+      return await runBoundedCommandCapture('git', gitArgs(args), { cwd: root, maxCharacters })
+    } catch {
+      return { output: '', truncated: false }
+    }
+  }
+  const [branch, status, recentCommits, diffStat, diff] = await Promise.all([
+    readGit(['branch', '--show-current'], 8_000),
+    readGit(['status', '--short', '--branch'], 80_000),
+    readGit(['log', '-5', '--date=short', '--pretty=format:%h %ad %s'], 24_000),
+    readGit(['diff', '--no-ext-diff', '--no-textconv', '--stat', 'HEAD', '--', '.'], 40_000),
+    readGit(['diff', '--no-ext-diff', '--no-textconv', '--unified=3', 'HEAD', '--', '.'], 180_000),
+  ])
+  return {
+    root,
+    branch: branch.output,
+    status: status.output,
+    recentCommits: recentCommits.output,
+    diffStat: diffStat.output,
+    changedFiles: status.output
+      .split(/\r?\n/u)
+      .filter((line) => !line.startsWith('## '))
+      .join('\n'),
+    diff: diff.output,
+    diffTruncated: diff.truncated,
+  }
+}
+
+async function readProHandoffContextFiles(cwd: string, repoRoot: string | null): Promise<ProHandoffContextFile[]> {
+  const paths: string[] = []
+  let current = resolve(cwd)
+  const boundary = repoRoot ? resolve(repoRoot) : current
+  for (let depth = 0; depth < 12; depth += 1) {
+    paths.push(join(current, 'AGENTS.md'))
+    if (current.toLowerCase() === boundary.toLowerCase()) break
+    const parent = dirname(current)
+    if (parent === current) break
+    if (repoRoot) {
+      const parentRelativeToBoundary = relative(boundary, parent)
+      if (parentRelativeToBoundary.startsWith('..') || isAbsolute(parentRelativeToBoundary)) break
+    }
+    current = parent
+  }
+
+  const files: ProHandoffContextFile[] = []
+  let remainingCharacters = 50_000
+  for (const filePath of paths.reverse()) {
+    if (remainingCharacters <= 0) break
+    try {
+      const raw = await readFile(filePath, 'utf8')
+      const content = raw.slice(0, Math.min(20_000, remainingCharacters))
+      files.push({
+        path: filePath,
+        content,
+        truncated: content.length < raw.length,
+      })
+      remainingCharacters -= content.length
+    } catch {
+      // Missing or unreadable instruction files are simply not part of the handoff.
+    }
+  }
+  return files
+}
+
 function normalizeBranchRefName(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return ''
@@ -7916,6 +8056,55 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
       if (req.method === 'POST' && url.pathname === '/codex-api/upload-file') {
         handleFileUpload(req, res)
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/thread/pro-handoff') {
+        try {
+          const body = asRecord(await readJsonBody(req))
+          const threadId = readNonEmptyString(body?.threadId)
+          if (!threadId) {
+            setJson(res, 400, { error: 'Missing threadId' })
+            return
+          }
+
+          const threadResult = await callRpcWithArchiveRecovery(appServer, 'thread/read', {
+            threadId,
+            includeTurns: true,
+          })
+          const thread = asRecord(asRecord(threadResult)?.thread)
+          const requestedCwd = readNonEmptyString(body?.cwd)
+          const cwd = readNonEmptyString(thread?.cwd) || requestedCwd
+          if (!cwd || !isAbsolute(cwd)) {
+            setJson(res, 400, { error: 'The thread does not have a valid working directory' })
+            return
+          }
+          const cwdStat = await stat(cwd)
+          if (!cwdStat.isDirectory()) {
+            setJson(res, 400, { error: 'The thread working directory is not a directory' })
+            return
+          }
+
+          const [goalResult, repository] = await Promise.all([
+            appServer.rpc('thread/goal/get', { threadId }).catch(() => null),
+            buildProHandoffRepositorySnapshot(cwd),
+          ])
+          const contextFiles = await readProHandoffContextFiles(cwd, repository?.root ?? null)
+          const markdown = buildChatGptProHandoff({
+            threadResult,
+            goalResult,
+            repository,
+            contextFiles,
+          })
+          setJson(res, 200, {
+            data: {
+              markdown,
+              chatgptUrl: 'https://chatgpt.com/',
+            },
+          })
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to prepare the ChatGPT Pro handoff') })
+        }
         return
       }
 

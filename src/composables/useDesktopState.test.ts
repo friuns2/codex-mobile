@@ -13,8 +13,10 @@ import type { WorkspaceRootsState } from '../api/codexGateway'
 
 const gatewayMocks = vi.hoisted(() => ({
   archiveThread: vi.fn(),
+  consumeRateLimitResetCredit: vi.fn(),
   forkThread: vi.fn(),
   getAccountRateLimits: vi.fn(),
+  getAccountRateLimitsState: vi.fn(),
   getAvailableCollaborationModes: vi.fn(),
   getAvailableModelIds: vi.fn(),
   getCurrentModelConfig: vi.fn(),
@@ -84,10 +86,56 @@ beforeEach(() => {
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
+  gatewayMocks.getAccountRateLimitsState.mockResolvedValue({
+    codexSnapshot: null,
+    snapshots: [],
+    resetCredits: null,
+  })
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('banked rate-limit resets', () => {
+  it('uses a selected reset and refreshes the authoritative balance and quota', async () => {
+    gatewayMocks.consumeRateLimitResetCredit.mockResolvedValue('reset')
+    gatewayMocks.getAccountRateLimitsState.mockResolvedValue({
+      codexSnapshot: {
+        limitId: 'codex',
+        limitName: null,
+        primary: { usedPercent: 0, windowDurationMins: 300, windowMinutes: 300, resetsAt: 1780000000 },
+        secondary: null,
+        credits: null,
+        planType: 'pro',
+      },
+      snapshots: [{
+        limitId: 'codex',
+        limitName: null,
+        primary: { usedPercent: 0, windowDurationMins: 300, windowMinutes: 300, resetsAt: 1780000000 },
+        secondary: null,
+        credits: null,
+        planType: 'pro',
+      }],
+      resetCredits: {
+        availableCount: 1,
+        credits: null,
+      },
+    })
+
+    const state = useDesktopState()
+    await state.consumeBankedRateLimitReset('RateLimitResetCredit_1')
+
+    expect(gatewayMocks.consumeRateLimitResetCredit).toHaveBeenCalledWith('RateLimitResetCredit_1')
+    expect(gatewayMocks.getAccountRateLimitsState).toHaveBeenCalledTimes(1)
+    expect(state.rateLimitResetCredits.value?.availableCount).toBe(1)
+    expect(state.codexQuota.value?.primary?.usedPercent).toBe(0)
+    expect(state.rateLimitResetNotice.value).toEqual({
+      type: 'success',
+      text: 'Rate limits reset. Your quota and banked-reset balance were refreshed.',
+    })
+    expect(state.isConsumingRateLimitReset.value).toBe(false)
+  })
 })
 
 describe('filterGroupsByWorkspaceRoots', () => {
@@ -741,6 +789,60 @@ describe('live error overlay', () => {
 })
 
 describe('provider model selection', () => {
+  it('uses the selected model metadata to expose max and ultra and resets unsupported effort', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.6-sol',
+      providerId: 'codex',
+      reasoningEffort: 'low',
+      speedMode: 'standard',
+    })
+    const modelIds = ['gpt-5.6-sol', 'gpt-5.4-mini']
+    Object.defineProperty(modelIds, 'modelOptions', {
+      value: [
+        {
+          id: 'gpt-5.6-sol',
+          displayName: 'GPT-5.6 Sol',
+          description: '',
+          supportedReasoningEfforts: [
+            { value: 'low', description: '' },
+            { value: 'max', description: '' },
+            { value: 'ultra', description: '' },
+          ],
+          defaultReasoningEffort: 'low',
+        },
+        {
+          id: 'gpt-5.4-mini',
+          displayName: 'GPT-5.4 mini',
+          description: '',
+          supportedReasoningEfforts: [
+            { value: 'low', description: '' },
+            { value: 'medium', description: '' },
+            { value: 'high', description: '' },
+          ],
+          defaultReasoningEffort: 'medium',
+        },
+      ],
+      enumerable: false,
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(modelIds)
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.availableReasoningEfforts.value.map((option) => option.value)).toEqual(['low', 'max', 'ultra'])
+    state.setSelectedReasoningEffort('ultra')
+    expect(state.selectedReasoningEffort.value).toBe('ultra')
+
+    state.setSelectedModelIdForThread('', 'gpt-5.4-mini')
+    expect(state.availableReasoningEfforts.value.map((option) => option.value)).toEqual(['low', 'medium', 'high'])
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+  })
+
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
     installTestWindow({
       'codex-web-local.selected-model-by-context.v1': JSON.stringify({

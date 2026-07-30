@@ -100,6 +100,7 @@
             @fork-thread="onForkThread"
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @copy-thread-chat="onCopyThreadChat"
+            @continue-in-chatgpt-pro="onContinueInChatGptPro"
             @automations-changed="onAutomationsChanged"
             @start-new-chat="onStartProjectlessNewChat" />
         </div>
@@ -488,7 +489,13 @@
                 </span>
               </div>
               <div class="sidebar-settings-rate-limits">
-                <RateLimitStatus :snapshots="accountRateLimitSnapshots" />
+                <RateLimitStatus
+                  :snapshots="accountRateLimitSnapshots"
+                  :reset-credits="rateLimitResetCredits"
+                  :is-consuming-reset="isConsumingRateLimitReset"
+                  :reset-notice="rateLimitResetNotice"
+                  @consume-reset="consumeBankedRateLimitReset"
+                />
               </div>
               <div class="sidebar-settings-build-label" :aria-label="t('Worktree name and version')">
                 WT {{ worktreeName }} · v{{ appVersion }}
@@ -944,7 +951,8 @@
                   :cwd="composerCwd"
                   :collaboration-modes="availableCollaborationModes"
                   :selected-collaboration-mode="selectedCollaborationMode"
-                  :models="availableModelIds" :selected-model="composerSelectedModelId"
+                  :models="availableModels" :selected-model="composerSelectedModelId"
+                  :reasoning-efforts="availableReasoningEfforts"
                   :selected-reasoning-effort="selectedReasoningEffort"
                   :selected-speed-mode="selectedSpeedMode"
                   :is-updating-speed-mode="isUpdatingSpeedMode"
@@ -1026,7 +1034,8 @@
                     :cwd="composerCwd"
                     :collaboration-modes="availableCollaborationModes"
                     :selected-collaboration-mode="selectedCollaborationMode"
-                    :models="availableModelIds"
+                    :models="availableModels"
+                    :reasoning-efforts="availableReasoningEfforts"
                     :selected-model="composerSelectedModelId"
                     :selected-reasoning-effort="selectedReasoningEffort"
                     :selected-speed-mode="selectedSpeedMode"
@@ -1054,6 +1063,14 @@
       </section>
     </template>
   </DesktopLayout>
+  <div
+    v-if="proHandoffNotice"
+    class="pro-handoff-notice"
+    :class="{ 'is-error': proHandoffNotice.type === 'error' }"
+    :role="proHandoffNotice.type === 'error' ? 'alert' : 'status'"
+  >
+    {{ proHandoffNotice.text }}
+  </div>
   <div v-if="projectZipExportStatus.phase !== 'idle'" class="project-zip-modal-backdrop" role="presentation">
     <div class="project-zip-modal" role="dialog" aria-modal="true" :aria-label="t('Export Project')" @click.stop>
       <div class="project-zip-modal-header">
@@ -1193,6 +1210,7 @@ import {
   checkoutGitBranch,
   cloneGithubRepository,
   configureTelegramBot,
+  createChatGptProHandoff,
   createPermanentWorktree,
   createWorktree,
   createProjectlessThreadDirectory,
@@ -1417,7 +1435,8 @@ const {
   codexQuota,
   selectedThreadId,
   availableCollaborationModes,
-  availableModelIds,
+  availableModels,
+  availableReasoningEfforts,
   selectedCollaborationMode,
   selectedModelId,
   selectedReasoningEffort,
@@ -1425,6 +1444,9 @@ const {
   codexCliMissingError,
   installedSkills,
   accountRateLimitSnapshots,
+  rateLimitResetCredits,
+  isConsumingRateLimitReset,
+  rateLimitResetNotice,
   messages,
   hasMoreOlderMessages,
   isLoadingThreads,
@@ -1437,6 +1459,7 @@ const {
   isUpdatingSpeedMode,
   error: desktopError,
   refreshAll,
+  consumeBankedRateLimitReset,
   refreshSkills,
   selectThread,
   ensureThreadMessagesLoaded,
@@ -1541,6 +1564,17 @@ const projectZipExportStatus = ref<{ phase: 'idle' | 'exporting' | 'ready'; load
   fileName: '',
   error: '',
 })
+const proHandoffNotice = ref<{ text: string; type: 'success' | 'error' } | null>(null)
+let proHandoffNoticeTimer: ReturnType<typeof setTimeout> | null = null
+
+function showProHandoffNotice(text: string, type: 'success' | 'error' = 'success'): void {
+  proHandoffNotice.value = { text, type }
+  if (proHandoffNoticeTimer) clearTimeout(proHandoffNoticeTimer)
+  proHandoffNoticeTimer = setTimeout(() => {
+    proHandoffNotice.value = null
+    proHandoffNoticeTimer = null
+  }, type === 'error' ? 6000 : 4000)
+}
 const worktreeInitStatus = ref<{ phase: 'idle' | 'running' | 'error'; title: string; message: string }>({
   phase: 'idle',
   title: '',
@@ -2173,6 +2207,10 @@ onUnmounted(() => {
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
+  }
+  if (proHandoffNoticeTimer) {
+    clearTimeout(proHandoffNoticeTimer)
+    proHandoffNoticeTimer = null
   }
   clearTerminalKeyboardFocusFallbackTimer()
   stopPolling()
@@ -4210,6 +4248,29 @@ async function copySelectedThreadChat(): Promise<void> {
   }
 }
 
+async function onContinueInChatGptPro(threadId: string): Promise<void> {
+  if (threadId !== selectedThreadId.value || !composerCwd.value) return
+  const chatWindow = window.open('about:blank', '_blank')
+  if (chatWindow) chatWindow.opener = null
+  showProHandoffNotice('Packaging this thread for ChatGPT Pro…')
+  try {
+    const handoff = await createChatGptProHandoff(threadId, composerCwd.value)
+    await copyTextToClipboard(handoff.markdown)
+    if (chatWindow) {
+      chatWindow.location.replace(handoff.chatgptUrl)
+      showProHandoffNotice('Handoff copied. Select GPT-5.6 Sol Pro, then paste and send.')
+    } else {
+      showProHandoffNotice('Handoff copied. Open ChatGPT, select GPT-5.6 Sol Pro, then paste and send.')
+    }
+  } catch (error) {
+    chatWindow?.close()
+    showProHandoffNotice(
+      error instanceof Error ? error.message : 'Failed to prepare the ChatGPT Pro handoff',
+      'error',
+    )
+  }
+}
+
 function buildThreadMarkdown(): string {
   const lines: string[] = []
   const threadTitle = selectedThread.value?.title?.trim() || 'Untitled thread'
@@ -6117,6 +6178,22 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-build-label {
   @apply border-t border-zinc-100 px-3 py-2 text-[11px] text-zinc-500;
+}
+
+.pro-handoff-notice {
+  @apply fixed bottom-5 left-1/2 z-[120] max-w-[min(92vw,34rem)] -translate-x-1/2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 shadow-lg;
+}
+
+.pro-handoff-notice.is-error {
+  @apply border-rose-200 bg-rose-50 text-rose-900;
+}
+
+:root.dark .pro-handoff-notice {
+  @apply border-emerald-800 bg-emerald-950 text-emerald-100;
+}
+
+:root.dark .pro-handoff-notice.is-error {
+  @apply border-rose-800 bg-rose-950 text-rose-100;
 }
 
 </style>

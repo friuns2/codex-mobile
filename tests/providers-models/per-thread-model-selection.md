@@ -30,3 +30,31 @@
 
 #### Rollback/Cleanup
 - Reset each tested thread back to its original model selection if you changed an existing conversation for the test.
+
+---
+
+### Feature: Model-aware reasoning effort picker
+
+#### Prerequisites
+- App is running against a Codex app-server whose `model/list` response includes `supportedReasoningEfforts`.
+- `gpt-5.6-sol` is available with `max` and `ultra`.
+- A second model without `ultra` is available.
+
+#### Steps
+1. In light theme, select `gpt-5.6-sol` in the composer model picker.
+2. Open the Thinking picker and inspect the listed options.
+3. Select `Ultra`, close the picker, and verify the trigger shows `Ultra`.
+4. Switch to the second model that does not support `Ultra`.
+5. Open the Thinking picker again.
+6. Repeat steps 1–5 in dark theme.
+
+#### Expected Results
+- The Thinking picker preserves the effort order returned by the app-server.
+- `Max` and `Ultra` appear for `gpt-5.6-sol`.
+- Efforts not returned for the selected model are absent.
+- Switching away from a model while an unsupported effort is selected changes the selection to that model's advertised default (or first supported effort).
+- Provider-only models without effort metadata retain the conservative legacy choices and do not invent `Max` or `Ultra`.
+- The custom picker is readable and correctly positioned in both themes.
+
+#### Rollback/Cleanup
+- Restore the original model and reasoning effort for any existing thread changed during the test.

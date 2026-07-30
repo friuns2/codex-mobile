@@ -12,7 +12,6 @@ import type {
   ConfigReadResponse,
   GetAccountRateLimitsResponse,
   ModelListResponse,
-  ReasoningEffort,
   ThreadForkResponse,
   ThreadListResponse,
   ThreadReadResponse,
@@ -30,6 +29,7 @@ import {
 } from './normalizers/v2'
 import type {
   SpeedMode,
+  ReasoningEffort,
   UiAccountEntry,
   UiAccountQuotaStatus,
   UiAccountUnavailableReason,
@@ -52,9 +52,14 @@ import type {
   UiReviewSummary,
   UiReviewWorkspaceView,
   UiRateLimitSnapshot,
+  UiRateLimitResetCredit,
+  UiRateLimitResetCredits,
+  UiRateLimitResetOutcome,
   UiRateLimitWindow,
   UiThreadAutomation,
   UiThreadAutomationStatus,
+  UiModelOption,
+  UiReasoningEffortOption,
 } from '../types/codex'
 import { normalizePathForUi } from '../pathUtils.js'
 
@@ -547,12 +552,102 @@ export function pickCodexRateLimitSnapshot(payload: unknown): UiRateLimitSnapsho
   return normalizeRateLimitSnapshot(record.rateLimits ?? record.rate_limits)
 }
 
+function normalizeRateLimitResetCredit(value: unknown): UiRateLimitResetCredit | null {
+  const record = asRecord(value)
+  if (!record) return null
+
+  const id = readString(record.id)
+  if (!id) return null
+  return {
+    id,
+    resetType: readString(record.resetType ?? record.reset_type) ?? '',
+    status: readString(record.status) ?? '',
+    grantedAt: readNumber(record.grantedAt ?? record.granted_at),
+    expiresAt: readNumber(record.expiresAt ?? record.expires_at),
+    title: readString(record.title),
+    description: readString(record.description),
+  }
+}
+
+export function pickRateLimitResetCredits(payload: unknown): UiRateLimitResetCredits | null {
+  const record = asRecord(payload)
+  const resetCredits = asRecord(record?.rateLimitResetCredits ?? record?.rate_limit_reset_credits)
+  if (!resetCredits) return null
+
+  const availableCount = readNumber(resetCredits.availableCount ?? resetCredits.available_count)
+  if (availableCount === null) return null
+  const rawCredits = resetCredits.credits
+  return {
+    availableCount: Math.max(0, Math.floor(availableCount)),
+    credits: rawCredits === null || rawCredits === undefined
+      ? null
+      : (Array.isArray(rawCredits)
+          ? rawCredits
+              .map(normalizeRateLimitResetCredit)
+              .filter((credit): credit is UiRateLimitResetCredit => credit !== null)
+          : null),
+  }
+}
+
+export function pickRateLimitSnapshots(payload: unknown): UiRateLimitSnapshot[] {
+  const record = asRecord(payload)
+  if (!record) return []
+
+  const snapshots: UiRateLimitSnapshot[] = []
+  const seen = new Set<string>()
+  const pushSnapshot = (snapshot: UiRateLimitSnapshot | null): void => {
+    if (!snapshot) return
+    const key = snapshot.limitId?.trim() || snapshot.limitName?.trim() || '__default__'
+    if (seen.has(key)) return
+    seen.add(key)
+    snapshots.push(snapshot)
+  }
+
+  pushSnapshot(normalizeRateLimitSnapshot(record.rateLimits ?? record.rate_limits))
+  const rateLimitsByLimitId = asRecord(record.rateLimitsByLimitId ?? record.rate_limits_by_limit_id)
+  if (rateLimitsByLimitId) {
+    for (const value of Object.values(rateLimitsByLimitId)) {
+      pushSnapshot(normalizeRateLimitSnapshot(value))
+    }
+  }
+  return snapshots
+}
+
+export type AccountRateLimitsState = {
+  codexSnapshot: UiRateLimitSnapshot | null
+  snapshots: UiRateLimitSnapshot[]
+  resetCredits: UiRateLimitResetCredits | null
+}
+
 async function callRpc<T>(method: string, params?: unknown): Promise<T> {
   try {
     return await rpcCall<T>(method, params)
   } catch (error) {
     throw normalizeCodexApiError(error, `RPC ${method} failed`, method)
   }
+}
+
+export type ChatGptProHandoff = {
+  markdown: string
+  chatgptUrl: string
+}
+
+export async function createChatGptProHandoff(threadId: string, cwd: string): Promise<ChatGptProHandoff> {
+  const response = await fetch('/codex-api/thread/pro-handoff', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId, cwd }),
+  })
+  const payload = await response.json() as { data?: Partial<ChatGptProHandoff>; error?: unknown }
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, 'Failed to prepare the ChatGPT Pro handoff'))
+  }
+  const markdown = typeof payload.data?.markdown === 'string' ? payload.data.markdown : ''
+  const chatgptUrl = typeof payload.data?.chatgptUrl === 'string' ? payload.data.chatgptUrl : ''
+  if (!markdown || !chatgptUrl) {
+    throw new Error('The ChatGPT Pro handoff response was incomplete')
+  }
+  return { markdown, chatgptUrl }
 }
 
 function normalizeFallbackFileChange(value: unknown): UiFileChange | null {
@@ -700,7 +795,7 @@ async function enrichThreadMessagesWithFallback(threadId: string, messages: UiMe
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
-  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
   return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : ''
@@ -1395,6 +1490,51 @@ export async function getAccountRateLimits(): Promise<UiRateLimitSnapshot | null
   }
 }
 
+export async function getAccountRateLimitsState(): Promise<AccountRateLimitsState> {
+  try {
+    const payload = await callRpc<unknown>('account/rateLimits/read')
+    return {
+      codexSnapshot: pickCodexRateLimitSnapshot(payload),
+      snapshots: pickRateLimitSnapshots(payload),
+      resetCredits: pickRateLimitResetCredits(payload),
+    }
+  } catch (error) {
+    throw normalizeCodexApiError(error, 'Failed to load account rate limits', 'account/rateLimits/read')
+  }
+}
+
+function createRateLimitResetIdempotencyKey(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+  return `codexapp-reset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+export async function consumeRateLimitResetCredit(
+  creditId?: string,
+  idempotencyKey: string = createRateLimitResetIdempotencyKey(),
+): Promise<UiRateLimitResetOutcome> {
+  const normalizedIdempotencyKey = idempotencyKey.trim()
+  if (!normalizedIdempotencyKey) throw new Error('A reset idempotency key is required')
+  const normalizedCreditId = creditId?.trim() ?? ''
+  const params: { idempotencyKey: string; creditId?: string } = {
+    idempotencyKey: normalizedIdempotencyKey,
+  }
+  if (normalizedCreditId) params.creditId = normalizedCreditId
+
+  const result = await callRpc<unknown>('account/rateLimitResetCredit/consume', params)
+  const outcome = readString(asRecord(result)?.outcome)
+  if (
+    outcome === 'reset'
+    || outcome === 'alreadyRedeemed'
+    || outcome === 'nothingToReset'
+    || outcome === 'noCredit'
+  ) {
+    return outcome
+  }
+  throw new Error('Codex returned an unknown rate-limit reset outcome')
+}
+
 function normalizeAccountsListResult(payload: unknown): AccountsListResult {
   const record = asRecord(payload)
   const activeAccountId = readString(record?.activeAccountId)
@@ -2036,27 +2176,84 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
   return null
 }
 
-export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
+function normalizeModelReasoningEfforts(value: unknown): UiReasoningEffortOption[] {
+  const rows = Array.isArray(value) ? value : []
+  const options: UiReasoningEffortOption[] = []
+  for (const row of rows) {
+    const record = row && typeof row === 'object' && !Array.isArray(row)
+      ? row as Record<string, unknown>
+      : null
+    const effort = normalizeReasoningEffort(record?.reasoningEffort ?? record?.reasoning_effort)
+    if (!effort || options.some((option) => option.value === effort)) continue
+    options.push({
+      value: effort,
+      description: typeof record?.description === 'string' ? record.description.trim() : '',
+    })
+  }
+  return options
+}
+
+export async function getAvailableModels(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<UiModelOption[]> {
   const shouldIncludeProviderModels = options.includeProviderModels !== false
   const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
 
   if (providerModels?.exclusive || options.requireProviderModels) {
-    return providerModels?.ids ?? []
+    return (providerModels?.ids ?? []).map((id) => ({
+      id,
+      displayName: '',
+      description: '',
+      supportedReasoningEfforts: [],
+      defaultReasoningEffort: '',
+    }))
   }
 
   const payload = await callRpc<ModelListResponse>('model/list', {})
-  const ids: string[] = []
+  const models: UiModelOption[] = []
   for (const row of payload.data) {
     const candidate = row.id || row.model
-    if (!candidate || ids.includes(candidate)) continue
-    ids.push(candidate)
+    if (!candidate || models.some((model) => model.id === candidate)) continue
+    const rawRow = row as unknown as Record<string, unknown>
+    models.push({
+      id: candidate,
+      displayName: typeof rawRow.displayName === 'string' ? rawRow.displayName.trim() : '',
+      description: typeof rawRow.description === 'string' ? rawRow.description.trim() : '',
+      supportedReasoningEfforts: normalizeModelReasoningEfforts(
+        rawRow.supportedReasoningEfforts ?? rawRow.supported_reasoning_efforts,
+      ),
+      defaultReasoningEffort: normalizeReasoningEffort(
+        rawRow.defaultReasoningEffort ?? rawRow.default_reasoning_effort,
+      ),
+    })
   }
 
-  if (!shouldIncludeProviderModels || !providerModels) return ids
+  if (!shouldIncludeProviderModels || !providerModels) return models
 
   for (const candidate of providerModels.ids) {
-    if (!ids.includes(candidate)) ids.push(candidate)
+    if (models.some((model) => model.id === candidate)) continue
+    models.push({
+      id: candidate,
+      displayName: '',
+      description: '',
+      supportedReasoningEfforts: [],
+      defaultReasoningEffort: '',
+    })
   }
+  return models
+}
+
+export type AvailableModelIdList = string[] & {
+  readonly modelOptions?: UiModelOption[]
+}
+
+export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<AvailableModelIdList> {
+  const models = await getAvailableModels(options)
+  const ids = models.map((model) => model.id) as AvailableModelIdList
+  Object.defineProperty(ids, 'modelOptions', {
+    value: models,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  })
   return ids
 }
 
