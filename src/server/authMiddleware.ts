@@ -9,6 +9,8 @@ const TOKEN_COOKIE = 'portal_session'
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const SESSION_STORE_FILE = 'webui-auth-sessions.json'
 const MAX_PERSISTED_TOKENS = 128
+const LOGIN_RATE_WINDOW_MS = 5 * 60 * 1000
+const LOGIN_RATE_MAX_ATTEMPTS = 20
 
 type PersistedAuthState = {
   tokens?: Array<{
@@ -227,6 +229,19 @@ export function createAuthSession(password: string): AuthSession {
     tryPersistSessions(validTokens)
   }
 
+  const loginAttemptsByRemote = new Map<string, number[]>()
+  function isLoginRateLimited(remote: string): boolean {
+    const now = Date.now()
+    const attempts = (loginAttemptsByRemote.get(remote) ?? []).filter((timestamp) => now - timestamp < LOGIN_RATE_WINDOW_MS)
+    loginAttemptsByRemote.set(remote, attempts)
+    if (attempts.length >= LOGIN_RATE_MAX_ATTEMPTS) {
+      return true
+    }
+    attempts.push(now)
+    loginAttemptsByRemote.set(remote, attempts)
+    return false
+  }
+
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction): void => {
     if (pruneExpiredSessions(validTokens)) {
       tryPersistSessions(validTokens)
@@ -239,6 +254,11 @@ export function createAuthSession(password: string): AuthSession {
 
     // Handle login POST
     if (req.method === 'POST' && req.path === '/auth/login') {
+      const remote = req.socket.remoteAddress ?? 'unknown'
+      if (isLoginRateLimited(remote)) {
+        res.status(429).json({ error: 'Too many login attempts. Try again later.' })
+        return
+      }
       let body = ''
       req.setEncoding('utf8')
       req.on('data', (chunk: string) => { body += chunk })

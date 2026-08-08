@@ -5,6 +5,8 @@
       type="button"
       :title="triggerAccessibleLabel"
       :aria-label="triggerAccessibleLabel"
+      :aria-haspopup="'listbox'"
+      :aria-expanded="isOpen"
       :disabled="disabled"
       @click="onToggle"
     >
@@ -22,6 +24,7 @@
         'composer-dropdown-menu-wrap-down': openDirection === 'down',
       }"
       :style="menuWrapStyle"
+      @keydown="onMenuKeydown"
     >
       <div ref="menuRef" class="composer-dropdown-menu">
         <div v-if="enableSearch" class="composer-dropdown-search-wrap">
@@ -35,13 +38,20 @@
           />
         </div>
 
-        <ul class="composer-dropdown-options" role="listbox">
-          <li v-for="option in filteredOptions" :key="option.value">
+        <ul class="composer-dropdown-options" role="listbox" :aria-activedescendant="activeOptionId">
+          <li v-for="(option, index) in filteredOptions" :key="option.value">
             <button
+              :id="optionId(option)"
               class="composer-dropdown-option"
-              :class="{ 'is-selected': option.value === modelValue }"
+              :class="{
+                'is-selected': option.value === modelValue,
+                'is-active': index === activeIndex,
+              }"
               type="button"
+              role="option"
+              :aria-selected="option.value === modelValue"
               @click="onSelect(option.value)"
+              @mouseenter="activeIndex = index"
             >
               {{ option.label }}
             </button>
@@ -90,7 +100,18 @@ const searchInputRef = ref<HTMLInputElement | null>(null)
 const isOpen = ref(false)
 const searchQuery = ref('')
 const menuWrapStyle = ref<Record<string, string>>({})
+const activeIndex = ref(-1)
 let isLayoutListenerAttached = false
+
+const activeOptionId = computed(() => {
+  if (activeIndex.value < 0) return undefined
+  const option = filteredOptions.value[activeIndex.value]
+  return option ? optionId(option) : undefined
+})
+
+function optionId(option: DropdownOption): string {
+  return `composer-dropdown-option-${option.value}`
+}
 
 const selectedLabel = computed(() => {
   const selected = props.options.find((option) => option.value === props.modelValue)
@@ -174,8 +195,60 @@ function removeLayoutListeners(): void {
 
 function onSelect(value: string): void {
   emit('update:modelValue', value)
+  closeDropdown({ restoreFocus: true })
+}
+
+function closeDropdown(options?: { restoreFocus?: boolean }): void {
   isOpen.value = false
   searchQuery.value = ''
+  activeIndex.value = -1
+  if (options?.restoreFocus && rootRef.value) {
+    const trigger = rootRef.value.querySelector<HTMLButtonElement>('.composer-dropdown-trigger')
+    trigger?.focus()
+  }
+}
+
+function moveActiveIndex(delta: number): void {
+  const options = filteredOptions.value
+  if (options.length === 0) return
+  const size = options.length
+  activeIndex.value = activeIndex.value < 0 ? 0 : (activeIndex.value + delta + size) % size
+}
+
+function onMenuKeydown(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return
+  switch (event.key) {
+    case 'ArrowDown':
+      event.preventDefault()
+      moveActiveIndex(1)
+      break
+    case 'ArrowUp':
+      event.preventDefault()
+      moveActiveIndex(-1)
+      break
+    case 'Home':
+      event.preventDefault()
+      activeIndex.value = filteredOptions.value.length > 0 ? 0 : -1
+      break
+    case 'End':
+      event.preventDefault()
+      activeIndex.value = filteredOptions.value.length > 0 ? filteredOptions.value.length - 1 : -1
+      break
+    case 'Enter':
+      event.preventDefault()
+      if (activeIndex.value >= 0) {
+        const option = filteredOptions.value[activeIndex.value]
+        if (option) onSelect(option.value)
+      }
+      break
+    case 'Escape':
+      event.preventDefault()
+      closeDropdown({ restoreFocus: true })
+      break
+    case 'Tab':
+      closeDropdown()
+      break
+  }
 }
 
 function onEscapeSearch(): void {
@@ -183,7 +256,7 @@ function onEscapeSearch(): void {
     searchQuery.value = ''
     return
   }
-  isOpen.value = false
+  closeDropdown({ restoreFocus: true })
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
@@ -194,22 +267,33 @@ function onDocumentPointerDown(event: PointerEvent): void {
   const target = event.target
   if (!(target instanceof Node)) return
   if (root.contains(target)) return
-  isOpen.value = false
-  searchQuery.value = ''
+  closeDropdown()
 }
 
 watch(isOpen, (open) => {
   if (!open) {
     removeLayoutListeners()
     menuWrapStyle.value = {}
+    activeIndex.value = -1
     return
   }
   addLayoutListeners()
   nextTick(() => {
     updateMenuPosition()
     window.requestAnimationFrame(updateMenuPosition)
-    if (enableSearch.value) searchInputRef.value?.focus()
+    if (enableSearch.value) {
+      searchInputRef.value?.focus()
+      return
+    }
+    const selectedOption = filteredOptions.value.findIndex((option) => option.value === props.modelValue)
+    activeIndex.value = selectedOption >= 0 ? selectedOption : 0
   })
+})
+
+watch(filteredOptions, (options) => {
+  if (activeIndex.value >= options.length) {
+    activeIndex.value = options.length > 0 ? options.length - 1 : -1
+  }
 })
 
 onMounted(() => {
@@ -282,6 +366,10 @@ onBeforeUnmount(() => {
 }
 
 .composer-dropdown-option.is-selected {
+  @apply bg-zinc-100;
+}
+
+.composer-dropdown-option.is-active {
   @apply bg-zinc-100;
 }
 

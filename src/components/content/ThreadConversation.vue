@@ -4506,9 +4506,9 @@ onBeforeUnmount(() => {
 }
 
 .load-more-button {
-  @apply px-4 py-1.5 text-xs rounded-full border border-slate-300 dark:border-slate-600
-         text-slate-500 dark:text-slate-400 bg-transparent
-         hover:bg-slate-100 dark:hover:bg-slate-800
+  @apply px-4 py-1.5 text-xs rounded-full border border-slate-300
+         text-slate-500 bg-transparent
+         hover:bg-slate-100
          disabled:opacity-40 disabled:cursor-not-allowed
          transition-colors cursor-pointer;
 }

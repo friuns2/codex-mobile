@@ -222,7 +222,7 @@ function onToggle(): void {
 
 function onSelect(opt: SearchDropdownOption): void {
   emit('toggle', opt.value, !selected.value.has(opt.value))
-  isOpen.value = false
+  searchRef.value?.focus()
 }
 
 function moveHighlight(delta: number): void {

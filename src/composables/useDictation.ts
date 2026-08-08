@@ -27,6 +27,7 @@ export function useDictation(options: {
   let waveformSamples: number[] = []
   let isStartingRecording = false
   let stopRequestedBeforeStart = false
+  let recordingCancelled = false
   let transcribeAbortController: AbortController | null = null
 
   function cancelTranscription(): void {
@@ -148,10 +149,16 @@ export function useDictation(options: {
     }
     if (state.value !== 'idle' || !isSupported.value || isStartingRecording) return
     isStartingRecording = true
+    recordingCancelled = false
     stopRequestedBeforeStart = false
 
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+      if (recordingCancelled) {
+        cleanup()
+        state.value = 'idle'
+        return
+      }
       chunks = []
       mediaRecorder = new MediaRecorder(mediaStream)
       mediaRecorder.ondataavailable = (e) => {
@@ -196,6 +203,7 @@ export function useDictation(options: {
   }
 
   function cancel() {
+    recordingCancelled = true
     stopRequestedBeforeStart = false
     cancelTranscription()
     cleanup()

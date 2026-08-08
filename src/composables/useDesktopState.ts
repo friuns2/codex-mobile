@@ -4196,10 +4196,14 @@ export function useDesktopState() {
     return next
   }
 
+  let pendingQueuePersistPromise: Promise<void> | null = null
+
   function persistQueueState(): void {
-    void setThreadQueueState(normalizeQueueStateForPersistence(queuedMessagesByThreadId.value)).catch(() => {
-      // Queue persistence is best-effort; keep the current in-memory queue usable.
-    })
+    pendingQueuePersistPromise = setThreadQueueState(normalizeQueueStateForPersistence(queuedMessagesByThreadId.value))
+      .then(() => undefined)
+      .catch(() => {
+        // Queue persistence is best-effort; keep the current in-memory queue usable.
+      })
   }
 
   async function loadPersistedQueueStateIfNeeded(): Promise<void> {
@@ -5152,6 +5156,9 @@ export function useDesktopState() {
       [threadId]: true,
     }
     try {
+      if (pendingQueuePersistPromise) {
+        await pendingQueuePersistPromise
+      }
       queuedMessagesByThreadId.value = await getThreadQueueState()
     } catch {
       // Backend queue state is optional during transient bridge failures.

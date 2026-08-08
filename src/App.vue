@@ -86,36 +86,6 @@
 
             <button
               class="sidebar-skills-link"
-              :class="{ 'is-active': isSocketSecurityRoute, 'is-collapsed': isSidebarCollapsed }"
-              type="button"
-              @click="router.push({ name: 'socket-security' }); isMobile && setSidebarCollapsed(true)"
-            >
-              <span class="sidebar-skills-link-icon sidebar-socket-link-icon" aria-hidden="true">
-                <IconTablerShieldCheck />
-              </span>
-              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
-                <span class="sidebar-skills-link-title">{{ t('Security') }}</span>
-                <span class="sidebar-skills-link-subtitle">{{ t('Package scanner') }}</span>
-              </span>
-            </button>
-
-            <button
-              class="sidebar-skills-link"
-              :class="{ 'is-active': isSupabaseRoute, 'is-collapsed': isSidebarCollapsed }"
-              type="button"
-              @click="router.push({ name: 'supabase' }); isMobile && setSidebarCollapsed(true)"
-            >
-              <span class="sidebar-skills-link-icon sidebar-supabase-link-icon" aria-hidden="true">
-                <IconTablerDatabase />
-              </span>
-              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
-                <span class="sidebar-skills-link-title">{{ t('Supabase') }}</span>
-                <span class="sidebar-skills-link-subtitle">{{ t('Database, auth, storage') }}</span>
-              </span>
-            </button>
-
-            <button
-              class="sidebar-skills-link"
               :class="{ 'is-active': isSentinelsRoute, 'is-collapsed': isSidebarCollapsed }"
               type="button"
               @click="router.push({ name: 'sentinels' }); isMobile && setSidebarCollapsed(true)"
@@ -571,7 +541,7 @@
         :style="contentStyle"
       >
         <span v-if="isVirtualKeyboardOpen" class="content-keyboard-spacer" aria-hidden="true" />
-        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute || isSocketSecurityRoute || isSupabaseRoute || isSentinelsRoute">
+        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute || isSentinelsRoute">
           <template #leading>
             <SidebarThreadControls
               v-if="isSidebarCollapsed || isMobile"
@@ -586,12 +556,6 @@
             </span>
             <span v-else-if="isAutomationsRoute" class="skills-route-header-icon automations-route-header-icon" aria-hidden="true">
               <IconTablerBolt />
-            </span>
-            <span v-else-if="isSocketSecurityRoute" class="skills-route-header-icon socket-route-header-icon" aria-hidden="true">
-              <IconTablerShieldCheck />
-            </span>
-            <span v-else-if="isSupabaseRoute" class="skills-route-header-icon supabase-route-header-icon" aria-hidden="true">
-              <IconTablerDatabase />
             </span>
             <span v-else-if="isSentinelsRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
               <IconTablerShieldScan />
@@ -664,12 +628,6 @@
               @edit-automation="onEditAutomationFromPanel"
               @create-automation="onCreateAutomationFromPanel"
             />
-          </template>
-          <template v-else-if="isSocketSecurityRoute">
-            <SocketSecurityPanel />
-          </template>
-          <template v-else-if="isSupabaseRoute">
-            <SupabasePanel />
           </template>
           <template v-else-if="isSentinelsRoute">
             <SentinelsPanel />
@@ -1024,6 +982,7 @@
                   :is-interrupting-turn="false" :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                   :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                   :dictation-language="dictationLanguage"
+                  :send-failure-signal="composerSendFailureSignal"
                   @submit="onSubmitThreadMessage"
                   @update:selected-collaboration-mode="onSelectCollaborationMode"
                   @update:selected-model="onSelectModel"
@@ -1109,6 +1068,7 @@
                     :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                     :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                     :dictation-language="dictationLanguage"
+                    :send-failure-signal="composerSendFailureSignal"
                     @update:selected-collaboration-mode="onSelectCollaborationMode"
                     @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
                     @update:selected-reasoning-effort="onSelectReasoningEffort"
@@ -1249,8 +1209,6 @@ import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdow
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
-import IconTablerShieldCheck from './components/icons/IconTablerShieldCheck.vue'
-import IconTablerDatabase from './components/icons/IconTablerDatabase.vue'
 import IconTablerShieldScan from './components/icons/IconTablerShieldScan.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
@@ -1308,8 +1266,6 @@ const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/cont
 const ReviewPane = defineAsyncComponent(() => import('./components/content/ReviewPane.vue'))
 const DirectoryHub = defineAsyncComponent(() => import('./components/content/DirectoryHub.vue'))
 const AutomationsPanel = defineAsyncComponent(() => import('./components/content/AutomationsPanel.vue'))
-const SocketSecurityPanel = defineAsyncComponent(() => import('./components/content/SocketSecurityPanel.vue'))
-const SupabasePanel = defineAsyncComponent(() => import('./components/content/SupabasePanel.vue'))
 const SentinelsPanel = defineAsyncComponent(() => import('./components/content/SentinelsPanel.vue'))
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 
@@ -1593,6 +1549,7 @@ const terminalHeaderDropdownValue = ref('')
 const editingQueuedMessageState = ref<{ threadId: string; queueIndex: number } | null>(null)
 const isRouteSyncInProgress = ref(false)
 const directoryTryInFlightKey = ref('')
+const composerSendFailureSignal = ref(0)
 let hasPendingRouteSync = false
 const hasInitialized = ref(false)
 const newThreadCwd = ref('')
@@ -1806,8 +1763,6 @@ const routeThreadId = computed(() => {
 const isHomeRoute = computed(() => route.name === 'home')
 const isSkillsRoute = computed(() => route.name === 'skills')
 const isAutomationsRoute = computed(() => route.name === 'automations')
-const isSocketSecurityRoute = computed(() => route.name === 'socket-security')
-const isSupabaseRoute = computed(() => route.name === 'supabase')
 const isSentinelsRoute = computed(() => route.name === 'sentinels')
 const routeAutomationId = computed(() => {
   const raw = route.query.automationId
@@ -1816,8 +1771,6 @@ const routeAutomationId = computed(() => {
 const contentTitle = computed(() => {
   if (isAutomationsRoute.value) return t('Automations')
   if (isSkillsRoute.value) return t('Skills')
-  if (isSocketSecurityRoute.value) return t('Socket Security')
-  if (isSupabaseRoute.value) return t('Supabase')
   if (isSentinelsRoute.value) return t('Sentinels')
   if (isHomeRoute.value) return t('Start new thread')
   return selectedThread.value?.title ?? t('Choose a thread')
@@ -1852,7 +1805,7 @@ const composerThreadContextId = computed(() => (isHomeRoute.value ? '__new-threa
 const composerSelectedModelId = computed(() => readModelIdForThread(composerThreadContextId.value))
 const selectedThreadPendingRequest = computed<UiServerRequest | null>(() => {
   const rows = selectedThreadServerRequests.value
-  return rows.length > 0 ? rows[rows.length - 1] : null
+  return rows.length > 0 ? rows[0] : null
 })
 const composerCwd = computed(() => {
   if (isHomeRoute.value) return newThreadCwd.value.trim()
@@ -1882,7 +1835,7 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 ))
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
-const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && !isSocketSecurityRoute.value && !isSupabaseRoute.value && !isSentinelsRoute.value && selectedThreadId.value.trim().length > 0)
+const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && !isSentinelsRoute.value && selectedThreadId.value.trim().length > 0)
 const isAccountSwitchBlocked = computed(() =>
   isSendingMessage.value ||
   isInterruptingTurn.value ||
@@ -3508,7 +3461,9 @@ function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fil
     void submitFirstMessageForNewThread(text, payload.imageUrls, payload.skills, payload.fileAttachments)
     return
   }
-  void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
+  void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex).catch(() => {
+    composerSendFailureSignal.value += 1
+  })
 }
 
 function onEditQueuedMessage(messageId: string): void {
@@ -4281,7 +4236,7 @@ function onImplementPlan(payload: { turnId: string }): void {
 
 
 async function copySelectedThreadChat(): Promise<void> {
-  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || isSocketSecurityRoute.value || isSupabaseRoute.value || isSentinelsRoute.value) return
+  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || isSentinelsRoute.value) return
   if (!selectedThread.value || filteredMessages.value.length === 0) return
   const markdown = buildThreadMarkdown()
   try {
@@ -4736,7 +4691,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
     do {
       hasPendingRouteSync = false
 
-      if (route.name === 'home' || route.name === 'skills' || route.name === 'automations' || route.name === 'socket-security') {
+      if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
         }
@@ -4807,7 +4762,7 @@ watch(
   async (threadId) => {
     if (!hasInitialized.value) return
     if (isRouteSyncInProgress.value) return
-    if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || isSocketSecurityRoute.value || isSupabaseRoute.value || isSentinelsRoute.value) return
+    if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || isSentinelsRoute.value) return
 
     if (!threadId) {
       if (route.name !== 'home') {
@@ -4976,6 +4931,7 @@ async function submitFirstMessageForNewThread(
           title: t('Worktree setup failed'),
           message: t('Unable to create worktree. Try again or switch to Local project.'),
         }
+        composerSendFailureSignal.value += 1
         return
       }
     } else if (!targetCwd.trim()) {
@@ -4988,6 +4944,7 @@ async function submitFirstMessageForNewThread(
     await router.replace({ name: 'thread', params: { threadId } })
     scheduleMobileConversationJumpToLatest()
   } catch {
+    composerSendFailureSignal.value += 1
     // Error is already reflected in state.
   }
 }
@@ -5152,14 +5109,6 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply bg-amber-500;
 }
 
-.sidebar-socket-link-icon {
-  @apply bg-blue-600;
-}
-
-.sidebar-supabase-link-icon {
-  @apply bg-emerald-500;
-}
-
 .sidebar-sentinels-link-icon {
   @apply bg-violet-600;
 }
@@ -5190,14 +5139,6 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .automations-route-header-icon {
   @apply bg-amber-500 shadow-[0_16px_32px_-20px_rgba(245,158,11,0.9)];
-}
-
-.socket-route-header-icon {
-  @apply bg-blue-600 shadow-[0_16px_32px_-20px_rgba(37,99,235,0.9)];
-}
-
-.supabase-route-header-icon {
-  @apply bg-emerald-500 shadow-[0_16px_32px_-20px_rgba(16,185,129,0.9)];
 }
 
 .sentinels-route-header-icon {

@@ -12,8 +12,6 @@ import { createInterface } from 'node:readline'
 import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
 import { handleAccountRoutes } from './accountRoutes.js'
-import { handleSocketSecurityRoutes } from './socketSecurityRouter.js'
-import { handleSupabaseRoutes } from './supabaseRouter.js'
 import { handleSentinelRoutes } from './sentinelRouter.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
@@ -5681,7 +5679,9 @@ async function writeThreadQueueStateUnlocked(nextState: ThreadQueueState): Promi
   } else {
     delete payload[THREAD_QUEUE_STATE_KEY]
   }
-  await writeFile(statePath, JSON.stringify(payload), 'utf8')
+  const tmpPath = `${statePath}.tmp`
+  await writeFile(tmpPath, JSON.stringify(payload), 'utf8')
+  await rename(tmpPath, statePath)
 }
 
 async function withThreadQueueStateUpdate<T>(
@@ -7871,14 +7871,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
       }
 
       if (await handleReviewRoutes(req, res, url, { readJsonBody })) {
-        return
-      }
-
-      if (await handleSocketSecurityRoutes(req, res, url)) {
-        return
-      }
-
-      if (await handleSupabaseRoutes(req, res, url)) {
         return
       }
 

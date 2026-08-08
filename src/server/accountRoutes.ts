@@ -1302,6 +1302,7 @@ export async function handleAccountRoutes(
         },
       })
     } catch (error) {
+      stopActiveLogin()
       setJson(res, 500, {
         error: 'account_login_complete_failed',
         message: getErrorMessage(error, 'Failed to complete Codex login'),
