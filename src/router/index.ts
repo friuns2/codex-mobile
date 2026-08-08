@@ -33,6 +33,21 @@ const router = createRouter({
       component: EmptyRouteView,
     },
     {
+      path: '/sentineal',
+      name: 'sentineal',
+      component: EmptyRouteView,
+    },
+    {
+      path: '/database',
+      name: 'database',
+      component: EmptyRouteView,
+    },
+    {
+      path: '/ai-models',
+      name: 'ai-models',
+      component: EmptyRouteView,
+    },
+    {
       path: '/new-thread',
       redirect: { name: 'home' },
     },

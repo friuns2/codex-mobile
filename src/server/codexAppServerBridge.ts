@@ -13,6 +13,9 @@ import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
 import { handleAccountRoutes } from './accountRoutes.js'
 import { handleSentinelRoutes } from './sentinelRouter.js'
+import { handleSentinealRoutes } from './sentinealRouter.js'
+import { handleDatabaseRoutes } from './databaseRouter.js'
+import { handleAiModelsRoutes, runAiModelsPeriodicSyncNow } from './aiModelsRouter.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
 import { handleReviewRoutes } from './reviewGit.js'
@@ -7524,6 +7527,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     return threadSearchIndexPromise
   }
   void initializeSkillsSyncOnStartup(appServer)
+  void runAiModelsPeriodicSyncNow()
   void readTelegramBridgeConfig()
     .then((config) => {
       if (!config.botToken) return
@@ -7875,6 +7879,18 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
       }
 
       if (await handleSentinelRoutes(req, res, url)) {
+        return
+      }
+
+      if (await handleSentinealRoutes(req, res, url)) {
+        return
+      }
+
+      if (await handleDatabaseRoutes(req, res, url)) {
+        return
+      }
+
+      if (await handleAiModelsRoutes(req, res, url)) {
         return
       }
 
