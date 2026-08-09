@@ -616,6 +616,18 @@
             </span>
           </template>
           <template #actions>
+            <button
+              v-if="canShowTerminalToggle"
+              class="content-header-terminal-button"
+              :class="{ 'is-open': isComposerTerminalOpen }"
+              type="button"
+              :title="isComposerTerminalOpen ? t('Hide terminal') : t('Open terminal')"
+              :aria-pressed="isComposerTerminalOpen"
+              @click="toggleComposerTerminal"
+            >
+              <IconTablerTerminal class="content-header-terminal-button-icon" />
+              <span class="content-header-terminal-button-label">{{ t('Terminal') }}</span>
+            </button>
             <ComposerDropdown
               v-if="canShowTerminalToggle"
               class="content-header-terminal-command"
@@ -5312,6 +5324,26 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .content-header-terminal-command {
   @apply max-w-48;
+}
+
+.content-header-terminal-button {
+  @apply inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 outline-none transition hover:bg-zinc-50 focus:border-zinc-300;
+}
+
+.content-header-terminal-button.is-open {
+  @apply border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800;
+}
+
+.content-header-terminal-button-icon {
+  @apply h-4 w-4 text-zinc-500;
+}
+
+.content-header-terminal-button.is-open .content-header-terminal-button-icon {
+  @apply text-white;
+}
+
+.content-header-terminal-button-label {
+  @apply truncate;
 }
 
 .content-header-terminal-command :deep(.composer-dropdown-trigger) {

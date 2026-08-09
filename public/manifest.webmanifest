@@ -1,7 +1,7 @@
 {
-  "name": "Codex Web",
-  "short_name": "Codex",
-  "description": "A lightweight web interface for Codex that runs on top of the Codex app-server.",
+  "name": "Mobidex",
+  "short_name": "Mobidex",
+  "description": "A lightweight web interface for Codex that runs on top of the Codex app-server, branded as Mobidex.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

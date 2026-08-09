@@ -177,7 +177,7 @@ const LOGIN_PAGE_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Codex Web</title>
+<title>Mobidex</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
@@ -193,7 +193,7 @@ button:hover{background:#2563eb}
 </head>
 <body>
 <div class="card">
-<h1>Codex Web</h1>
+<h1>Mobidex</h1>
 <form id="f">
 <label for="pw">Password</label>
 <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>

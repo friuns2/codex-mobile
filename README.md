@@ -1,6 +1,6 @@
 <div align="center">
 
-# <span style="color:#ff2d95; text-shadow:0 0 12px #ff2d95, 0 0 28px #ff2d95;">codexapp</span>
+# <span style="color:#ff2d95; text-shadow:0 0 12px #ff2d95, 0 0 28px #ff2d95;">Mobidex</span>
 
 ### 🚀 Run Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀
 
@@ -36,7 +36,7 @@
 >  
 > **Yes, that is your Codex desktop app experience exposed over web UI. Yes, it runs cross-platform.**
 
-**`codexapp`** is a lightweight bridge that gives you a browser-accessible UI for Codex app-server workflows.
+**`Mobidex`** is a lightweight bridge that gives you a browser-accessible UI for Codex app-server workflows.
 
 You run one command. It starts a local web server. You open it from your machine, your LAN, or wherever your setup allows.  
 
@@ -244,7 +244,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 └──────────────┬──────────────┘
                │ HTTP/WebSocket
 ┌──────────────▼──────────────┐
-│         codexapp            │
+│         Mobidex            │
 │  (Express + Vue UI bridge)  │
 └──────────────┬──────────────┘
                │ RPC/Bridge calls
@@ -299,6 +299,9 @@ If you believe Codex UI should be accessible from **any machine, any OS, any scr
 - **New "AI Models" tab**: hardware-based offline model suggestions, Ollama detect/pull, HuggingFace search, cloud LLM provider management with an add/remove modal, per-provider model tags, and a manual "Sync now" button.
 - **Advanced section in sidebar**: the new Aegis, Database, and AI Models tabs are grouped under the existing "Advanced" sidebar section.
 - **Lazy-loaded panels**: all new tabs use `defineAsyncComponent`, so they only download when opened — the app stays light.
+- **Resizable Termux terminal**: the integrated terminal in the Codex Editor page opens at **20% of the page height** and can be **dragged up to 70%** via a resize handle (expand ⇱ / collapse toggles too). Height persists per session. The panel is edge-to-edge within the composer padding, labeled **TERMUX**, and includes a **Shizuku** quick-check button that runs `shizuku version` in the session.
+- **Dedicated Terminal button**: a labeled Terminal toggle button in the page header (next to the quick-commands dropdown) opens/hides the terminal on the thread/home page.
+- **Rebranded as Mobidex**: app title, PWA manifest (`public/manifest.webmanifest`), login/auth page, CLI startup banner, and feedback mailto now use the **Mobidex** branding. The npm package name and `npx codexapp` command are unchanged.
 
 ### Framework / Architecture Changes
 

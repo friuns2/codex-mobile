@@ -559,7 +559,7 @@ async function startServer(options: {
 
   const lines = [
     '',
-    'Codex Web Local is running!',
+    'Mobidex is running!',
     `  Version:  ${version}`,
     '  GitHub:   https://github.com/friuns2/codexui',
     '',

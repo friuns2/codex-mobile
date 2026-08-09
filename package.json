@@ -1,17 +1,17 @@
 {
   "name": "codexapp",
   "version": "0.1.87",
-  "description": "A lightweight web interface for Codex that runs on top of the Codex app-server, allowing remote access from any browser",
+  "description": "A lightweight web interface for Codex that runs on top of the Codex app-server, allowing remote access from any browser. Branded as Mobidex.",
   "type": "module",
   "license": "MIT",
   "author": "Pavel Voronin, Igor Levochkin",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/friuns2/codexui.git"
+    "url": "git+https://github.com/motherskitchenblr2/Mobidex.git"
   },
-  "homepage": "https://github.com/friuns2/codexui#readme",
+  "homepage": "https://github.com/motherskitchenblr2/Mobidex#readme",
   "bugs": {
-    "url": "https://github.com/friuns2/codexui/issues"
+    "url": "https://github.com/motherskitchenblr2/Mobidex/issues"
   },
   "publishConfig": {
     "access": "public"
