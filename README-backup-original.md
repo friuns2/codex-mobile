@@ -1,44 +1,29 @@
-<div align="center">
+# 🔥 codexapp
 
-# <span style="color:#ff2d95; text-shadow:0 0 12px #ff2d95, 0 0 28px #ff2d95;">codexapp</span>
+### 🚀 Run Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀
 
-### <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">▚ A Cyberpunk-Grade Codex Web UI ▞</span>
-
-### 🚀 Run the Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀
-
-[![npm](https://img.shields.io/npm/v/codexapp?style=for-the-badge&color=ff2d95&logo=npm&logoColor=white&labelColor=1a1b2f)](https://www.npmjs.com/package/codexapp)
-[![platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20Android-00d8ff?style=for-the-badge&labelColor=1a1b2f)](#-quick-start)
-[![node](https://img.shields.io/badge/Node-18%2B-05ffa1?style=for-the-badge&logo=node.js&logoColor=white&labelColor=1a1b2f)](https://nodejs.org/)
-[![license](https://img.shields.io/badge/License-MIT-f7f32b?style=for-the-badge&labelColor=1a1b2f)](./LICENSE)
-
-</div>
-
-```text
-        ░░░░  ░░░░░   ░░  ░░░░  ░  ░░    ░░   ░░  ░░ ░░░░░  ░ ░░
-░ ░░░░ ░      ░░   ░ ░  ░ ░   ░ ░  ░ ░  ░ ░  ░░░ ░  ░  ░░░░  ░░ ░░
-```
-
-<details open>
-<summary style="color:#ff2d95; font-weight:bold; cursor:pointer;">🌆 ▚ BOOT SEQUENCE COMPLETE — WHAT IS THIS? ▞</summary>
+[![npm](https://img.shields.io/npm/v/codexapp?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/codexapp)
+[![platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20Android-blue?style=for-the-badge)](#-quick-start)
+[![node](https://img.shields.io/badge/Node-18%2B-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![license](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](./LICENSE)
 
 > **Codex UI in your browser. No drama. One command.**
 >  
 > **Yes, that is your Codex desktop app experience exposed over web UI. Yes, it runs cross-platform.**
 
-</details>
+```text
+ ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗██╗   ██╗██╗
+██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝██║   ██║██║
+██║     ██║   ██║██║  ██║█████╗   ╚███╔╝ ██║   ██║██║
+██║     ██║   ██║██║  ██║██╔══╝   ██╔██╗ ██║   ██║██║
+╚██████╗╚██████╔╝██████╔╝███████╗██╔╝ ██╗╚██████╔╝██║
+ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝
+```
 
 ---
-
-<div align="center">
-
 <img width="1366" height="900" alt="image" src="https://github.com/user-attachments/assets/1a3578ba-add8-49a2-88b4-08195a7f0140" />
 
-</div>
-
----
-
-## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🤯 THE DOWNLOAD</span>
-
+## 🤯 What Is This?
 **`codexapp`** is a lightweight bridge that gives you a browser-accessible UI for Codex app-server workflows.
 
 You run one command. It starts a local web server. You open it from your machine, your LAN, or wherever your setup allows.  
@@ -47,7 +32,8 @@ You run one command. It starts a local web server. You open it from your machine
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">⚡ QUICK START — THE MAIN EVENT</span>
+## ⚡ Quick Start
+> **The main event.**
 
 ```bash
 # 🔓 Run instantly (recommended)
@@ -72,22 +58,19 @@ If you are using a provider or AI gateway that is already authenticated and do n
 npx codexapp --no-login
 ```
 
-### 🐧 Linux
-
+### Linux 🐧
 ```bash
 node -v   # should be 18+
 npx codexapp
 ```
 
-### 🪟 Windows (PowerShell)
-
+### Windows 🪟 (PowerShell)
 ```powershell
 node -v   # 18+
 npx codexapp
 ```
 
-### 🤖 Termux (Android)
-
+### Termux (Android) 🤖
 ```bash
 pkg update && pkg upgrade -y
 pkg install nodejs -y
@@ -107,7 +90,7 @@ termux-wake-lock
 
 ---
 
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">📡 iPhone / iPad via Tailscale Serve</span>
+## iPhone / iPad via Tailscale Serve
 
 If you want to use codexUI from iPhone or iPad Safari, serving it over HTTPS is recommended.
 
@@ -141,7 +124,8 @@ Notes:
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">✨ THE PAYLOAD — FEATURES</span>
+## ✨ Features
+> **The payload.**
 
 - 🚀 One-command launch with `npx codexapp`
 - 🌍 Cross-platform support for Linux, Windows, and Termux on Android
@@ -157,7 +141,7 @@ Notes:
 - 🔁 Imported chats are rewritten for the destination `CODEX_HOME`, project path, and currently selected provider/model so they can be resumed in the new environment
 - ⚙️ Project ZIP performance: exports stream ZIP bytes with response backpressure handling and skip generated/git-ignored folders; imports still buffer the selected ZIP once because the browser upload arrives as a single file
 
-### 🤖 Telegram Bot Bridge (Optional)
+### Telegram Bot Bridge (Optional)
 
 Set these environment variables before starting `codexapp`:
 
@@ -192,8 +176,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🧩 RECENT PRODUCT FEATURES</span>
-
+## 🧩 Recent Product Features (from main commits)
 > **Not just launch. Actual UX upgrades.**
 
 - 🗂️ Searchable project picker in new-thread flow
@@ -210,7 +193,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🌍 WHAT CAN YOU DO WITH THIS?</span>
+## 🌍 What Can You Do With This?
 
 | 🔥 Use Case | 💥 What You Get |
 |---|---|
@@ -225,7 +208,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🖼️ SCREENSHOTS</span>
+## 🖼️ Screenshots
 
 ### Skills Hub
 ![Skills Hub](docs/screenshots/skills-hub.png)
@@ -239,7 +222,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🏗️ ARCHITECTURE</span>
+## 🏗️ Architecture
 
 ```text
 ┌─────────────────────────────┐
@@ -258,8 +241,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">🎯 REQUIREMENTS</span>
-
+## 🎯 Requirements
 - ✅ Node.js `18+`
 - ✅ Codex app-server environment available
 - ✅ Browser access to host/port
@@ -267,7 +249,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🐛 TROUBLESHOOTING</span>
+## 🐛 Troubleshooting
 
 | ❌ Problem | ✅ Fix |
 |---|---|
@@ -278,42 +260,18 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🤝 CONTRIBUTING</span>
-
+## 🤝 Contributing
 Issues and PRs are welcome.  
 Bring bug reports, platform notes, and setup improvements.
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">⭐ STAR THIS REPO</span>
-
+## ⭐ Star This Repo
 If you believe Codex UI should be accessible from **any machine, any OS, any screen**, star this project and share it. ⭐
 
 <div align="center">
-
-<span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#05ffa1; text-shadow:0 0 8px #05ffa1;">NEON</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span>
-
 Built for speed, portability, and a little bit of chaos 😏
-
 </div>
-
----
-
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🎨 CYBERPUNK CUSTOMIZATIONS</span>
-
-> **Everything we customized in this README, documented.**
-
-### Theme & Styling
-- **Neon synthwave palette**: magenta `#ff2d95`, cyan `#00d8ff`, neon green `#05ffa1`, neon yellow `#f7f32b`, and purple `#b967ff` applied to headings, badges, and accents.
-- **Glow effects**: every section heading uses inline `color` + `text-shadow` (e.g. `0 0 10px #ff2d95`) so the neon glow renders directly on GitHub.
-- **Cyberpunk badge set**: shields.io badges restyled with `labelColor=1a1b2f` (dark navy) and neon `color` values for npm, platform, Node, and license.
-- **`<details>` boot sequence**: the "What Is This?" blurb is now a collapsible cyberpunk-style terminal block.
-- **Neon footer**: a `NEON ◆` separator divider with matching glow spans in place of the plain closing text.
-- **Retro banner**: replaced the ASCII logo with a stylized neon-scroll header line.
-- All content (Quick Start, Termux/Android steps, Telegram bridge, Tailscale, Features, Architecture, Requirements, Troubleshooting, Contributing, attribution) is **preserved unchanged** — only the presentation was upgraded.
-
-### Backup
-- The original pre-customization README is kept as **`README-backup-original.md`** in this repo.
 
 ---
 
