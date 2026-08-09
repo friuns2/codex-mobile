@@ -101,15 +101,15 @@
 
             <button
               class="sidebar-skills-link"
-              :class="{ 'is-active': isSentinealRoute, 'is-collapsed': isSidebarCollapsed }"
+              :class="{ 'is-active': isAegisRoute, 'is-collapsed': isSidebarCollapsed }"
               type="button"
-              @click="router.push({ name: 'sentineal' }); isMobile && setSidebarCollapsed(true)"
+              @click="router.push({ name: 'aegis' }); isMobile && setSidebarCollapsed(true)"
             >
               <span class="sidebar-skills-link-icon sidebar-sentinels-link-icon" aria-hidden="true">
                 <IconTablerShieldCheck />
               </span>
               <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
-                <span class="sidebar-skills-link-title">{{ t('Sentineal') }}</span>
+                <span class="sidebar-skills-link-title">{{ t('Aegis') }}</span>
                 <span class="sidebar-skills-link-subtitle">{{ t('Dependencies & vulns') }}</span>
               </span>
             </button>
@@ -586,7 +586,7 @@
         :style="contentStyle"
       >
         <span v-if="isVirtualKeyboardOpen" class="content-keyboard-spacer" aria-hidden="true" />
-        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute || isSentinelsRoute || isSentinealRoute || isDatabaseRoute || isAiModelsRoute">
+        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute || isSentinelsRoute || isAegisRoute || isDatabaseRoute || isAiModelsRoute">
           <template #leading>
             <SidebarThreadControls
               v-if="isSidebarCollapsed || isMobile"
@@ -605,7 +605,7 @@
             <span v-else-if="isSentinelsRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
               <IconTablerShieldScan />
             </span>
-            <span v-else-if="isSentinealRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
+            <span v-else-if="isAegisRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
               <IconTablerShieldCheck />
             </span>
             <span v-else-if="isDatabaseRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
@@ -686,8 +686,8 @@
           <template v-else-if="isSentinelsRoute">
             <SentinelsPanel />
           </template>
-          <template v-else-if="isSentinealRoute">
-            <SentinealPanel />
+          <template v-else-if="isAegisRoute">
+            <AegisPanel />
           </template>
           <template v-else-if="isDatabaseRoute">
             <DatabasePanel />
@@ -1332,7 +1332,7 @@ const ReviewPane = defineAsyncComponent(() => import('./components/content/Revie
 const DirectoryHub = defineAsyncComponent(() => import('./components/content/DirectoryHub.vue'))
 const AutomationsPanel = defineAsyncComponent(() => import('./components/content/AutomationsPanel.vue'))
 const SentinelsPanel = defineAsyncComponent(() => import('./components/content/SentinelsPanel.vue'))
-const SentinealPanel = defineAsyncComponent(() => import('./components/content/SentinealPanel.vue'))
+const AegisPanel = defineAsyncComponent(() => import('./components/content/AegisPanel.vue'))
 const DatabasePanel = defineAsyncComponent(() => import('./components/content/DatabasePanel.vue'))
 const AiModelsPanel = defineAsyncComponent(() => import('./components/content/AiModelsPanel.vue'))
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
@@ -1832,7 +1832,7 @@ const isHomeRoute = computed(() => route.name === 'home')
 const isSkillsRoute = computed(() => route.name === 'skills')
 const isAutomationsRoute = computed(() => route.name === 'automations')
 const isSentinelsRoute = computed(() => route.name === 'sentinels')
-const isSentinealRoute = computed(() => route.name === 'sentineal')
+const isAegisRoute = computed(() => route.name === 'aegis')
 const isDatabaseRoute = computed(() => route.name === 'database')
 const isAiModelsRoute = computed(() => route.name === 'ai-models')
 const routeAutomationId = computed(() => {
@@ -1843,7 +1843,7 @@ const contentTitle = computed(() => {
   if (isAutomationsRoute.value) return t('Automations')
   if (isSkillsRoute.value) return t('Skills')
   if (isSentinelsRoute.value) return t('Sentinels')
-  if (isSentinealRoute.value) return t('Sentineal')
+  if (isAegisRoute.value) return t('Aegis')
   if (isDatabaseRoute.value) return t('Database')
   if (isAiModelsRoute.value) return t('AI Models')
   if (isHomeRoute.value) return t('Start new thread')

@@ -13,7 +13,7 @@ import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
 import { handleAccountRoutes } from './accountRoutes.js'
 import { handleSentinelRoutes } from './sentinelRouter.js'
-import { handleSentinealRoutes } from './sentinealRouter.js'
+import { handleAegisRoutes } from './aegisRouter.js'
 import { handleDatabaseRoutes } from './databaseRouter.js'
 import { handleAiModelsRoutes, runAiModelsPeriodicSyncNow } from './aiModelsRouter.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
@@ -7882,7 +7882,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
-      if (await handleSentinealRoutes(req, res, url)) {
+      if (await handleAegisRoutes(req, res, url)) {
         return
       }
 

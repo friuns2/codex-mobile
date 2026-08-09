@@ -19,7 +19,7 @@ export interface ScannedDependency {
   advisories: AdvisoryEntry[]
 }
 
-export interface SentinealStatus {
+export interface AegisStatus {
   hasSocketKey: boolean
   projectFound: boolean
   dependencyCount: number
@@ -28,7 +28,7 @@ export interface SentinealStatus {
   lastSocketScan: string | null
 }
 
-export interface SentinealScanResult {
+export interface AegisScanResult {
   scannedAt: string
   dependencies: ScannedDependency[]
   summary: {
@@ -41,24 +41,24 @@ export interface SentinealScanResult {
   }
 }
 
-export async function sentinealGetStatus(): Promise<SentinealStatus> {
-  const res = await fetch('/codex-api/sentineal/status')
-  if (!res.ok) throw new Error('Failed to fetch Sentineal status')
+export async function aegisGetStatus(): Promise<AegisStatus> {
+  const res = await fetch('/codex-api/aegis/status')
+  if (!res.ok) throw new Error('Failed to fetch Aegis status')
   return res.json()
 }
 
-export async function sentinealScan(source: 'npm' | 'socket'): Promise<SentinealScanResult> {
-  const res = await fetch('/codex-api/sentineal/scan', {
+export async function aegisScan(source: 'npm' | 'socket'): Promise<AegisScanResult> {
+  const res = await fetch('/codex-api/aegis/scan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ source }),
   })
-  if (!res.ok) throw new Error('Failed to run Sentineal scan')
+  if (!res.ok) throw new Error('Failed to run Aegis scan')
   return res.json()
 }
 
-export async function sentinealSetSocketKey(apiKey: string): Promise<void> {
-  const res = await fetch('/codex-api/sentineal/key', {
+export async function aegisSetSocketKey(apiKey: string): Promise<void> {
+  const res = await fetch('/codex-api/aegis/key', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ apiKey }),
@@ -66,8 +66,8 @@ export async function sentinealSetSocketKey(apiKey: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to save Socket.dev API key')
 }
 
-export async function sentinealRemoveSocketKey(): Promise<void> {
-  const res = await fetch('/codex-api/sentineal/key', {
+export async function aegisRemoveSocketKey(): Promise<void> {
+  const res = await fetch('/codex-api/aegis/key', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ apiKey: '' }),

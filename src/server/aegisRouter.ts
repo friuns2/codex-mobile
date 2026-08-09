@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 
-const SENTINEAL_API_PREFIX = '/codex-api/sentineal'
+const AEGIS_API_PREFIX = '/codex-api/aegis'
 const NPM_AUDIT_BULK_URL = 'https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'
 const SCAN_TIMEOUT_MS = 20_000
 
@@ -29,7 +29,7 @@ export interface ScannedDependency {
   advisories: AdvisoryEntry[]
 }
 
-export interface SentinealStatus {
+export interface AegisStatus {
   hasSocketKey: boolean
   projectFound: boolean
   dependencyCount: number
@@ -38,7 +38,7 @@ export interface SentinealStatus {
   lastSocketScan: string | null
 }
 
-export interface SentinealScanResult {
+export interface AegisScanResult {
   scannedAt: string
   dependencies: ScannedDependency[]
   summary: {
@@ -57,15 +57,14 @@ function getCodexHomeDir(): string {
 }
 
 function getConfigPath(): string {
-  return join(getCodexHomeDir(), 'sentineal-config.json')
+  return join(getCodexHomeDir(), 'aegis-config.json')
 }
 
-interface SentinealConfig {
+interface AegisConfig {
   socketApiKey?: string
   lastNpmScan?: string
   lastSocketScan?: string
 }
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -113,16 +112,16 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   }
 }
 
-async function loadConfig(): Promise<SentinealConfig> {
+async function loadConfig(): Promise<AegisConfig> {
   try {
     const raw = await readFile(getConfigPath(), 'utf8')
-    return asRecord(JSON.parse(raw)) as SentinealConfig
+    return asRecord(JSON.parse(raw)) as AegisConfig
   } catch {
     return {}
   }
 }
 
-async function saveConfig(config: SentinealConfig): Promise<void> {
+async function saveConfig(config: AegisConfig): Promise<void> {
   const configPath = getConfigPath()
   await mkdir(dirname(configPath), { recursive: true })
   await writeFile(configPath, JSON.stringify(config, null, 2), 'utf8')
@@ -257,8 +256,8 @@ export function normalizeSeverity(raw: string): VulnerabilitySeverity {
   return 'moderate'
 }
 
-export function summarize(dependencies: ScannedDependency[]): SentinealScanResult['summary'] {
-  const summary: SentinealScanResult['summary'] = { total: 0, vulnerable: 0, critical: 0, high: 0, moderate: 0, low: 0 }
+export function summarize(dependencies: ScannedDependency[]): AegisScanResult['summary'] {
+  const summary: AegisScanResult['summary'] = { total: 0, vulnerable: 0, critical: 0, high: 0, moderate: 0, low: 0 }
   summary.total = dependencies.length
   for (const dependency of dependencies) {
     if (dependency.advisories.length === 0) continue
@@ -325,7 +324,7 @@ function severityRank(severity: VulnerabilitySeverity): number {
   return rank[severity]
 }
 
-async function runSocketScan(dependencies: RawDependency[], config: SentinealConfig): Promise<ScannedDependency[]> {
+async function runSocketScan(dependencies: RawDependency[], config: AegisConfig): Promise<ScannedDependency[]> {
   const apiToken = readString(config.socketApiKey)
   if (!apiToken) {
     return dependencies.map((d) => ({ name: d.name, version: d.version, dev: d.dev, advisories: [] }))
@@ -380,18 +379,18 @@ async function runSocketScan(dependencies: RawDependency[], config: SentinealCon
   return scanned
 }
 
-export async function handleSentinealRoutes(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
-  if (!url.pathname.startsWith(SENTINEAL_API_PREFIX)) return false
+export async function handleAegisRoutes(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+  if (!url.pathname.startsWith(AEGIS_API_PREFIX)) return false
 
   try {
-    const path = url.pathname.slice(SENTINEAL_API_PREFIX.length) || '/'
+    const path = url.pathname.slice(AEGIS_API_PREFIX.length) || '/'
 
     if (req.method === 'GET' && path === '/status') {
       const config = await loadConfig()
       const project = await collectProjectDependencies()
       const lastNpmScan = readString(config.lastNpmScan)
       const lastSocketScan = readString(config.lastSocketScan)
-      const status: SentinealStatus = {
+      const status: AegisStatus = {
         hasSocketKey: Boolean(readString(config.socketApiKey)),
         projectFound: Boolean(project),
         dependencyCount: project?.dependencies.length ?? 0,
@@ -421,7 +420,7 @@ export async function handleSentinealRoutes(req: IncomingMessage, res: ServerRes
       if (useSocket) config.lastSocketScan = new Date().toISOString()
       else config.lastNpmScan = new Date().toISOString()
       await saveConfig(config)
-      const result: SentinealScanResult = {
+      const result: AegisScanResult = {
         scannedAt: new Date().toISOString(),
         dependencies: scanned,
         summary: summarize(scanned),
@@ -452,7 +451,7 @@ export async function handleSentinealRoutes(req: IncomingMessage, res: ServerRes
         config.lastNpmScan = new Date().toISOString()
       }
       await saveConfig(config)
-      const result: SentinealScanResult = {
+      const result: AegisScanResult = {
         scannedAt: new Date().toISOString(),
         dependencies: scanned,
         summary: summarize(scanned),
@@ -479,10 +478,10 @@ export async function handleSentinealRoutes(req: IncomingMessage, res: ServerRes
       return true
     }
 
-    setJson(res, 404, { error: 'Unknown sentineal endpoint' })
+    setJson(res, 404, { error: 'Unknown aegis endpoint' })
     return true
   } catch (error) {
-    setJson(res, 500, { error: getErrorMessage(error, 'Sentineal error') })
+    setJson(res, 500, { error: getErrorMessage(error, 'Aegis error') })
     return true
   }
 }

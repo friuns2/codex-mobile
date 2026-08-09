@@ -33,8 +33,8 @@ const router = createRouter({
       component: EmptyRouteView,
     },
     {
-      path: '/sentineal',
-      name: 'sentineal',
+      path: '/aegis',
+      name: 'aegis',
       component: EmptyRouteView,
     },
     {

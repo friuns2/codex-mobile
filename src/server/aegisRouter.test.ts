@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeSeverity, summarize } from './sentinealRouter'
+import { normalizeSeverity, summarize } from './aegisRouter'
 
-describe('sentineal severity normalization', () => {
+describe('aegis severity normalization', () => {
   it('maps npm severity strings to the canonical union', () => {
     expect(normalizeSeverity('critical')).toBe('critical')
     expect(normalizeSeverity('high')).toBe('high')
@@ -16,7 +16,7 @@ describe('sentineal severity normalization', () => {
   })
 })
 
-describe('sentineal scan summary', () => {
+describe('aegis scan summary', () => {
   it('counts clean and vulnerable dependencies across severities', () => {
     const summary = summarize([
       { name: 'clean-pkg', version: '1.0.0', dev: false, advisories: [] },
