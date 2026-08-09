@@ -28,6 +28,26 @@ const router = createRouter({
       component: EmptyRouteView,
     },
     {
+      path: '/sentinels',
+      name: 'sentinels',
+      component: EmptyRouteView,
+    },
+    {
+      path: '/aegis',
+      name: 'aegis',
+      component: EmptyRouteView,
+    },
+    {
+      path: '/database',
+      name: 'database',
+      component: EmptyRouteView,
+    },
+    {
+      path: '/ai-models',
+      name: 'ai-models',
+      component: EmptyRouteView,
+    },
+    {
       path: '/new-thread',
       redirect: { name: 'home' },
     },

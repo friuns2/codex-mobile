@@ -455,6 +455,7 @@ const props = defineProps<{
   dictationClickToToggle?: boolean
   dictationAutoSend?: boolean
   dictationLanguage?: string
+  sendFailureSignal?: number
 }>()
 
 export type FileAttachment = { label: string; path: string; fsPath: string }
@@ -584,6 +585,7 @@ let attachmentSessionToken = 0
 const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 const DRAFT_STORAGE_PREFIX = 'codex-web-local.thread-draft.v1.'
 let lastActiveThreadId = ''
+let lastSubmittedDraft: ComposerDraftPayload | null = null
 
 const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'none', label: 'None' },
@@ -955,13 +957,20 @@ function buildContextUsageView(
 function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   const text = draft.value.trim()
   if (!canSubmit.value) return
-  emit('submit', {
+  const submitPayload: SubmitPayload = {
     text,
     imageUrls: selectedImages.value.map((image) => image.url),
     fileAttachments: [...fileAttachments.value],
     skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
     mode,
-  })
+  }
+  lastSubmittedDraft = {
+    text: submitPayload.text,
+    imageUrls: submitPayload.imageUrls,
+    fileAttachments: submitPayload.fileAttachments.map((attachment) => ({ ...attachment })),
+    skills: submitPayload.skills.map((skill) => ({ ...skill })),
+  }
+  emit('submit', submitPayload)
   clearPersistedDraftForThread(props.activeThreadId)
   clearDraftState()
   isComposerExpanded.value = false
@@ -1120,7 +1129,10 @@ function toggleComposerExpanded(): void {
   if (isInteractionDisabled.value) return
   isComposerExpanded.value = !isComposerExpanded.value
   queueComposerOverflowMeasurement()
-  void nextTick(() => inputRef.value?.focus())
+  void nextTick(() => {
+    autoResizeComposerInput()
+    inputRef.value?.focus()
+  })
 }
 
 function onModelSelect(value: string): void {
@@ -1360,13 +1372,14 @@ async function attachImageFile(file: File, sessionToken: number): Promise<void> 
   }
 }
 
-async function attachUploadedFile(file: File, sessionToken: number): Promise<void> {
+async function attachUploadedFile(file: File, sessionToken: number, onFailure?: (file: File) => void): Promise<void> {
   if (!beginAttachmentWork(sessionToken)) return
   try {
     const serverPath = await uploadFile(file)
     if (sessionToken !== attachmentSessionToken) return
     if (!serverPath) {
       recordAttachmentBatchResult('failure')
+      onFailure?.(file)
       return
     }
     addFileAttachment(serverPath)
@@ -1374,13 +1387,14 @@ async function attachUploadedFile(file: File, sessionToken: number): Promise<voi
   } catch {
     if (sessionToken === attachmentSessionToken) {
       recordAttachmentBatchResult('failure')
+      onFailure?.(file)
     }
   } finally {
     finishAttachmentWork(sessionToken)
   }
 }
 
-function attachIncomingFiles(files: FileList | File[] | null | undefined): void {
+function attachIncomingFiles(files: FileList | File[] | null | undefined, onFileFailure?: (file: File) => void): void {
   const normalizedFiles = normalizeSelectedFiles(files)
   if (normalizedFiles.length === 0) return
   beginAttachmentBatch(normalizedFiles.length)
@@ -1391,7 +1405,7 @@ function attachIncomingFiles(files: FileList | File[] | null | undefined): void 
     if (isImageFile(file)) {
       void attachImageFile(file, sessionToken)
     } else {
-      void attachUploadedFile(file, sessionToken)
+      void attachUploadedFile(file, sessionToken, onFileFailure)
     }
   }
 }
@@ -1526,7 +1540,14 @@ function onInputPaste(event: ClipboardEvent): void {
       type: 'text/plain',
       lastModified: Date.now(),
     })
-    attachIncomingFiles([textFile])
+    attachIncomingFiles([textFile], () => {
+      if (draft.value.trim().length > 0) {
+        draft.value = `${draft.value.trimEnd()}\n${plainText}`
+      } else {
+        draft.value = plainText
+      }
+      autoResizeComposerInput()
+    })
     return
   }
   const items = Array.from(event.clipboardData?.items ?? [])
@@ -1543,15 +1564,25 @@ function onInputPaste(event: ClipboardEvent): void {
   attachIncomingFiles(imageFiles)
 }
 
+function autoResizeComposerInput(): void {
+  const input = inputRef.value
+  if (!input || isComposerExpanded.value) return
+  input.style.height = 'auto'
+  const nextHeight = Math.max(input.scrollHeight, 40)
+  input.style.height = `${nextHeight}px`
+}
+
 function onInputChange(): void {
   if (dictationFeedback.value) {
     dictationFeedback.value = ''
   }
+  autoResizeComposerInput()
   queueComposerOverflowMeasurement()
   updateFileMentionState()
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return
   if (isFileMentionOpen.value) {
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -1668,6 +1699,7 @@ function hydrateDraft(payload: ComposerDraftPayload): void {
   replaceDraftState(payload)
   void nextTick(() => {
     inputRef.value?.focus()
+    autoResizeComposerInput()
     updateComposerOverflowState()
   })
 }
@@ -1681,7 +1713,10 @@ function appendTextToDraft(text: string): void {
   } else {
     draft.value = nextText
   }
-  nextTick(() => inputRef.value?.focus())
+  nextTick(() => {
+    inputRef.value?.focus()
+    autoResizeComposerInput()
+  })
 }
 
 async function reloadPrompts(): Promise<void> {
@@ -1821,6 +1856,10 @@ defineExpose<ThreadComposerExposed>({
 })
 
 onBeforeUnmount(() => {
+  cancelDictation()
+  if (lastActiveThreadId) {
+    persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
+  }
   document.removeEventListener('click', onDocumentClick)
   window.removeEventListener('drop', onWindowDragCleanup)
   window.removeEventListener('dragend', onWindowDragCleanup)
@@ -1837,6 +1876,7 @@ watch(
   () => props.activeThreadId,
   (nextThreadId) => {
     cancelDictation()
+    lastSubmittedDraft = null
     if (lastActiveThreadId) {
       persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
     }
@@ -1855,6 +1895,20 @@ watch([draft, selectedImages, fileAttachments, selectedSkills], () => {
   if (!lastActiveThreadId) return
   persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
 }, { deep: true })
+
+watch(
+  () => props.sendFailureSignal,
+  (nextSignal, previousSignal) => {
+    if (typeof nextSignal !== 'number' || typeof previousSignal !== 'number') return
+    if (nextSignal === previousSignal || !lastSubmittedDraft) return
+    const restored = lastSubmittedDraft
+    lastSubmittedDraft = null
+    replaceDraftState(restored)
+    persistDraftForThread(props.activeThreadId, restored)
+    isComposerExpanded.value = true
+    nextTick(() => inputRef.value?.focus())
+  },
+)
 
 watch(draft, () => {
   queueComposerOverflowMeasurement()
@@ -2094,11 +2148,12 @@ watch(
 }
 
 .thread-composer-input {
-  @apply w-full min-w-0 min-h-10 sm:min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 pr-10 text-sm text-zinc-900 outline-none transition resize-none overflow-y-auto;
+  @apply w-full min-w-0 min-h-10 sm:min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 pr-10 text-sm text-zinc-900 outline-none resize-none overflow-y-auto;
 }
 
 .thread-composer-input-wrap--expanded .thread-composer-input {
   @apply h-full max-h-none pr-12 text-base leading-6;
+  height: auto !important;
 }
 
 .thread-composer-input:focus {

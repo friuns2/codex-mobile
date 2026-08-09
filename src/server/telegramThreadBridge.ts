@@ -658,6 +658,7 @@ export class TelegramThreadBridge {
       previousSet?.delete(chatId)
       if (previousSet && previousSet.size === 0) {
         this.chatIdsByThreadId.delete(previousThreadId)
+        this.lastForwardedTurnByThreadId.delete(previousThreadId)
       }
     }
     this.threadIdByChatId.set(chatId, threadId)

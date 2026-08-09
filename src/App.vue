@@ -48,37 +48,102 @@
             </button>
           </div>
 
-          <button
-            v-if="!isSidebarCollapsed"
-            class="sidebar-skills-link"
-            :class="{ 'is-active': isSkillsRoute }"
-            type="button"
-            @click="router.push({ name: 'skills' }); isMobile && setSidebarCollapsed(true)"
-          >
-            <span class="sidebar-skills-link-icon" aria-hidden="true">
-              <IconTablerBolt />
-            </span>
-            <span class="sidebar-skills-link-copy">
-              <span class="sidebar-skills-link-title">{{ t('Skills') }}</span>
-              <span class="sidebar-skills-link-subtitle">{{ t('Plugins, apps, MCPs') }}</span>
-            </span>
-          </button>
+          <div v-if="!isSidebarCollapsed" class="sidebar-section-header" @click="isAdvancedExpanded = !isAdvancedExpanded">
+            <span class="sidebar-section-header-icon">{{ isAdvancedExpanded ? '▾' : '▸' }}</span>
+            <span class="sidebar-section-header-label">{{ t('Advanced') }}</span>
+          </div>
 
-          <button
-            v-if="!isSidebarCollapsed"
-            class="sidebar-skills-link"
-            :class="{ 'is-active': isAutomationsRoute }"
-            type="button"
-            @click="router.push({ name: 'automations' }); isMobile && setSidebarCollapsed(true)"
-          >
-            <span class="sidebar-skills-link-icon sidebar-automations-link-icon" aria-hidden="true">
-              <IconTablerBolt />
-            </span>
-            <span class="sidebar-skills-link-copy">
-              <span class="sidebar-skills-link-title">{{ t('Automations') }}</span>
-              <span class="sidebar-skills-link-subtitle">{{ t('Scheduled work') }}</span>
-            </span>
-          </button>
+          <template v-if="isSidebarCollapsed || isAdvancedExpanded">
+            <button
+              class="sidebar-skills-link"
+              :class="{ 'is-active': isSkillsRoute, 'is-collapsed': isSidebarCollapsed }"
+              type="button"
+              @click="router.push({ name: 'skills' }); isMobile && setSidebarCollapsed(true)"
+            >
+              <span class="sidebar-skills-link-icon" aria-hidden="true">
+                <IconTablerBolt />
+              </span>
+              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
+                <span class="sidebar-skills-link-title">{{ t('Skills') }}</span>
+                <span class="sidebar-skills-link-subtitle">{{ t('Plugins, apps, MCPs') }}</span>
+              </span>
+            </button>
+
+            <button
+              class="sidebar-skills-link"
+              :class="{ 'is-active': isAutomationsRoute, 'is-collapsed': isSidebarCollapsed }"
+              type="button"
+              @click="router.push({ name: 'automations' }); isMobile && setSidebarCollapsed(true)"
+            >
+              <span class="sidebar-skills-link-icon sidebar-automations-link-icon" aria-hidden="true">
+                <IconTablerBolt />
+              </span>
+              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
+                <span class="sidebar-skills-link-title">{{ t('Automations') }}</span>
+                <span class="sidebar-skills-link-subtitle">{{ t('Scheduled work') }}</span>
+              </span>
+            </button>
+
+            <button
+              class="sidebar-skills-link"
+              :class="{ 'is-active': isSentinelsRoute, 'is-collapsed': isSidebarCollapsed }"
+              type="button"
+              @click="router.push({ name: 'sentinels' }); isMobile && setSidebarCollapsed(true)"
+            >
+              <span class="sidebar-skills-link-icon sidebar-sentinels-link-icon" aria-hidden="true">
+                <IconTablerShieldScan />
+              </span>
+              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
+                <span class="sidebar-skills-link-title">{{ t('Sentinels') }}</span>
+                <span class="sidebar-skills-link-subtitle">{{ t('Security monitoring') }}</span>
+              </span>
+            </button>
+
+            <button
+              class="sidebar-skills-link"
+              :class="{ 'is-active': isAegisRoute, 'is-collapsed': isSidebarCollapsed }"
+              type="button"
+              @click="router.push({ name: 'aegis' }); isMobile && setSidebarCollapsed(true)"
+            >
+              <span class="sidebar-skills-link-icon sidebar-sentinels-link-icon" aria-hidden="true">
+                <IconTablerShieldCheck />
+              </span>
+              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
+                <span class="sidebar-skills-link-title">{{ t('Aegis') }}</span>
+                <span class="sidebar-skills-link-subtitle">{{ t('Dependencies & vulns') }}</span>
+              </span>
+            </button>
+
+            <button
+              class="sidebar-skills-link"
+              :class="{ 'is-active': isDatabaseRoute, 'is-collapsed': isSidebarCollapsed }"
+              type="button"
+              @click="router.push({ name: 'database' }); isMobile && setSidebarCollapsed(true)"
+            >
+              <span class="sidebar-skills-link-icon sidebar-sentinels-link-icon" aria-hidden="true">
+                <IconTablerDatabase />
+              </span>
+              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
+                <span class="sidebar-skills-link-title">{{ t('Database') }}</span>
+                <span class="sidebar-skills-link-subtitle">{{ t('SQL & storage') }}</span>
+              </span>
+            </button>
+
+            <button
+              class="sidebar-skills-link"
+              :class="{ 'is-active': isAiModelsRoute, 'is-collapsed': isSidebarCollapsed }"
+              type="button"
+              @click="router.push({ name: 'ai-models' }); isMobile && setSidebarCollapsed(true)"
+            >
+              <span class="sidebar-skills-link-icon sidebar-sentinels-link-icon" aria-hidden="true">
+                <IconTablerSettings />
+              </span>
+              <span v-if="!isSidebarCollapsed" class="sidebar-skills-link-copy">
+                <span class="sidebar-skills-link-title">{{ t('AI Models') }}</span>
+                <span class="sidebar-skills-link-subtitle">{{ t('Ollama, HF & cloud') }}</span>
+              </span>
+            </button>
+          </template>
 
           <SidebarThreadTree ref="sidebarThreadTreeRef" :groups="projectGroups" :project-display-name-by-id="projectDisplayNameById"
             :project-git-repo-by-name="projectGitRepoByName"
@@ -521,7 +586,7 @@
         :style="contentStyle"
       >
         <span v-if="isVirtualKeyboardOpen" class="content-keyboard-spacer" aria-hidden="true" />
-        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute">
+        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute || isSentinelsRoute || isAegisRoute || isDatabaseRoute || isAiModelsRoute">
           <template #leading>
             <SidebarThreadControls
               v-if="isSidebarCollapsed || isMobile"
@@ -537,8 +602,32 @@
             <span v-else-if="isAutomationsRoute" class="skills-route-header-icon automations-route-header-icon" aria-hidden="true">
               <IconTablerBolt />
             </span>
+            <span v-else-if="isSentinelsRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
+              <IconTablerShieldScan />
+            </span>
+            <span v-else-if="isAegisRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
+              <IconTablerShieldCheck />
+            </span>
+            <span v-else-if="isDatabaseRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
+              <IconTablerDatabase />
+            </span>
+            <span v-else-if="isAiModelsRoute" class="skills-route-header-icon sentinels-route-header-icon" aria-hidden="true">
+              <IconTablerSettings />
+            </span>
           </template>
           <template #actions>
+            <button
+              v-if="canShowTerminalToggle"
+              class="content-header-terminal-button"
+              :class="{ 'is-open': isComposerTerminalOpen }"
+              type="button"
+              :title="isComposerTerminalOpen ? t('Hide terminal') : t('Open terminal')"
+              :aria-pressed="isComposerTerminalOpen"
+              @click="toggleComposerTerminal"
+            >
+              <IconTablerTerminal class="content-header-terminal-button-icon" />
+              <span class="content-header-terminal-button-label">{{ t('Terminal') }}</span>
+            </button>
             <ComposerDropdown
               v-if="canShowTerminalToggle"
               class="content-header-terminal-command"
@@ -605,6 +694,18 @@
               @edit-automation="onEditAutomationFromPanel"
               @create-automation="onCreateAutomationFromPanel"
             />
+          </template>
+          <template v-else-if="isSentinelsRoute">
+            <SentinelsPanel />
+          </template>
+          <template v-else-if="isAegisRoute">
+            <AegisPanel />
+          </template>
+          <template v-else-if="isDatabaseRoute">
+            <DatabasePanel />
+          </template>
+          <template v-else-if="isAiModelsRoute">
+            <AiModelsPanel />
           </template>
           <template v-else-if="isHomeRoute">
             <div class="content-grid content-grid-home">
@@ -956,6 +1057,7 @@
                   :is-interrupting-turn="false" :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                   :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                   :dictation-language="dictationLanguage"
+                  :send-failure-signal="composerSendFailureSignal"
                   @submit="onSubmitThreadMessage"
                   @update:selected-collaboration-mode="onSelectCollaborationMode"
                   @update:selected-model="onSelectModel"
@@ -1041,6 +1143,7 @@
                     :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                     :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                     :dictation-language="dictationLanguage"
+                    :send-failure-signal="composerSendFailureSignal"
                     @update:selected-collaboration-mode="onSelectCollaborationMode"
                     @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
                     @update:selected-reasoning-effort="onSelectReasoningEffort"
@@ -1181,6 +1284,9 @@ import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdow
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerShieldScan from './components/icons/IconTablerShieldScan.vue'
+import IconTablerShieldCheck from './components/icons/IconTablerShieldCheck.vue'
+import IconTablerDatabase from './components/icons/IconTablerDatabase.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
 import IconTablerTerminal from './components/icons/IconTablerTerminal.vue'
@@ -1237,6 +1343,10 @@ const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/cont
 const ReviewPane = defineAsyncComponent(() => import('./components/content/ReviewPane.vue'))
 const DirectoryHub = defineAsyncComponent(() => import('./components/content/DirectoryHub.vue'))
 const AutomationsPanel = defineAsyncComponent(() => import('./components/content/AutomationsPanel.vue'))
+const SentinelsPanel = defineAsyncComponent(() => import('./components/content/SentinelsPanel.vue'))
+const AegisPanel = defineAsyncComponent(() => import('./components/content/AegisPanel.vue'))
+const DatabasePanel = defineAsyncComponent(() => import('./components/content/DatabasePanel.vue'))
+const AiModelsPanel = defineAsyncComponent(() => import('./components/content/AiModelsPanel.vue'))
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
@@ -1519,6 +1629,7 @@ const terminalHeaderDropdownValue = ref('')
 const editingQueuedMessageState = ref<{ threadId: string; queueIndex: number } | null>(null)
 const isRouteSyncInProgress = ref(false)
 const directoryTryInFlightKey = ref('')
+const composerSendFailureSignal = ref(0)
 let hasPendingRouteSync = false
 const hasInitialized = ref(false)
 const newThreadCwd = ref('')
@@ -1547,6 +1658,7 @@ const worktreeInitStatus = ref<{ phase: 'idle' | 'running' | 'error'; title: str
   message: '',
 })
 const isSidebarCollapsed = ref(loadSidebarCollapsed())
+const isAdvancedExpanded = ref(true)
 const sidebarSearchQuery = ref('')
 const isSidebarSearchVisible = ref(false)
 const sidebarScrollableRef = ref<HTMLElement | null>(null)
@@ -1731,6 +1843,10 @@ const routeThreadId = computed(() => {
 const isHomeRoute = computed(() => route.name === 'home')
 const isSkillsRoute = computed(() => route.name === 'skills')
 const isAutomationsRoute = computed(() => route.name === 'automations')
+const isSentinelsRoute = computed(() => route.name === 'sentinels')
+const isAegisRoute = computed(() => route.name === 'aegis')
+const isDatabaseRoute = computed(() => route.name === 'database')
+const isAiModelsRoute = computed(() => route.name === 'ai-models')
 const routeAutomationId = computed(() => {
   const raw = route.query.automationId
   return typeof raw === 'string' ? raw : ''
@@ -1738,6 +1854,10 @@ const routeAutomationId = computed(() => {
 const contentTitle = computed(() => {
   if (isAutomationsRoute.value) return t('Automations')
   if (isSkillsRoute.value) return t('Skills')
+  if (isSentinelsRoute.value) return t('Sentinels')
+  if (isAegisRoute.value) return t('Aegis')
+  if (isDatabaseRoute.value) return t('Database')
+  if (isAiModelsRoute.value) return t('AI Models')
   if (isHomeRoute.value) return t('Start new thread')
   return selectedThread.value?.title ?? t('Choose a thread')
 })
@@ -1771,7 +1891,7 @@ const composerThreadContextId = computed(() => (isHomeRoute.value ? '__new-threa
 const composerSelectedModelId = computed(() => readModelIdForThread(composerThreadContextId.value))
 const selectedThreadPendingRequest = computed<UiServerRequest | null>(() => {
   const rows = selectedThreadServerRequests.value
-  return rows.length > 0 ? rows[rows.length - 1] : null
+  return rows.length > 0 ? rows[0] : null
 })
 const composerCwd = computed(() => {
   if (isHomeRoute.value) return newThreadCwd.value.trim()
@@ -1801,7 +1921,7 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 ))
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
-const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
+const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && !isSentinelsRoute.value && selectedThreadId.value.trim().length > 0)
 const isAccountSwitchBlocked = computed(() =>
   isSendingMessage.value ||
   isInterruptingTurn.value ||
@@ -3427,7 +3547,9 @@ function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fil
     void submitFirstMessageForNewThread(text, payload.imageUrls, payload.skills, payload.fileAttachments)
     return
   }
-  void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
+  void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex).catch(() => {
+    composerSendFailureSignal.value += 1
+  })
 }
 
 function onEditQueuedMessage(messageId: string): void {
@@ -4200,7 +4322,7 @@ function onImplementPlan(payload: { turnId: string }): void {
 
 
 async function copySelectedThreadChat(): Promise<void> {
-  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value) return
+  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || isSentinelsRoute.value) return
   if (!selectedThread.value || filteredMessages.value.length === 0) return
   const markdown = buildThreadMarkdown()
   try {
@@ -4726,7 +4848,7 @@ watch(
   async (threadId) => {
     if (!hasInitialized.value) return
     if (isRouteSyncInProgress.value) return
-    if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value) return
+    if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || isSentinelsRoute.value) return
 
     if (!threadId) {
       if (route.name !== 'home') {
@@ -4895,6 +5017,7 @@ async function submitFirstMessageForNewThread(
           title: t('Worktree setup failed'),
           message: t('Unable to create worktree. Try again or switch to Local project.'),
         }
+        composerSendFailureSignal.value += 1
         return
       }
     } else if (!targetCwd.trim()) {
@@ -4907,6 +5030,7 @@ async function submitFirstMessageForNewThread(
     await router.replace({ name: 'thread', params: { threadId } })
     scheduleMobileConversationJumpToLatest()
   } catch {
+    composerSendFailureSignal.value += 1
     // Error is already reflected in state.
   }
 }
@@ -5039,8 +5163,24 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply w-3.5 h-3.5;
 }
 
+.sidebar-section-header {
+  @apply mx-3 flex items-center gap-2 px-2 py-1.5 mt-2 mb-0.5 rounded-lg text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400 cursor-pointer select-none transition hover:text-zinc-600 hover:bg-zinc-100/50;
+}
+
+:global(:root.dark) .sidebar-section-header {
+  @apply text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/30;
+}
+
+.sidebar-section-header-icon {
+  @apply text-[10px] w-4 text-center shrink-0 opacity-60;
+}
+
 .sidebar-skills-link {
   @apply mx-2 flex items-center gap-3 rounded-2xl border border-transparent bg-transparent px-3 py-2.5 text-left text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-950 cursor-pointer;
+}
+
+.sidebar-skills-link.is-collapsed {
+  @apply mx-1.5 justify-center px-2 py-2;
 }
 
 .sidebar-skills-link.is-active {
@@ -5053,6 +5193,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-automations-link-icon {
   @apply bg-amber-500;
+}
+
+.sidebar-sentinels-link-icon {
+  @apply bg-violet-600;
 }
 
 .sidebar-skills-link-icon :deep(svg) {
@@ -5083,6 +5227,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply bg-amber-500 shadow-[0_16px_32px_-20px_rgba(245,158,11,0.9)];
 }
 
+.sentinels-route-header-icon {
+  @apply bg-violet-600 shadow-[0_16px_32px_-20px_rgba(124,58,237,0.9)];
+}
+
 .skills-route-header-icon :deep(svg) {
   @apply h-4.5 w-4.5;
 }
@@ -5093,6 +5241,18 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 :global(:root.dark) .sidebar-skills-link-subtitle {
   @apply text-zinc-400;
+}
+
+:global(:root.dark) .sidebar-skills-link.is-collapsed {
+  @apply text-zinc-400;
+}
+
+:global(:root.dark) .sidebar-skills-link.is-collapsed:hover {
+  @apply bg-zinc-800 text-zinc-50;
+}
+
+:global(:root.dark) .sidebar-skills-link.is-collapsed.is-active {
+  @apply bg-zinc-800 text-zinc-50;
 }
 
 .content-body {
@@ -5164,6 +5324,26 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .content-header-terminal-command {
   @apply max-w-48;
+}
+
+.content-header-terminal-button {
+  @apply inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 outline-none transition hover:bg-zinc-50 focus:border-zinc-300;
+}
+
+.content-header-terminal-button.is-open {
+  @apply border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800;
+}
+
+.content-header-terminal-button-icon {
+  @apply h-4 w-4 text-zinc-500;
+}
+
+.content-header-terminal-button.is-open .content-header-terminal-button-icon {
+  @apply text-white;
+}
+
+.content-header-terminal-button-label {
+  @apply truncate;
 }
 
 .content-header-terminal-command :deep(.composer-dropdown-trigger) {

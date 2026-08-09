@@ -1,7 +1,19 @@
 <template>
-  <section class="thread-terminal-panel" :class="{ 'is-error': Boolean(errorMessage) }">
+  <section
+    class="thread-terminal-panel"
+    :class="{ 'is-error': Boolean(errorMessage) }"
+    :style="{ '--terminal-height-vh': `${terminalHeightVh}vh` }"
+  >
+    <div
+      class="thread-terminal-resize-handle"
+      :title="t('Drag to resize terminal (up to 70% of the page)')"
+      @pointerdown="onResizePointerDown"
+    >
+      <span class="thread-terminal-resize-grip" aria-hidden="true">⠿</span>
+    </div>
     <header class="thread-terminal-header">
       <div class="thread-terminal-tabs">
+        <span class="thread-terminal-brand" title="Termux on Android">TERMUX</span>
         <button
           v-for="(tab, index) in tabs"
           :key="tab.id"
@@ -16,8 +28,26 @@
         </button>
       </div>
       <div class="thread-terminal-actions">
+        <button
+          class="thread-terminal-action"
+          :class="{ 'is-agent-access-on': agentAccessEnabled }"
+          type="button"
+          :title="agentAccessEnabled ? t('Agent access to this terminal is ON. Disable to block the assistant from reading/writing this terminal.') : t('Agent access to this terminal is OFF. Enable to let the assistant read this terminal and mirror its commands here.')"
+          :disabled="agentAccessBusy"
+          @click="onAgentAccessToggle"
+        >
+          <span class="thread-terminal-agent-dot" :data-state="agentAccessEnabled ? 'on' : 'off'" />
+          Agent
+        </button>
+        <button class="thread-terminal-action" type="button" title="Shizuku" @click="onShizukuCheck">
+          <span class="thread-terminal-shizuku-dot" :data-state="shizukuState" />
+          Shizuku
+        </button>
         <button class="thread-terminal-action" type="button" title="New" @click="onNewTerminal">
           New
+        </button>
+        <button class="thread-terminal-action" type="button" title="Expand" @click="onExpandTerminal">
+          ⇱
         </button>
         <button class="thread-terminal-action" type="button" :title="t('Hide terminal')" @click="$emit('hide')">
           {{ t('Hide') }}
@@ -47,9 +77,11 @@ import { useUiLanguage } from '../../composables/useUiLanguage'
 import {
   attachThreadTerminal,
   closeThreadTerminal,
+  getThreadTerminalAgentAccess,
   getThreadTerminalQuickCommands,
   resizeThreadTerminal,
   sendThreadTerminalInput,
+  setThreadTerminalAgentAccess,
   subscribeCodexNotifications,
   type RpcNotification,
   type ThreadTerminalQuickCommand,
@@ -73,6 +105,17 @@ const terminalHostRef = ref<HTMLElement | null>(null)
 const activeSessionId = ref('')
 const errorMessage = ref('')
 const tabs = ref<TerminalTab[]>([])
+const shizukuState = ref<'unknown' | 'checking' | 'available' | 'unavailable'>('unknown')
+const agentAccessEnabled = ref(false)
+const agentAccessBusy = ref(false)
+
+const TERMINAL_HEIGHT_STORAGE_KEY = 'codex-web-local.terminal-height-vh.v1'
+const MIN_TERMINAL_HEIGHT_VH = 20
+const MAX_TERMINAL_HEIGHT_VH = 70
+const terminalHeightVh = ref(loadStoredTerminalHeight())
+let resizePointerId: number | null = null
+let resizeStartY = 0
+let resizeStartHeight = 0
 
 let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
@@ -130,6 +173,8 @@ onMounted(() => {
   unsubscribeNotifications = subscribeCodexNotifications(handleNotification)
   void refreshProjectQuickCommands()
   void attachToThread(false)
+  void checkShizukuAvailability()
+  void refreshAgentAccess()
 })
 
 onBeforeUnmount(() => {
@@ -152,6 +197,7 @@ watch(
     restoreSavedTabs()
     void refreshProjectQuickCommands()
     void attachToThread(false)
+    void refreshAgentAccess()
   },
 )
 
@@ -280,6 +326,120 @@ function handleNotification(notification: RpcNotification): void {
 
 function onNewTerminal(): void {
   void attachToThread(true)
+}
+
+function onExpandTerminal(): void {
+  terminalHeightVh.value = terminalHeightVh.value >= MAX_TERMINAL_HEIGHT_VH
+    ? MIN_TERMINAL_HEIGHT_VH
+    : MAX_TERMINAL_HEIGHT_VH
+  persistTerminalHeight()
+  scheduleFitAndResize()
+}
+
+function onResizePointerDown(event: PointerEvent): void {
+  resizePointerId = event.pointerId
+  resizeStartY = event.clientY
+  resizeStartHeight = terminalHeightVh.value
+  window.addEventListener('pointermove', onResizePointerMove)
+  window.addEventListener('pointerup', onResizePointerUp)
+  window.addEventListener('pointercancel', onResizePointerUp)
+}
+
+function onResizePointerMove(event: PointerEvent): void {
+  if (resizePointerId === null || event.pointerId !== resizePointerId) return
+  const viewportHeight = window.innerHeight || 1
+  const deltaVh = ((resizeStartY - event.clientY) / viewportHeight) * 100
+  const next = clamp(resizeStartHeight + deltaVh, MIN_TERMINAL_HEIGHT_VH, MAX_TERMINAL_HEIGHT_VH)
+  if (next === terminalHeightVh.value) return
+  terminalHeightVh.value = next
+  scheduleFitAndResize()
+}
+
+function onResizePointerUp(event: PointerEvent): void {
+  if (resizePointerId === null || event.pointerId !== resizePointerId) return
+  resizePointerId = null
+  window.removeEventListener('pointermove', onResizePointerMove)
+  window.removeEventListener('pointerup', onResizePointerUp)
+  window.removeEventListener('pointercancel', onResizePointerUp)
+  persistTerminalHeight()
+  scheduleFitAndResize()
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function persistTerminalHeight(): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(TERMINAL_HEIGHT_STORAGE_KEY, String(Math.round(terminalHeightVh.value)))
+}
+
+function loadStoredTerminalHeight(): number {
+  if (typeof window === 'undefined') return MIN_TERMINAL_HEIGHT_VH
+  try {
+    const raw = Number(window.localStorage.getItem(TERMINAL_HEIGHT_STORAGE_KEY))
+    if (!Number.isFinite(raw)) return MIN_TERMINAL_HEIGHT_VH
+    return clamp(Math.round(raw), MIN_TERMINAL_HEIGHT_VH, MAX_TERMINAL_HEIGHT_VH)
+  } catch {
+    return MIN_TERMINAL_HEIGHT_VH
+  }
+}
+
+async function checkShizukuAvailability(): Promise<void> {
+  if (!activeSessionId.value) return
+  shizukuState.value = 'checking'
+  try {
+    await waitForTerminalReady()
+    shizukuState.value = 'unknown'
+  } catch {
+    shizukuState.value = 'unknown'
+  }
+}
+
+function onShizukuCheck(): void {
+  if (shizukuState.value === 'checking') return
+  shizukuState.value = 'checking'
+  void runQuickCommand('shizuku version 2>/dev/null && echo "[SHIZUKU AVAILABLE]" || echo "[SHIZUKU NOT AVAILABLE]"')
+    .then(() => {
+      window.setTimeout(() => {
+        shizukuState.value = 'unknown'
+      }, 1200)
+    })
+    .catch(() => {
+      shizukuState.value = 'unknown'
+    })
+}
+
+async function refreshAgentAccess(): Promise<void> {
+  const threadId = props.threadId.trim()
+  if (!threadId) {
+    agentAccessEnabled.value = false
+    return
+  }
+  try {
+    agentAccessEnabled.value = await getThreadTerminalAgentAccess(threadId)
+  } catch {
+    agentAccessEnabled.value = false
+  }
+}
+
+async function onAgentAccessToggle(): Promise<void> {
+  const threadId = props.threadId.trim()
+  if (!threadId || agentAccessBusy.value) return
+  agentAccessBusy.value = true
+  try {
+    const next = !agentAccessEnabled.value
+    agentAccessEnabled.value = await setThreadTerminalAgentAccess(threadId, next)
+    if (agentAccessEnabled.value) {
+      void runQuickCommand(
+        `echo "Agent terminal access: ENABLED (the assistant can now read this terminal and its commands will appear here)"`,
+      )
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Agent access toggle failed'
+  } finally {
+    agentAccessBusy.value = false
+  }
 }
 
 function onTerminalFocusOut(): void {
@@ -603,12 +763,48 @@ function readString(value: unknown): string {
 
 .thread-terminal-panel {
   @apply overflow-hidden rounded-lg border border-zinc-800 bg-black shadow-lg;
-  height: min(34vh, 20rem);
-  min-height: 13rem;
+  height: clamp(20vh, var(--terminal-height-vh, 20vh), 70vh);
+  min-height: 12rem;
+  touch-action: none;
+}
+
+.thread-terminal-resize-handle {
+  @apply flex h-4 cursor-ns-resize items-center justify-center border-b border-zinc-800 bg-zinc-950 text-zinc-600 transition hover:text-zinc-300 hover:bg-zinc-900;
+  touch-action: none;
+  user-select: none;
+}
+
+.thread-terminal-resize-grip {
+  @apply text-[10px] leading-none tracking-widest;
+  font-size: 10px;
 }
 
 .thread-terminal-header {
   @apply flex h-9 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-2;
+}
+
+.thread-terminal-brand {
+  @apply mr-1 shrink-0 rounded border border-emerald-900 bg-emerald-950 px-1.5 py-0.5 text-[9px] font-bold tracking-widest text-emerald-400;
+}
+
+.thread-terminal-shizuku-dot {
+  @apply inline-block h-1.5 w-1.5 rounded-full bg-zinc-500;
+}
+
+.thread-terminal-shizuku-dot[data-state='checking'] {
+  @apply animate-pulse bg-amber-400;
+}
+
+.thread-terminal-agent-dot {
+  @apply inline-block h-1.5 w-1.5 rounded-full bg-zinc-500;
+}
+
+.thread-terminal-agent-dot[data-state='on'] {
+  @apply bg-violet-400;
+}
+
+.thread-terminal-action.is-agent-access-on {
+  @apply border-violet-800 bg-violet-950 text-violet-200 hover:border-violet-700;
 }
 
 .thread-terminal-tabs {
@@ -669,7 +865,7 @@ function readString(value: unknown): string {
 
 @media (max-width: 767px) {
   .thread-terminal-panel {
-    height: min(28vh, 14rem);
+    height: clamp(20vh, var(--terminal-height-vh, 20vh), 70vh);
     min-height: 9rem;
   }
 

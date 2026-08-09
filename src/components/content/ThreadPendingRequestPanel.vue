@@ -47,10 +47,10 @@
               />
             </label>
 
-            <button type="button" class="thread-pending-request-secondary" @click="onRespondApproval(request, 'cancel')">
+            <button type="button" class="thread-pending-request-secondary" :disabled="isRequestSubmitInFlight" @click="onRespondApproval(request, 'cancel')">
               {{ t('Skip') }}
             </button>
-            <button type="button" class="thread-pending-request-primary" @click="onSubmitApproval(request)">
+            <button type="button" class="thread-pending-request-primary" :disabled="isRequestSubmitInFlight" @click="onSubmitApproval(request)">
               {{ t('Send') }}
             </button>
           </footer>
@@ -151,13 +151,13 @@
           </p>
 
           <footer class="thread-pending-request-footer">
-            <button type="button" class="thread-pending-request-secondary" @click="onRespondMcpElicitation(request, 'cancel')">
+            <button type="button" class="thread-pending-request-secondary" :disabled="isRequestSubmitInFlight" @click="onRespondMcpElicitation(request, 'cancel')">
               {{ t('Cancel') }}
             </button>
-            <button type="button" class="thread-pending-request-secondary" @click="onRespondMcpElicitation(request, 'decline')">
+            <button type="button" class="thread-pending-request-secondary" :disabled="isRequestSubmitInFlight" @click="onRespondMcpElicitation(request, 'decline')">
               {{ t('Decline') }}
             </button>
-            <button type="button" class="thread-pending-request-primary" @click="onRespondMcpElicitation(request, 'accept')">
+            <button type="button" class="thread-pending-request-primary" :disabled="isRequestSubmitInFlight" @click="onRespondMcpElicitation(request, 'accept')">
               {{ t('Continue') }}
             </button>
           </footer>
@@ -205,26 +205,26 @@
           </div>
 
           <footer class="thread-pending-request-footer">
-            <button type="button" class="thread-pending-request-primary" @click="onRespondToolRequestUserInput(request)">
+            <button type="button" class="thread-pending-request-primary" :disabled="isRequestSubmitInFlight" @click="onRespondToolRequestUserInput(request)">
               {{ t('Send') }}
             </button>
           </footer>
         </section>
 
         <section v-else-if="request.method === 'item/tool/call'" class="thread-pending-request-actions">
-          <button type="button" class="thread-pending-request-primary" @click="onRespondToolCallFailure(request)">
+          <button type="button" class="thread-pending-request-primary" :disabled="isRequestSubmitInFlight" @click="onRespondToolCallFailure(request)">
             {{ t('Fail Tool Call') }}
           </button>
-          <button type="button" class="thread-pending-request-secondary" @click="onRespondToolCallSuccess(request)">
+          <button type="button" class="thread-pending-request-secondary" :disabled="isRequestSubmitInFlight" @click="onRespondToolCallSuccess(request)">
             {{ t('Success (Empty)') }}
           </button>
         </section>
 
         <section v-else class="thread-pending-request-actions">
-          <button type="button" class="thread-pending-request-primary" @click="onRespondEmptyResult(request)">
+          <button type="button" class="thread-pending-request-primary" :disabled="isRequestSubmitInFlight" @click="onRespondEmptyResult(request)">
             {{ t('Return Empty Result') }}
           </button>
-          <button type="button" class="thread-pending-request-secondary" @click="onRejectUnknownRequest(request)">
+          <button type="button" class="thread-pending-request-secondary" :disabled="isRequestSubmitInFlight" @click="onRejectUnknownRequest(request)">
             {{ t('Reject Request') }}
           </button>
         </section>
@@ -287,7 +287,21 @@ const toolQuestionAnswers = ref<Record<string, string>>({})
 const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const mcpElicitationAnswers = ref<Record<string, string | number | boolean | string[] | null>>({})
 const mcpElicitationValidationError = ref('')
+const isRequestSubmitInFlight = ref(false)
 const { t } = useUiLanguage()
+
+watch(
+  () => props.request,
+  () => {
+    isRequestSubmitInFlight.value = false
+  },
+)
+
+function respondServerRequestLocked(payload: UiServerRequestReply): void {
+  if (isRequestSubmitInFlight.value) return
+  isRequestSubmitInFlight.value = true
+  emit('respondServerRequest', payload)
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -857,7 +871,7 @@ function onApprovalOtherInput(event: Event): void {
 function onRespondApproval(request: UiServerRequest, decision: ApprovalDecision): void {
   if (isPermissionsApprovalRequest(request)) {
     if (decision === 'decline' || decision === 'cancel') {
-      emit('respondServerRequest', {
+      respondServerRequestLocked({
         id: request.id,
         error: {
           code: -32000,
@@ -868,7 +882,7 @@ function onRespondApproval(request: UiServerRequest, decision: ApprovalDecision)
     }
 
     const permissions = asRecord(asRecord(request.params)?.permissions) ?? {}
-    emit('respondServerRequest', {
+    respondServerRequestLocked({
       id: request.id,
       result: {
         permissions,
@@ -878,7 +892,7 @@ function onRespondApproval(request: UiServerRequest, decision: ApprovalDecision)
     return
   }
 
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     result: { decision },
   })
@@ -893,7 +907,7 @@ function onSubmitApproval(request: UiServerRequest): void {
     return
   }
 
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     result: {
       decision,
@@ -915,7 +929,7 @@ function onRespondMcpElicitation(request: UiServerRequest, action: 'accept' | 'd
     result.content = buildMcpElicitationContent(request)
   }
 
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     result,
   })
@@ -932,14 +946,14 @@ function onRespondToolRequestUserInput(request: UiServerRequest): void {
     answers[question.id] = { answers: values }
   }
 
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     result: { answers },
   })
 }
 
 function onRespondToolCallFailure(request: UiServerRequest): void {
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     result: {
       success: false,
@@ -954,7 +968,7 @@ function onRespondToolCallFailure(request: UiServerRequest): void {
 }
 
 function onRespondToolCallSuccess(request: UiServerRequest): void {
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     result: {
       success: true,
@@ -964,14 +978,14 @@ function onRespondToolCallSuccess(request: UiServerRequest): void {
 }
 
 function onRespondEmptyResult(request: UiServerRequest): void {
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     result: {},
   })
 }
 
 function onRejectUnknownRequest(request: UiServerRequest): void {
-  emit('respondServerRequest', {
+  respondServerRequestLocked({
     id: request.id,
     error: {
       code: -32000,

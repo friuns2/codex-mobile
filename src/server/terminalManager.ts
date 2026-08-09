@@ -86,6 +86,7 @@ export type TerminalAttachParams = {
 export class ThreadTerminalManager {
   private readonly sessions = new Map<string, TerminalSession>()
   private readonly activeSessionIdByThreadId = new Map<string, string>()
+  private readonly agentAccessByThreadId = new Map<string, boolean>()
   private readonly listeners = new Set<(notification: TerminalNotification) => void>()
   private readonly spawn: SpawnTerminal | null
   private readonly unavailableReason: string | null
@@ -199,6 +200,30 @@ export class ThreadTerminalManager {
     if (!sessionId) return null
     const session = this.sessions.get(sessionId)
     return session ? this.toSnapshot(session) : null
+  }
+
+  setAgentAccess(threadId: string, enabled: boolean): void {
+    const normalized = threadId.trim()
+    if (!normalized) return
+    if (enabled) {
+      this.agentAccessByThreadId.set(normalized, true)
+    } else {
+      this.agentAccessByThreadId.delete(normalized)
+    }
+  }
+
+  getAgentAccess(threadId: string): boolean {
+    return this.agentAccessByThreadId.get(threadId.trim()) === true
+  }
+
+  readBufferForThread(threadId: string): string {
+    const snapshot = this.getSnapshotForThread(threadId)
+    if (!snapshot) return ''
+    return snapshot.buffer
+  }
+
+  getActiveSessionIdForThread(threadId: string): string {
+    return this.activeSessionIdByThreadId.get(threadId.trim()) ?? ''
   }
 
   dispose(): void {

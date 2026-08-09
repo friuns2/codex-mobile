@@ -1,12 +1,16 @@
 {
-  "name": "Codex Web",
-  "short_name": "Codex Web",
-  "description": "A lightweight web interface for Codex that can be installed like an app in Chrome.",
+  "name": "Mobidex",
+  "short_name": "Mobidex",
+  "description": "A lightweight web interface for Codex that runs on top of the Codex app-server, branded as Mobidex.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "window-controls-overlay"],
+  "orientation": "any",
   "background_color": "#020617",
   "theme_color": "#020617",
+  "categories": ["productivity", "development"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/icons/pwa-192x192.png",
@@ -32,5 +36,9 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "screenshots": [],
+  "edge_side_panel": {
+    "preferred_width": 400
+  }
 }

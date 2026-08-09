@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
+    "skipLibCheck": true,
     "jsx": "preserve",
     "resolveJsonModule": true,
     "isolatedModules": true,

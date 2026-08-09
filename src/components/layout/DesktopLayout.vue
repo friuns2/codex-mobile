@@ -11,7 +11,7 @@
     </Teleport>
 
     <template v-if="!isMobile">
-      <aside v-if="!isSidebarCollapsed" class="desktop-sidebar">
+      <aside class="desktop-sidebar" :class="{ 'is-collapsed': isSidebarCollapsed }">
         <slot name="sidebar" />
       </aside>
       <button
@@ -48,6 +48,7 @@ defineEmits<{
 
 const { isMobile } = useMobile()
 
+const COLLAPSED_SIDEBAR_WIDTH = 60
 const SIDEBAR_WIDTH_KEY = 'codex-web-local.sidebar-width.v1'
 const MIN_SIDEBAR_WIDTH = 260
 const MAX_SIDEBAR_WIDTH = 620
@@ -68,10 +69,16 @@ function loadSidebarWidth(): number {
 const sidebarWidth = ref(loadSidebarWidth())
 
 const layoutStyle = computed(() => {
-  if (isMobile.value || props.isSidebarCollapsed) {
+  if (isMobile.value) {
     return {
       '--sidebar-width': '0px',
       '--layout-columns': 'minmax(0, 1fr)',
+    }
+  }
+  if (props.isSidebarCollapsed) {
+    return {
+      '--sidebar-width': `${COLLAPSED_SIDEBAR_WIDTH}px`,
+      '--layout-columns': 'var(--sidebar-width) 0px minmax(0, 1fr)',
     }
   }
   return {
@@ -118,6 +125,23 @@ function onResizeHandleMouseDown(event: MouseEvent): void {
 
 .desktop-sidebar {
   @apply relative z-0 bg-slate-100 min-h-0 overflow-hidden;
+}
+
+.desktop-sidebar.is-collapsed {
+  @apply overflow-visible;
+}
+
+.desktop-sidebar.is-collapsed :deep(.sidebar-root) {
+  @apply flex flex-col items-center pt-2 gap-1 overflow-y-auto;
+  scrollbar-width: none;
+}
+
+.desktop-sidebar.is-collapsed :deep(.sidebar-root::-webkit-scrollbar) {
+  display: none;
+}
+
+.desktop-sidebar.is-collapsed :deep(.sidebar-skills-link.is-collapsed) {
+  @apply mx-0;
 }
 
 .desktop-resize-handle {

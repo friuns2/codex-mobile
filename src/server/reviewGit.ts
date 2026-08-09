@@ -5,6 +5,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 
+const REVIEW_GIT_TIMEOUT_MS = 30_000
+
 type ReviewScope = 'workspace' | 'baseBranch' | 'commit'
 type ReviewWorkspaceView = 'unstaged' | 'staged'
 type ReviewAction = 'stage' | 'unstage' | 'revert'
@@ -136,13 +138,29 @@ async function runCommandResult(
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    let settled = false
     let stdout = ''
     let stderr = ''
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      proc.kill('SIGKILL')
+      reject(new Error(`Git command timed out after ${REVIEW_GIT_TIMEOUT_MS}ms (${command} ${args.join(' ')})`))
+    }, REVIEW_GIT_TIMEOUT_MS)
+    timer.unref()
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('error', reject)
+    proc.on('error', (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err)
+    })
     proc.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       resolve({
         code: code ?? 1,
         stdout: stdout.trim(),
@@ -175,13 +193,29 @@ async function runCommandCaptureRaw(command: string, args: string[], options: { 
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    let settled = false
     let stdout = ''
     let stderr = ''
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      proc.kill('SIGKILL')
+      reject(new Error(`Command timed out after ${REVIEW_GIT_TIMEOUT_MS}ms (${command} ${args.join(' ')})`))
+    }, REVIEW_GIT_TIMEOUT_MS)
+    timer.unref()
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('error', reject)
+    proc.on('error', (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err)
+    })
     proc.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       if (code === 0) {
         resolve(stdout)
         return

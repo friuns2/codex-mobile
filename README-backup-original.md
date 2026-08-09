@@ -1,15 +1,15 @@
-<div align="center">
-
-# <span style="color:#ff2d95; text-shadow:0 0 12px #ff2d95, 0 0 28px #ff2d95;">Mobidex</span>
+# 🔥 codexapp
 
 ### 🚀 Run Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀
 
-[![npm](https://img.shields.io/npm/v/codexapp?style=for-the-badge&color=ff2d95&logo=npm&logoColor=white&labelColor=1a1b2f)](https://www.npmjs.com/package/codexapp)
-[![platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20Android-00d8ff?style=for-the-badge&labelColor=1a1b2f)](#-quick-start)
-[![node](https://img.shields.io/badge/Node-18%2B-05ffa1?style=for-the-badge&logo=node.js&logoColor=white&labelColor=1a1b2f)](https://nodejs.org/)
-[![license](https://img.shields.io/badge/License-MIT-f7f32b?style=for-the-badge&labelColor=1a1b2f)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/codexapp?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/codexapp)
+[![platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20Android-blue?style=for-the-badge)](#-quick-start)
+[![node](https://img.shields.io/badge/Node-18%2B-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![license](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](./LICENSE)
 
-</div>
+> **Codex UI in your browser. No drama. One command.**
+>  
+> **Yes, that is your Codex desktop app experience exposed over web UI. Yes, it runs cross-platform.**
 
 ```text
  ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗██╗   ██╗██╗
@@ -21,22 +21,10 @@
 ```
 
 ---
-
-<div align="center">
-
 <img width="1366" height="900" alt="image" src="https://github.com/user-attachments/assets/1a3578ba-add8-49a2-88b4-08195a7f0140" />
 
-</div>
-
----
-
-## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🤯 What Is This?</span>
-
-> **Codex UI in your browser. No drama. One command.**
->  
-> **Yes, that is your Codex desktop app experience exposed over web UI. Yes, it runs cross-platform.**
-
-**`Mobidex`** is a lightweight bridge that gives you a browser-accessible UI for Codex app-server workflows.
+## 🤯 What Is This?
+**`codexapp`** is a lightweight bridge that gives you a browser-accessible UI for Codex app-server workflows.
 
 You run one command. It starts a local web server. You open it from your machine, your LAN, or wherever your setup allows.  
 
@@ -44,7 +32,8 @@ You run one command. It starts a local web server. You open it from your machine
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">⚡ Quick Start</span>
+## ⚡ Quick Start
+> **The main event.**
 
 ```bash
 # 🔓 Run instantly (recommended)
@@ -69,22 +58,19 @@ If you are using a provider or AI gateway that is already authenticated and do n
 npx codexapp --no-login
 ```
 
-### 🐧 Linux
-
+### Linux 🐧
 ```bash
 node -v   # should be 18+
 npx codexapp
 ```
 
-### 🪟 Windows (PowerShell)
-
+### Windows 🪟 (PowerShell)
 ```powershell
 node -v   # 18+
 npx codexapp
 ```
 
-### 🤖 Termux (Android)
-
+### Termux (Android) 🤖
 ```bash
 pkg update && pkg upgrade -y
 pkg install nodejs -y
@@ -104,7 +90,7 @@ termux-wake-lock
 
 ---
 
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">📡 iPhone / iPad via Tailscale Serve</span>
+## iPhone / iPad via Tailscale Serve
 
 If you want to use codexUI from iPhone or iPad Safari, serving it over HTTPS is recommended.
 
@@ -138,7 +124,8 @@ Notes:
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">✨ Features</span>
+## ✨ Features
+> **The payload.**
 
 - 🚀 One-command launch with `npx codexapp`
 - 🌍 Cross-platform support for Linux, Windows, and Termux on Android
@@ -154,7 +141,7 @@ Notes:
 - 🔁 Imported chats are rewritten for the destination `CODEX_HOME`, project path, and currently selected provider/model so they can be resumed in the new environment
 - ⚙️ Project ZIP performance: exports stream ZIP bytes with response backpressure handling and skip generated/git-ignored folders; imports still buffer the selected ZIP once because the browser upload arrives as a single file
 
-### 🤖 Telegram Bot Bridge (Optional)
+### Telegram Bot Bridge (Optional)
 
 Set these environment variables before starting `codexapp`:
 
@@ -189,8 +176,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🧩 Recent Product Features (from main commits)</span>
-
+## 🧩 Recent Product Features (from main commits)
 > **Not just launch. Actual UX upgrades.**
 
 - 🗂️ Searchable project picker in new-thread flow
@@ -207,7 +193,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🌍 What Can You Do With This?</span>
+## 🌍 What Can You Do With This?
 
 | 🔥 Use Case | 💥 What You Get |
 |---|---|
@@ -222,7 +208,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🖼️ Screenshots</span>
+## 🖼️ Screenshots
 
 ### Skills Hub
 ![Skills Hub](docs/screenshots/skills-hub.png)
@@ -236,7 +222,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🏗️ Architecture</span>
+## 🏗️ Architecture
 
 ```text
 ┌─────────────────────────────┐
@@ -244,7 +230,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 └──────────────┬──────────────┘
                │ HTTP/WebSocket
 ┌──────────────▼──────────────┐
-│         Mobidex            │
+│         codexapp            │
 │  (Express + Vue UI bridge)  │
 └──────────────┬──────────────┘
                │ RPC/Bridge calls
@@ -255,8 +241,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">🎯 Requirements</span>
-
+## 🎯 Requirements
 - ✅ Node.js `18+`
 - ✅ Codex app-server environment available
 - ✅ Browser access to host/port
@@ -264,7 +249,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🐛 Troubleshooting</span>
+## 🐛 Troubleshooting
 
 | ❌ Problem | ✅ Fix |
 |---|---|
@@ -275,52 +260,17 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🤝 Contributing</span>
-
+## 🤝 Contributing
 Issues and PRs are welcome.  
 Bring bug reports, platform notes, and setup improvements.
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">⭐ Star This Repo</span>
-
+## ⭐ Star This Repo
 If you believe Codex UI should be accessible from **any machine, any OS, any screen**, star this project and share it. ⭐
 
----
-
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🔧 Repository Customizations</span>
-
-> **Everything we customized in this repository — UI/UX and framework/architecture — beyond the original fork.**
-
-### UI / UX Changes
-
-- **New "Aegis" security tab** (originally named "Sentineal"): dependency/vulnerability scanner with a summary bar, severity tiles (critical / high / moderate / low / clean), and a per-package advisory list with fix versions and detail links. Runs keyless npm bulk-advisories scans plus an optional Socket.dev deep scan.
-- **New "Database" tab**: deployment-aware data explorer with a table list (with row counts), a SQL runner (SELECT-only for Supabase), and a result grid. Auto-detects the environment and switches between local SQLite and Supabase cloud mode.
-- **New "AI Models" tab**: hardware-based offline model suggestions, Ollama detect/pull, HuggingFace search, cloud LLM provider management with an add/remove modal, per-provider model tags, and a manual "Sync now" button.
-- **Advanced section in sidebar**: the new Aegis, Database, and AI Models tabs are grouped under the existing "Advanced" sidebar section.
-- **Lazy-loaded panels**: all new tabs use `defineAsyncComponent`, so they only download when opened — the app stays light.
-- **Resizable Termux terminal**: the integrated terminal in the Codex Editor page opens at **20% of the page height** and can be **dragged up to 70%** via a resize handle (expand ⇱ / collapse toggles too). Height persists per session. The panel is edge-to-edge within the composer padding, labeled **TERMUX**, and includes a **Shizuku** quick-check button that runs `shizuku version` in the session.
-- **Dedicated Terminal button**: a labeled Terminal toggle button in the page header (next to the quick-commands dropdown) opens/hides the terminal on the thread/home page.
-- **Rebranded as Mobidex**: app title, PWA manifest (`public/manifest.webmanifest`), login/auth page, CLI startup banner, and feedback mailto now use the **Mobidex** branding. The npm package name and `npx codexapp` command are unchanged.
-
-### Framework / Architecture Changes
-
-- **Server-side routers**: added `handleAegisRoutes`, `handleDatabaseRoutes`, and `handleAiModelsRoutes`, registered in the bridge middleware chain in `src/server/codexAppServerBridge.ts` (API prefixes `/codex-api/aegis`, `/codex-api/database`, `/codex-api/ai-models`).
-- **Typed API clients**: each new feature ships a typed client in `src/api/` and a matching router test file in `src/server/` (18 test files / 161 tests passing).
-- **Secure config storage**: API keys are stored server-side in `~/.codex/aegis-config.json` and `~/.codex/ai-models-config.json` and are never returned to the client (sanitized responses).
-- **Local database**: uses `node:sqlite` (`DatabaseSync`) for the local store with a JSON file fallback; cloud mode uses Supabase REST when `SUPABASE_URL` plus a service/anon key is present; Docker is detected via `/proc/1/cgroup` or container marker files.
-- **Background model sync**: an unref'd 10-minute `setInterval` keeps AI model data fresh, kicked off automatically at bridge startup (`runAiModelsPeriodicSyncNow()`).
-- **Android/Termux build support**: prebuilt native binaries don't load on ARM/musl, so builds run with `NAPI_RS_FORCE_WASI=true` and WASM fallbacks for rollup, lightningcss, and Tailwind oxide.
-- **Backup**: the original upstream README is kept in this repo as **`README-backup-original.md`**.
-
----
-
 <div align="center">
-
-<span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#05ffa1; text-shadow:0 0 8px #05ffa1;">◆</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span>
-
 Built for speed, portability, and a little bit of chaos 😏
-
 </div>
 
 ---

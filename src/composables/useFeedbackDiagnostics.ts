@@ -184,7 +184,7 @@ export function buildFeedbackMailto(entries: FeedbackDiagnostic[] = diagnostics.
     readVisiblePageText(),
   ].join('\n').slice(0, MAX_BODY_CHARS)
 
-  const subject = `Codex Web feedback: ${normalizeSubjectMessage(entries[0]?.message)}`
+  const subject = `Mobidex feedback: ${normalizeSubjectMessage(entries[0]?.message)}`
   return `mailto:${FEEDBACK_EMAIL}?subject=${encodeMailtoParam(subject)}&body=${encodeMailtoParam(body)}`
 }
 

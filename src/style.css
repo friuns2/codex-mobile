@@ -89,6 +89,31 @@
   @apply border-zinc-700 bg-zinc-800/70;
 }
 
+:root.dark .sidebar-settings-telegram-panel {
+  @apply border-zinc-700 bg-zinc-800/70;
+}
+
+:root.dark .sidebar-settings-field-label {
+  @apply text-zinc-300;
+}
+
+:root.dark .sidebar-settings-input,
+:root.dark .sidebar-settings-textarea {
+  @apply border-zinc-600 bg-zinc-900 text-zinc-100 focus:border-zinc-400 focus:ring-zinc-700;
+}
+
+:root.dark .sidebar-settings-field-help {
+  @apply text-zinc-400;
+}
+
+:root.dark .sidebar-settings-telegram-error {
+  @apply bg-rose-950/60 text-rose-200;
+}
+
+:root.dark .sidebar-settings-telegram-save {
+  @apply border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700;
+}
+
 :root.dark .sidebar-settings-account-title {
   @apply text-zinc-200;
 }
@@ -340,6 +365,10 @@
   @apply bg-zinc-700;
 }
 
+:root.dark .composer-dropdown-option.is-active {
+  @apply bg-zinc-700;
+}
+
 :root.dark .content-header {
   @apply border-zinc-800 bg-zinc-950;
 }
@@ -467,6 +496,34 @@
 
 :root.dark .project-menu-item {
   @apply text-zinc-300 hover:bg-zinc-700;
+}
+
+:root.dark .project-menu-trigger {
+  @apply text-zinc-400;
+}
+
+:root.dark .project-menu-item-danger {
+  @apply text-rose-300 hover:bg-rose-950/60;
+}
+
+:root.dark .project-menu-input {
+  @apply text-zinc-100;
+}
+
+:root.dark .thread-start-button {
+  @apply text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200;
+}
+
+:root.dark .thread-row-request-chip[data-state='approval'] {
+  @apply border-emerald-500/30 bg-emerald-500/20 text-emerald-300;
+}
+
+:root.dark .thread-row-request-chip[data-state='response'] {
+  @apply border-sky-800 bg-sky-900/60 text-sky-100;
+}
+
+:root.dark .thread-show-more-button {
+  @apply text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700;
 }
 
 :root.dark .thread-menu-panel {
@@ -1516,6 +1573,39 @@
   @apply border-rose-900 bg-rose-950/60 text-rose-200;
 }
 
+:root.dark .new-thread-open-folder-status {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-400;
+}
+
+:root.dark .new-thread-open-folder-list {
+  scrollbar-color: rgb(82 82 91) rgb(24 24 27);
+}
+
+:root.dark .new-thread-open-folder-list::-webkit-scrollbar-track {
+  background: rgb(24 24 27);
+}
+
+:root.dark .new-thread-open-folder-list::-webkit-scrollbar-thumb {
+  background: rgb(82 82 91);
+  border: 2px solid rgb(24 24 27);
+}
+
+:root.dark .new-thread-open-folder-list::-webkit-scrollbar-thumb:hover {
+  background: rgb(113 113 122);
+}
+
+:root.dark .new-thread-open-folder-item-main {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-100 hover:border-zinc-600 hover:bg-zinc-800;
+}
+
+:root.dark .new-thread-open-folder-item-open {
+  @apply border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700;
+}
+
+:root.dark .new-thread-branch-dropdown :deep(.composer-dropdown-trigger) {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-200;
+}
+
 :root.dark .runtime-toggle {
   @apply border-zinc-700 bg-zinc-900;
 }
@@ -1874,6 +1964,10 @@
 :root.dark .automation-detail-grid div,
 :root.dark .automation-detail-prompt p {
   @apply bg-zinc-900 text-zinc-200;
+}
+
+:root.dark .load-more-button {
+  @apply border-slate-600 text-slate-400 hover:bg-slate-800;
 }
 
 @media (max-width: 768px) {

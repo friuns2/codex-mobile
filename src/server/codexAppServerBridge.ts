@@ -12,6 +12,10 @@ import { createInterface } from 'node:readline'
 import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
 import { handleAccountRoutes } from './accountRoutes.js'
+import { handleSentinelRoutes } from './sentinelRouter.js'
+import { handleAegisRoutes } from './aegisRouter.js'
+import { handleDatabaseRoutes } from './databaseRouter.js'
+import { handleAiModelsRoutes, runAiModelsPeriodicSyncNow } from './aiModelsRouter.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
 import { handleReviewRoutes } from './reviewGit.js'
@@ -1022,6 +1026,7 @@ function mergeStreamTurnErrorsIntoThreadResult(appServer: AppServerProcess, resu
   }
 }
 
+const WARNED_AUTH_READ_FAILURES_MAX = 100
 const warnedCodexAuthReadFailures = new Set<string>()
 
 function getErrorCode(error: unknown): string | null {
@@ -1040,6 +1045,9 @@ function warnCodexAuthReadFailure(authPath: string, error: unknown): void {
   const message = getCodexAuthReadErrorMessage(error)
   const warningKey = `${authPath}:${message}`
   if (warnedCodexAuthReadFailures.has(warningKey)) return
+  if (warnedCodexAuthReadFailures.size >= WARNED_AUTH_READ_FAILURES_MAX) {
+    warnedCodexAuthReadFailures.clear()
+  }
   warnedCodexAuthReadFailures.add(warningKey)
   console.warn('[codex-auth] Unable to read Codex auth state', { path: authPath, error: message })
 }
@@ -2759,6 +2767,8 @@ function parseComposioJson<T>(stdout: string, fallback: string): T {
   return JSON.parse(trimmed) as T
 }
 
+const DEFAULT_CLI_TIMEOUT_MS = 30_000
+
 async function runComposioJson<T>(args: string[], fallback: string): Promise<T> {
   const invocation = resolveComposioInvocation(args)
   if (!invocation) {
@@ -2779,8 +2789,26 @@ async function runComposioJson<T>(args: string[], fallback: string): Promise<T> 
   child.stderr.on('data', (chunk) => { stderr += chunk })
 
   const exitCode = await new Promise<number>((resolveExit, reject) => {
-    child.once('error', reject)
-    child.once('close', (code) => resolveExit(code ?? 0))
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill('SIGKILL')
+      reject(new Error(`Composio CLI timed out after ${DEFAULT_CLI_TIMEOUT_MS}ms (${args.join(' ')})`))
+    }, DEFAULT_CLI_TIMEOUT_MS)
+    timer.unref()
+    child.once('error', (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.once('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolveExit(code ?? 0)
+    })
   })
 
   if (exitCode !== 0) {
@@ -4239,12 +4267,28 @@ async function runCommandCaptureRaw(command: string, args: string[], options: { 
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    let settled = false
     let stdout = ''
     let stderr = ''
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      proc.kill('SIGKILL')
+      reject(new Error(`Command timed out after ${DEFAULT_CLI_TIMEOUT_MS}ms (${command} ${args.join(' ')})`))
+    }, DEFAULT_CLI_TIMEOUT_MS)
+    timer.unref()
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('error', reject)
+    proc.on('error', (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err)
+    })
     proc.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       if (code === 0) {
         resolve(stdout)
         return
@@ -5638,7 +5682,9 @@ async function writeThreadQueueStateUnlocked(nextState: ThreadQueueState): Promi
   } else {
     delete payload[THREAD_QUEUE_STATE_KEY]
   }
-  await writeFile(statePath, JSON.stringify(payload), 'utf8')
+  const tmpPath = `${statePath}.tmp`
+  await writeFile(tmpPath, JSON.stringify(payload), 'utf8')
+  await rename(tmpPath, statePath)
 }
 
 async function withThreadQueueStateUpdate<T>(
@@ -6350,6 +6396,7 @@ async function fetchConnectorLogo(rawUrl: string): Promise<{ contentType: string
 }
 
 const STREAM_EVENT_BUFFER_LIMIT = 400
+const READ_BUFFER_MAX_BYTES = 10 * 1024 * 1024
 
 type StreamEventFrame = {
   method: string
@@ -6388,6 +6435,11 @@ class AppServerProcess {
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private activeConfigSignature = ''
+  private terminalManagerRef: ThreadTerminalManager | null = null
+
+  setTerminalManager(terminalManager: ThreadTerminalManager): void {
+    this.terminalManagerRef = terminalManager
+  }
 
 
   private getCodexCommand(): string {
@@ -6449,6 +6501,9 @@ class AppServerProcess {
     proc.stdout.setEncoding('utf8')
     proc.stdout.on('data', (chunk: string) => {
       this.readBuffer += chunk
+      if (this.readBuffer.length > READ_BUFFER_MAX_BYTES) {
+        this.readBuffer = ''
+      }
 
       let lineEnd = this.readBuffer.indexOf('\n')
       while (lineEnd !== -1) {
@@ -6656,6 +6711,11 @@ class AppServerProcess {
     const threadId = this.extractThreadIdFromParams(params)
     if (!threadId) return
 
+    const isCompleted = notification.method === 'item/completed'
+    if (isCompleted && itemType === 'commandExecution') {
+      this.mirrorAgentCommandToTerminal(threadId, item)
+    }
+
     const turnId =
       (typeof params.turnId === 'string' ? params.turnId : '') ||
       (typeof params.turn_id === 'string' ? params.turn_id : '')
@@ -6667,7 +6727,6 @@ class AppServerProcess {
       this.capturedItemsByThreadId.set(threadId, threadItems)
     }
 
-    const isCompleted = notification.method === 'item/completed'
     const existing = threadItems.get(itemId)
 
     if (existing && existing.completed && !isCompleted) return
@@ -6679,6 +6738,23 @@ class AppServerProcess {
       data: item as Record<string, unknown>,
       completed: isCompleted,
     })
+  }
+
+  private mirrorAgentCommandToTerminal(threadId: string, item: Record<string, unknown>): void {
+    const terminalManager = this.terminalManagerRef
+    if (!terminalManager) return
+    try {
+      if (!terminalManager.getAgentAccess(threadId)) return
+      const command = typeof item.command === 'string' ? item.command.trim() : ''
+      if (!command) return
+      const sessionId = terminalManager.getActiveSessionIdForThread(threadId)
+      if (!sessionId) return
+      const status = typeof item.status === 'string' ? item.status : ''
+      if (status !== 'completed') return
+      terminalManager.write(sessionId, `# agent: ${command}\r`)
+    } catch {
+      // Mirroring the agent command into the terminal is best-effort; never let it break the notification flow.
+    }
   }
 
   mergeItemsIntoTurns(threadId: string, turns: unknown[]): unknown[] {
@@ -6929,6 +7005,10 @@ class AppServerProcess {
     }
     this.pending.clear()
     this.pendingServerRequests.clear()
+    this.streamEventsByThreadId.clear()
+    this.lastThreadReadSnapshotByThreadId.clear()
+    this.capturedItemsByThreadId.clear()
+    this.liveStateCache.clear()
 
     try {
       proc.stdin.end()
@@ -6959,6 +7039,8 @@ export class BackendQueueProcessor {
   private readonly processingThreadIds = new Set<string>()
   private readonly queueDrainTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly queueDrainDueAtByThreadId = new Map<string, number>()
+  private readonly queueRetryCountByTurnKey = new Map<string, number>()
+  private static readonly MAX_QUEUE_RETRIES = 3
   private readonly unsubscribe: () => void
 
   constructor(private readonly appServer: AppServerProcess) {
@@ -6971,6 +7053,10 @@ export class BackendQueueProcessor {
     void this.scheduleAllQueuedThreads(1000)
   }
 
+  private turnKey(turn: BackendQueuedTurn): string {
+    return `${turn.threadId}::${turn.message.id}`
+  }
+
   dispose(): void {
     this.unsubscribe()
     for (const timer of this.queueDrainTimersByThreadId.values()) {
@@ -6979,6 +7065,7 @@ export class BackendQueueProcessor {
     this.queueDrainTimersByThreadId.clear()
     this.queueDrainDueAtByThreadId.clear()
     this.processingThreadIds.clear()
+    this.queueRetryCountByTurnKey.clear()
   }
 
   async scheduleAllQueuedThreads(delayMs = 0): Promise<void> {
@@ -7029,12 +7116,20 @@ export class BackendQueueProcessor {
       if (!next) return
       try {
         await this.startQueuedTurn(next)
+        this.queueRetryCountByTurnKey.delete(this.turnKey(next))
         if (await this.hasQueuedTurns(threadId)) {
           this.scheduleThreadQueueDrain(threadId)
         }
       } catch {
-        await this.restoreQueuedTurn(next)
-        this.scheduleThreadQueueDrain(threadId)
+        const key = this.turnKey(next)
+        const retryCount = (this.queueRetryCountByTurnKey.get(key) ?? 0) + 1
+        if (retryCount > BackendQueueProcessor.MAX_QUEUE_RETRIES) {
+          this.queueRetryCountByTurnKey.delete(key)
+        } else {
+          this.queueRetryCountByTurnKey.set(key, retryCount)
+          await this.restoreQueuedTurn(next)
+          this.scheduleThreadQueueDrain(threadId)
+        }
       }
     } catch {
       // Queue processing is best-effort. Keep the bridge alive if app-server is unavailable.
@@ -7345,6 +7440,7 @@ function getSharedBridgeState(): SharedBridgeState {
 
   const appServer = new AppServerProcess()
   const terminalManager = new ThreadTerminalManager()
+  appServer.setTerminalManager(terminalManager)
   const backendQueueProcessor = new BackendQueueProcessor(appServer)
   const created: SharedBridgeState = {
     version: SHARED_BRIDGE_VERSION,
@@ -7438,6 +7534,50 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
   return { docsById }
 }
 
+const TERMINAL_CONTEXT_PREFIX = '## Current integrated terminal output'
+const TERMINAL_CONTEXT_LIMIT = 12000
+
+function injectTerminalContextIntoTurnStart(
+  terminalManager: ThreadTerminalManager,
+  body: RpcProxyRequest,
+): void {
+  if (!terminalManager || body.method !== 'turn/start') return
+  const params = asRecord(body.params)
+  if (!params) return
+  const threadId =
+    (typeof params.threadId === 'string' ? params.threadId.trim() : '') ||
+    (typeof params.thread_id === 'string' ? params.thread_id.trim() : '')
+  if (!threadId) return
+  if (!terminalManager.getAgentAccess(threadId)) return
+
+  const buffer = terminalManager.readBufferForThread(threadId).trim()
+  if (!buffer) return
+
+  const input = Array.isArray(params.input) ? params.input : null
+  if (!input) return
+  if (input.some((item) => isTerminalContextItem(item))) return
+
+  const trimmedBuffer = buffer.length > TERMINAL_CONTEXT_LIMIT
+    ? `…(truncated, latest ${TERMINAL_CONTEXT_LIMIT} chars)…\n${buffer.slice(-TERMINAL_CONTEXT_LIMIT)}`
+    : buffer
+
+  const contextItem: Record<string, unknown> = {
+    type: 'text',
+    text: `\n\n${TERMINAL_CONTEXT_PREFIX}:\n\n${trimmedBuffer}\n\n[end terminal output]`,
+  }
+
+  params.input = [contextItem, ...input]
+  body.params = params
+}
+
+function isTerminalContextItem(item: unknown): boolean {
+  const record = asRecord(item)
+  if (!record) return false
+  return typeof record.type === 'string' && record.type === 'text'
+    && typeof record.text === 'string'
+    && record.text.includes(TERMINAL_CONTEXT_PREFIX)
+}
+
 export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
   const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = getSharedBridgeState()
   let threadSearchIndex: ThreadSearchIndex | null = null
@@ -7458,6 +7598,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     return threadSearchIndexPromise
   }
   void initializeSkillsSyncOnStartup(appServer)
+  void runAiModelsPeriodicSyncNow()
   void readTelegramBridgeConfig()
     .then((config) => {
       if (!config.botToken) return
@@ -7808,8 +7949,47 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (await handleSentinelRoutes(req, res, url)) {
+        return
+      }
+
+      if (await handleAegisRoutes(req, res, url)) {
+        return
+      }
+
+      if (await handleDatabaseRoutes(req, res, url)) {
+        return
+      }
+
+      if (await handleAiModelsRoutes(req, res, url)) {
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/thread-terminal/status') {
         setJson(res, 200, terminalManager.getAvailability())
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-terminal/agent-access') {
+        const threadId = url.searchParams.get('threadId')?.trim() ?? ''
+        if (!threadId) {
+          setJson(res, 400, { error: 'Missing threadId' })
+          return
+        }
+        setJson(res, 200, { enabled: terminalManager.getAgentAccess(threadId) })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/thread-terminal/agent-access') {
+        const body = asRecord(await readJsonBody(req))
+        const threadId = readNonEmptyString(body?.threadId)
+        if (!threadId) {
+          setJson(res, 400, { error: 'Missing threadId' })
+          return
+        }
+        const enabled = body?.enabled === true
+        terminalManager.setAgentAccess(threadId, enabled)
+        setJson(res, 200, { enabled: terminalManager.getAgentAccess(threadId) })
         return
       }
 
@@ -7944,6 +8124,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
         let rpcResult: unknown
         try {
+          injectTerminalContextIntoTurnStart(terminalManager, body)
           rpcResult = await callRpcWithArchiveRecovery(appServer, body.method, body.params ?? null)
         } catch (error) {
 	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {
