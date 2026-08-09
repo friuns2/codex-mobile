@@ -2,9 +2,7 @@
 
 # <span style="color:#ff2d95; text-shadow:0 0 12px #ff2d95, 0 0 28px #ff2d95;">codexapp</span>
 
-### <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">▚ A Cyberpunk-Grade Codex Web UI ▞</span>
-
-### 🚀 Run the Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀
+### 🚀 Run Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀
 
 [![npm](https://img.shields.io/npm/v/codexapp?style=for-the-badge&color=ff2d95&logo=npm&logoColor=white&labelColor=1a1b2f)](https://www.npmjs.com/package/codexapp)
 [![platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20Android-00d8ff?style=for-the-badge&labelColor=1a1b2f)](#-quick-start)
@@ -14,18 +12,13 @@
 </div>
 
 ```text
-        ░░░░  ░░░░░   ░░  ░░░░  ░  ░░    ░░   ░░  ░░ ░░░░░  ░ ░░
-░ ░░░░ ░      ░░   ░ ░  ░ ░   ░ ░  ░ ░  ░ ░  ░░░ ░  ░  ░░░░  ░░ ░░
+ ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗██╗   ██╗██╗
+██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝██║   ██║██║
+██║     ██║   ██║██║  ██║█████╗   ╚███╔╝ ██║   ██║██║
+██║     ██║   ██║██║  ██║██╔══╝   ██╔██╗ ██║   ██║██║
+╚██████╗╚██████╔╝██████╔╝███████╗██╔╝ ██╗╚██████╔╝██║
+ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝
 ```
-
-<details open>
-<summary style="color:#ff2d95; font-weight:bold; cursor:pointer;">🌆 ▚ BOOT SEQUENCE COMPLETE — WHAT IS THIS? ▞</summary>
-
-> **Codex UI in your browser. No drama. One command.**
->  
-> **Yes, that is your Codex desktop app experience exposed over web UI. Yes, it runs cross-platform.**
-
-</details>
 
 ---
 
@@ -37,7 +30,11 @@
 
 ---
 
-## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🤯 THE DOWNLOAD</span>
+## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🤯 What Is This?</span>
+
+> **Codex UI in your browser. No drama. One command.**
+>  
+> **Yes, that is your Codex desktop app experience exposed over web UI. Yes, it runs cross-platform.**
 
 **`codexapp`** is a lightweight bridge that gives you a browser-accessible UI for Codex app-server workflows.
 
@@ -47,7 +44,7 @@ You run one command. It starts a local web server. You open it from your machine
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">⚡ QUICK START — THE MAIN EVENT</span>
+## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">⚡ Quick Start</span>
 
 ```bash
 # 🔓 Run instantly (recommended)
@@ -141,7 +138,7 @@ Notes:
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">✨ THE PAYLOAD — FEATURES</span>
+## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">✨ Features</span>
 
 - 🚀 One-command launch with `npx codexapp`
 - 🌍 Cross-platform support for Linux, Windows, and Termux on Android
@@ -192,7 +189,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🧩 RECENT PRODUCT FEATURES</span>
+## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🧩 Recent Product Features (from main commits)</span>
 
 > **Not just launch. Actual UX upgrades.**
 
@@ -210,7 +207,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🌍 WHAT CAN YOU DO WITH THIS?</span>
+## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🌍 What Can You Do With This?</span>
 
 | 🔥 Use Case | 💥 What You Get |
 |---|---|
@@ -225,7 +222,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🖼️ SCREENSHOTS</span>
+## <span style="color:#b967ff; text-shadow:0 0 10px #b967ff;">🖼️ Screenshots</span>
 
 ### Skills Hub
 ![Skills Hub](docs/screenshots/skills-hub.png)
@@ -239,7 +236,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🏗️ ARCHITECTURE</span>
+## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🏗️ Architecture</span>
 
 ```text
 ┌─────────────────────────────┐
@@ -258,7 +255,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">🎯 REQUIREMENTS</span>
+## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">🎯 Requirements</span>
 
 - ✅ Node.js `18+`
 - ✅ Codex app-server environment available
@@ -267,7 +264,7 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🐛 TROUBLESHOOTING</span>
+## <span style="color:#f7f32b; text-shadow:0 0 10px #f7f32b;">🐛 Troubleshooting</span>
 
 | ❌ Problem | ✅ Fix |
 |---|---|
@@ -278,42 +275,50 @@ Outgoing assistant messages are sent with Telegram `parse_mode=HTML` for formatt
 
 ---
 
-## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🤝 CONTRIBUTING</span>
+## <span style="color:#00d8ff; text-shadow:0 0 10px #00d8ff;">🤝 Contributing</span>
 
 Issues and PRs are welcome.  
 Bring bug reports, platform notes, and setup improvements.
 
 ---
 
-## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">⭐ STAR THIS REPO</span>
+## <span style="color:#ff2d95; text-shadow:0 0 10px #ff2d95;">⭐ Star This Repo</span>
 
 If you believe Codex UI should be accessible from **any machine, any OS, any screen**, star this project and share it. ⭐
 
+---
+
+## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🔧 Repository Customizations</span>
+
+> **Everything we customized in this repository — UI/UX and framework/architecture — beyond the original fork.**
+
+### UI / UX Changes
+
+- **New "Aegis" security tab** (originally named "Sentineal"): dependency/vulnerability scanner with a summary bar, severity tiles (critical / high / moderate / low / clean), and a per-package advisory list with fix versions and detail links. Runs keyless npm bulk-advisories scans plus an optional Socket.dev deep scan.
+- **New "Database" tab**: deployment-aware data explorer with a table list (with row counts), a SQL runner (SELECT-only for Supabase), and a result grid. Auto-detects the environment and switches between local SQLite and Supabase cloud mode.
+- **New "AI Models" tab**: hardware-based offline model suggestions, Ollama detect/pull, HuggingFace search, cloud LLM provider management with an add/remove modal, per-provider model tags, and a manual "Sync now" button.
+- **Advanced section in sidebar**: the new Aegis, Database, and AI Models tabs are grouped under the existing "Advanced" sidebar section.
+- **Lazy-loaded panels**: all new tabs use `defineAsyncComponent`, so they only download when opened — the app stays light.
+
+### Framework / Architecture Changes
+
+- **Server-side routers**: added `handleAegisRoutes`, `handleDatabaseRoutes`, and `handleAiModelsRoutes`, registered in the bridge middleware chain in `src/server/codexAppServerBridge.ts` (API prefixes `/codex-api/aegis`, `/codex-api/database`, `/codex-api/ai-models`).
+- **Typed API clients**: each new feature ships a typed client in `src/api/` and a matching router test file in `src/server/` (18 test files / 161 tests passing).
+- **Secure config storage**: API keys are stored server-side in `~/.codex/aegis-config.json` and `~/.codex/ai-models-config.json` and are never returned to the client (sanitized responses).
+- **Local database**: uses `node:sqlite` (`DatabaseSync`) for the local store with a JSON file fallback; cloud mode uses Supabase REST when `SUPABASE_URL` plus a service/anon key is present; Docker is detected via `/proc/1/cgroup` or container marker files.
+- **Background model sync**: an unref'd 10-minute `setInterval` keeps AI model data fresh, kicked off automatically at bridge startup (`runAiModelsPeriodicSyncNow()`).
+- **Android/Termux build support**: prebuilt native binaries don't load on ARM/musl, so builds run with `NAPI_RS_FORCE_WASI=true` and WASM fallbacks for rollup, lightningcss, and Tailwind oxide.
+- **Backup**: the original upstream README is kept in this repo as **`README-backup-original.md`**.
+
+---
+
 <div align="center">
 
-<span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#05ffa1; text-shadow:0 0 8px #05ffa1;">NEON</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span>
+<span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#05ffa1; text-shadow:0 0 8px #05ffa1;">◆</span> <span style="color:#00d8ff; text-shadow:0 0 8px #00d8ff;">◆</span> <span style="color:#ff2d95; text-shadow:0 0 8px #ff2d95;">━━━━━━━━━━━━━━━━━━━</span>
 
 Built for speed, portability, and a little bit of chaos 😏
 
 </div>
-
----
-
-## <span style="color:#05ffa1; text-shadow:0 0 10px #05ffa1;">🎨 CYBERPUNK CUSTOMIZATIONS</span>
-
-> **Everything we customized in this README, documented.**
-
-### Theme & Styling
-- **Neon synthwave palette**: magenta `#ff2d95`, cyan `#00d8ff`, neon green `#05ffa1`, neon yellow `#f7f32b`, and purple `#b967ff` applied to headings, badges, and accents.
-- **Glow effects**: every section heading uses inline `color` + `text-shadow` (e.g. `0 0 10px #ff2d95`) so the neon glow renders directly on GitHub.
-- **Cyberpunk badge set**: shields.io badges restyled with `labelColor=1a1b2f` (dark navy) and neon `color` values for npm, platform, Node, and license.
-- **`<details>` boot sequence**: the "What Is This?" blurb is now a collapsible cyberpunk-style terminal block.
-- **Neon footer**: a `NEON ◆` separator divider with matching glow spans in place of the plain closing text.
-- **Retro banner**: replaced the ASCII logo with a stylized neon-scroll header line.
-- All content (Quick Start, Termux/Android steps, Telegram bridge, Tailscale, Features, Architecture, Requirements, Troubleshooting, Contributing, attribution) is **preserved unchanged** — only the presentation was upgraded.
-
-### Backup
-- The original pre-customization README is kept as **`README-backup-original.md`** in this repo.
 
 ---
 
