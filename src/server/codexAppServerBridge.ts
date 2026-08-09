@@ -6435,6 +6435,11 @@ class AppServerProcess {
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private activeConfigSignature = ''
+  private terminalManagerRef: ThreadTerminalManager | null = null
+
+  setTerminalManager(terminalManager: ThreadTerminalManager): void {
+    this.terminalManagerRef = terminalManager
+  }
 
 
   private getCodexCommand(): string {
@@ -6706,6 +6711,11 @@ class AppServerProcess {
     const threadId = this.extractThreadIdFromParams(params)
     if (!threadId) return
 
+    const isCompleted = notification.method === 'item/completed'
+    if (isCompleted && itemType === 'commandExecution') {
+      this.mirrorAgentCommandToTerminal(threadId, item)
+    }
+
     const turnId =
       (typeof params.turnId === 'string' ? params.turnId : '') ||
       (typeof params.turn_id === 'string' ? params.turn_id : '')
@@ -6717,7 +6727,6 @@ class AppServerProcess {
       this.capturedItemsByThreadId.set(threadId, threadItems)
     }
 
-    const isCompleted = notification.method === 'item/completed'
     const existing = threadItems.get(itemId)
 
     if (existing && existing.completed && !isCompleted) return
@@ -6729,6 +6738,23 @@ class AppServerProcess {
       data: item as Record<string, unknown>,
       completed: isCompleted,
     })
+  }
+
+  private mirrorAgentCommandToTerminal(threadId: string, item: Record<string, unknown>): void {
+    const terminalManager = this.terminalManagerRef
+    if (!terminalManager) return
+    try {
+      if (!terminalManager.getAgentAccess(threadId)) return
+      const command = typeof item.command === 'string' ? item.command.trim() : ''
+      if (!command) return
+      const sessionId = terminalManager.getActiveSessionIdForThread(threadId)
+      if (!sessionId) return
+      const status = typeof item.status === 'string' ? item.status : ''
+      if (status !== 'completed') return
+      terminalManager.write(sessionId, `# agent: ${command}\r`)
+    } catch {
+      // Mirroring the agent command into the terminal is best-effort; never let it break the notification flow.
+    }
   }
 
   mergeItemsIntoTurns(threadId: string, turns: unknown[]): unknown[] {
@@ -7414,6 +7440,7 @@ function getSharedBridgeState(): SharedBridgeState {
 
   const appServer = new AppServerProcess()
   const terminalManager = new ThreadTerminalManager()
+  appServer.setTerminalManager(terminalManager)
   const backendQueueProcessor = new BackendQueueProcessor(appServer)
   const created: SharedBridgeState = {
     version: SHARED_BRIDGE_VERSION,
@@ -7505,6 +7532,50 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
   const docs = await loadAllThreadsForSearch(appServer)
   const docsById = new Map<string, ThreadSearchDocument>(docs.map((doc) => [doc.id, doc]))
   return { docsById }
+}
+
+const TERMINAL_CONTEXT_PREFIX = '## Current integrated terminal output'
+const TERMINAL_CONTEXT_LIMIT = 12000
+
+function injectTerminalContextIntoTurnStart(
+  terminalManager: ThreadTerminalManager,
+  body: RpcProxyRequest,
+): void {
+  if (!terminalManager || body.method !== 'turn/start') return
+  const params = asRecord(body.params)
+  if (!params) return
+  const threadId =
+    (typeof params.threadId === 'string' ? params.threadId.trim() : '') ||
+    (typeof params.thread_id === 'string' ? params.thread_id.trim() : '')
+  if (!threadId) return
+  if (!terminalManager.getAgentAccess(threadId)) return
+
+  const buffer = terminalManager.readBufferForThread(threadId).trim()
+  if (!buffer) return
+
+  const input = Array.isArray(params.input) ? params.input : null
+  if (!input) return
+  if (input.some((item) => isTerminalContextItem(item))) return
+
+  const trimmedBuffer = buffer.length > TERMINAL_CONTEXT_LIMIT
+    ? `…(truncated, latest ${TERMINAL_CONTEXT_LIMIT} chars)…\n${buffer.slice(-TERMINAL_CONTEXT_LIMIT)}`
+    : buffer
+
+  const contextItem: Record<string, unknown> = {
+    type: 'text',
+    text: `\n\n${TERMINAL_CONTEXT_PREFIX}:\n\n${trimmedBuffer}\n\n[end terminal output]`,
+  }
+
+  params.input = [contextItem, ...input]
+  body.params = params
+}
+
+function isTerminalContextItem(item: unknown): boolean {
+  const record = asRecord(item)
+  if (!record) return false
+  return typeof record.type === 'string' && record.type === 'text'
+    && typeof record.text === 'string'
+    && record.text.includes(TERMINAL_CONTEXT_PREFIX)
 }
 
 export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
@@ -7899,6 +7970,29 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-terminal/agent-access') {
+        const threadId = url.searchParams.get('threadId')?.trim() ?? ''
+        if (!threadId) {
+          setJson(res, 400, { error: 'Missing threadId' })
+          return
+        }
+        setJson(res, 200, { enabled: terminalManager.getAgentAccess(threadId) })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/thread-terminal/agent-access') {
+        const body = asRecord(await readJsonBody(req))
+        const threadId = readNonEmptyString(body?.threadId)
+        if (!threadId) {
+          setJson(res, 400, { error: 'Missing threadId' })
+          return
+        }
+        const enabled = body?.enabled === true
+        terminalManager.setAgentAccess(threadId, enabled)
+        setJson(res, 200, { enabled: terminalManager.getAgentAccess(threadId) })
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/thread-terminal/quick-commands') {
         const cwd = url.searchParams.get('cwd')?.trim() ?? ''
         if (!cwd) {
@@ -8030,6 +8124,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
         let rpcResult: unknown
         try {
+          injectTerminalContextIntoTurnStart(terminalManager, body)
           rpcResult = await callRpcWithArchiveRecovery(appServer, body.method, body.params ?? null)
         } catch (error) {
 	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {

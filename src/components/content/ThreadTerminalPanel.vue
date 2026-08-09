@@ -28,6 +28,17 @@
         </button>
       </div>
       <div class="thread-terminal-actions">
+        <button
+          class="thread-terminal-action"
+          :class="{ 'is-agent-access-on': agentAccessEnabled }"
+          type="button"
+          :title="agentAccessEnabled ? t('Agent access to this terminal is ON. Disable to block the assistant from reading/writing this terminal.') : t('Agent access to this terminal is OFF. Enable to let the assistant read this terminal and mirror its commands here.')"
+          :disabled="agentAccessBusy"
+          @click="onAgentAccessToggle"
+        >
+          <span class="thread-terminal-agent-dot" :data-state="agentAccessEnabled ? 'on' : 'off'" />
+          Agent
+        </button>
         <button class="thread-terminal-action" type="button" title="Shizuku" @click="onShizukuCheck">
           <span class="thread-terminal-shizuku-dot" :data-state="shizukuState" />
           Shizuku
@@ -66,9 +77,11 @@ import { useUiLanguage } from '../../composables/useUiLanguage'
 import {
   attachThreadTerminal,
   closeThreadTerminal,
+  getThreadTerminalAgentAccess,
   getThreadTerminalQuickCommands,
   resizeThreadTerminal,
   sendThreadTerminalInput,
+  setThreadTerminalAgentAccess,
   subscribeCodexNotifications,
   type RpcNotification,
   type ThreadTerminalQuickCommand,
@@ -93,6 +106,8 @@ const activeSessionId = ref('')
 const errorMessage = ref('')
 const tabs = ref<TerminalTab[]>([])
 const shizukuState = ref<'unknown' | 'checking' | 'available' | 'unavailable'>('unknown')
+const agentAccessEnabled = ref(false)
+const agentAccessBusy = ref(false)
 
 const TERMINAL_HEIGHT_STORAGE_KEY = 'codex-web-local.terminal-height-vh.v1'
 const MIN_TERMINAL_HEIGHT_VH = 20
@@ -159,6 +174,7 @@ onMounted(() => {
   void refreshProjectQuickCommands()
   void attachToThread(false)
   void checkShizukuAvailability()
+  void refreshAgentAccess()
 })
 
 onBeforeUnmount(() => {
@@ -181,6 +197,7 @@ watch(
     restoreSavedTabs()
     void refreshProjectQuickCommands()
     void attachToThread(false)
+    void refreshAgentAccess()
   },
 )
 
@@ -391,6 +408,38 @@ function onShizukuCheck(): void {
     .catch(() => {
       shizukuState.value = 'unknown'
     })
+}
+
+async function refreshAgentAccess(): Promise<void> {
+  const threadId = props.threadId.trim()
+  if (!threadId) {
+    agentAccessEnabled.value = false
+    return
+  }
+  try {
+    agentAccessEnabled.value = await getThreadTerminalAgentAccess(threadId)
+  } catch {
+    agentAccessEnabled.value = false
+  }
+}
+
+async function onAgentAccessToggle(): Promise<void> {
+  const threadId = props.threadId.trim()
+  if (!threadId || agentAccessBusy.value) return
+  agentAccessBusy.value = true
+  try {
+    const next = !agentAccessEnabled.value
+    agentAccessEnabled.value = await setThreadTerminalAgentAccess(threadId, next)
+    if (agentAccessEnabled.value) {
+      void runQuickCommand(
+        `echo "Agent terminal access: ENABLED (the assistant can now read this terminal and its commands will appear here)"`,
+      )
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Agent access toggle failed'
+  } finally {
+    agentAccessBusy.value = false
+  }
 }
 
 function onTerminalFocusOut(): void {
@@ -744,6 +793,18 @@ function readString(value: unknown): string {
 
 .thread-terminal-shizuku-dot[data-state='checking'] {
   @apply animate-pulse bg-amber-400;
+}
+
+.thread-terminal-agent-dot {
+  @apply inline-block h-1.5 w-1.5 rounded-full bg-zinc-500;
+}
+
+.thread-terminal-agent-dot[data-state='on'] {
+  @apply bg-violet-400;
+}
+
+.thread-terminal-action.is-agent-access-on {
+  @apply border-violet-800 bg-violet-950 text-violet-200 hover:border-violet-700;
 }
 
 .thread-terminal-tabs {

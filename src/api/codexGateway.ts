@@ -1372,6 +1372,20 @@ export async function getThreadTerminalSnapshot(threadId: string): Promise<Threa
   return normalizeThreadTerminalSession(asRecord(payload)?.session)
 }
 
+export async function getThreadTerminalAgentAccess(threadId: string): Promise<boolean> {
+  const payload = await fetchTerminalJson(`/codex-api/thread-terminal/agent-access?threadId=${encodeURIComponent(threadId)}`)
+  return readBoolean(asRecord(payload)?.enabled) ?? false
+}
+
+export async function setThreadTerminalAgentAccess(threadId: string, enabled: boolean): Promise<boolean> {
+  const payload = await fetchTerminalJson('/codex-api/thread-terminal/agent-access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId, enabled }),
+  })
+  return readBoolean(asRecord(payload)?.enabled) ?? false
+}
+
 export async function replyToServerRequest(
   id: number,
   payload: { result?: unknown; error?: { code?: number; message: string } },
