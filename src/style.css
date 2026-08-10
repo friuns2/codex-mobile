@@ -441,6 +441,43 @@
   @apply text-zinc-300 hover:bg-zinc-700;
 }
 
+:root.dark .thread-composer-slash-mention-badge {
+  @apply bg-zinc-600 text-zinc-100;
+}
+
+:root.dark .thread-composer-slash-mention-badge.is-goal {
+  @apply bg-violet-950 text-violet-300;
+}
+
+:root.dark .thread-composer-slash-mention-badge.is-plan {
+  background: rgb(30 58 138 / 0.38) !important;
+  color: rgb(191 219 254) !important;
+}
+
+:root.dark .thread-composer-slash-mention-badge.is-repo {
+  @apply bg-sky-950 text-sky-300;
+}
+
+:root.dark .thread-composer-slash-mention-badge.is-system {
+  @apply bg-zinc-800 text-zinc-300;
+}
+
+:root.dark .thread-composer-slash-mention-badge.is-plugin {
+  @apply bg-amber-950 text-amber-300;
+}
+
+:root.dark .thread-composer-slash-mention-badge.is-user {
+  @apply bg-emerald-950 text-emerald-300;
+}
+
+:root.dark .thread-composer-slash-mention-name {
+  @apply text-zinc-100;
+}
+
+:root.dark .thread-composer-slash-mention-desc {
+  @apply text-zinc-400;
+}
+
 :root.dark .thread-composer-file-chip {
   @apply border-zinc-600 bg-zinc-700 text-zinc-300;
 }

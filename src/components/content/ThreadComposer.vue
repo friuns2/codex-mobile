@@ -123,6 +123,31 @@
           </template>
           <div v-else class="thread-composer-file-mention-empty">{{ t('No matching files') }}</div>
         </div>
+        <div v-if="isSlashMentionOpen" class="thread-composer-file-mentions thread-composer-slash-mentions">
+          <template v-if="slashMentionSuggestions.length > 0">
+            <button
+              v-for="(item, index) in slashMentionSuggestions"
+              :key="item.kind === 'command' ? item.name : item.skill.path"
+              class="thread-composer-file-mention-row thread-composer-slash-mention-row"
+              :class="{ 'is-active': index === slashMentionHighlightedIndex }"
+              type="button"
+              @mousedown.prevent="applySlashMention(item)"
+            >
+              <span
+                class="thread-composer-slash-mention-badge"
+                :class="item.kind === 'command' ? `is-${item.name}` : `is-${skillSourceBadge(item.skill).badgeTone}`"
+                aria-hidden="true"
+              >
+                {{ item.kind === 'command' ? '/' : skillSourceBadge(item.skill).badge }}
+              </span>
+              <span class="thread-composer-slash-mention-copy">
+                <span class="thread-composer-slash-mention-name">{{ item.kind === 'command' ? `/${item.name}` : `/${item.skill.displayName || item.skill.name}` }}</span>
+                <span class="thread-composer-slash-mention-desc">{{ item.kind === 'command' ? item.description : item.skill.description }}</span>
+              </span>
+            </button>
+          </template>
+          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching skills or commands') }}</div>
+        </div>
         <textarea
           ref="inputRef"
           v-model="draft"
@@ -423,6 +448,10 @@ import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
+import {
+  filterComposerSlashSuggestions,
+  type ComposerSlashSuggestion,
+} from './composerSlashMentions'
 
 type SkillSourceBadge = {
   badge: string
@@ -572,6 +601,11 @@ const mentionQuery = ref('')
 const fileMentionSuggestions = ref<ComposerFileSuggestion[]>([])
 const isFileMentionOpen = ref(false)
 const fileMentionHighlightedIndex = ref(0)
+const slashMentionSuggestions = ref<ComposerSlashSuggestion[]>([])
+const isSlashMentionOpen = ref(false)
+const slashMentionStartIndex = ref<number | null>(null)
+const slashMentionQuery = ref('')
+const slashMentionHighlightedIndex = ref(0)
 const isComposerExpanded = ref(false)
 const isDraftOverflowing = ref(false)
 let composerOverflowMeasurementQueued = false
@@ -719,7 +753,7 @@ const placeholderText = computed(() =>
     ? t('Select a thread to send a message')
     : isPlanModeWaitingForModel.value
       ? t('Loading models for plan mode...')
-      : t('Type a message... (@ for files)'),
+      : t('Type a message... (@ for files, / for skills and commands)'),
 )
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
@@ -968,6 +1002,7 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   folderUploadGroups.value = []
   isAttachMenuOpen.value = false
   closeFileMention()
+  closeSlashMention()
   if (isAndroid || isMobile.value) {
     inputRef.value?.blur()
     return
@@ -998,6 +1033,7 @@ function replaceDraftState(payload: ComposerDraftPayload): void {
   pendingAttachmentCount.value = 0
   isAttachMenuOpen.value = false
   closeFileMention()
+  closeSlashMention()
   attachmentSessionToken += 1
 }
 
@@ -1549,6 +1585,7 @@ function onInputChange(): void {
   }
   queueComposerOverflowMeasurement()
   updateFileMentionState()
+  updateSlashMentionState()
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
@@ -1586,6 +1623,40 @@ function onInputKeydown(event: KeyboardEvent): void {
     }
   }
 
+  if (isSlashMentionOpen.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeSlashMention()
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      if (slashMentionSuggestions.value.length > 0) {
+        slashMentionHighlightedIndex.value =
+          (slashMentionHighlightedIndex.value + 1) % slashMentionSuggestions.value.length
+      }
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (slashMentionSuggestions.value.length > 0) {
+        const size = slashMentionSuggestions.value.length
+        slashMentionHighlightedIndex.value = (slashMentionHighlightedIndex.value + size - 1) % size
+      }
+      return
+    }
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault()
+      const selected = slashMentionSuggestions.value[slashMentionHighlightedIndex.value]
+      if (selected) {
+        applySlashMention(selected)
+      } else {
+        closeSlashMention()
+      }
+      return
+    }
+  }
+
   const shouldSend = props.sendWithEnter !== false
     ? event.key === 'Enter' && !event.shiftKey
     : event.key === 'Enter' && (event.metaKey || event.ctrlKey)
@@ -1602,6 +1673,14 @@ function closeFileMention(): void {
   mentionQuery.value = ''
   fileMentionSuggestions.value = []
   fileMentionHighlightedIndex.value = 0
+}
+
+function closeSlashMention(): void {
+  isSlashMentionOpen.value = false
+  slashMentionStartIndex.value = null
+  slashMentionQuery.value = ''
+  slashMentionSuggestions.value = []
+  slashMentionHighlightedIndex.value = 0
 }
 
 function updateFileMentionState(): void {
@@ -1625,6 +1704,28 @@ function updateFileMentionState(): void {
   mentionQuery.value = mentionToken.slice(1)
   isFileMentionOpen.value = true
   void queueFileMentionSearch()
+}
+
+function updateSlashMentionState(): void {
+  const input = inputRef.value
+  if (!input) {
+    closeSlashMention()
+    return
+  }
+  const cursor = input.selectionStart ?? draft.value.length
+  const beforeCursor = draft.value.slice(0, cursor)
+  const match = beforeCursor.match(/(^|\s)(\/[^\s/]*)$/u)
+  if (!match) {
+    closeSlashMention()
+    return
+  }
+
+  const slashToken = match[2] ?? ''
+  slashMentionStartIndex.value = cursor - slashToken.length
+  slashMentionQuery.value = slashToken.slice(1)
+  isSlashMentionOpen.value = true
+  slashMentionHighlightedIndex.value = 0
+  slashMentionSuggestions.value = filterComposerSlashSuggestions(props.skills ?? [], slashMentionQuery.value, 20)
 }
 
 async function queueFileMentionSearch(): Promise<void> {
@@ -1661,6 +1762,40 @@ function applyFileMention(suggestion: ComposerFileSuggestion): void {
   addFileAttachment(suggestion.path)
   closeFileMention()
   nextTick(() => input?.focus())
+}
+
+function applySlashMention(suggestion: ComposerSlashSuggestion): void {
+  const input = inputRef.value
+  const start = slashMentionStartIndex.value
+  if (start === null) {
+    closeSlashMention()
+    return
+  }
+
+  const cursor = input?.selectionStart ?? draft.value.length
+  const before = draft.value.slice(0, start)
+  const after = draft.value.slice(cursor)
+  if (suggestion.kind === 'skill') {
+    draft.value = `${before}${after}`.trimEnd()
+    if (!selectedSkills.value.some((skill) => skill.path === suggestion.skill.path)) {
+      selectedSkills.value = [...selectedSkills.value, suggestion.skill]
+    }
+  } else if (suggestion.name === 'goal') {
+    const replacement = '/goal '
+    draft.value = `${before}${replacement}${after}`
+  } else {
+    draft.value = `${before}${after}`.trimEnd()
+    toggleCollaborationMode()
+  }
+
+  const selectionIndex = suggestion.kind === 'command' && suggestion.name === 'goal'
+    ? start + '/goal '.length
+    : start
+  closeSlashMention()
+  nextTick(() => {
+    input?.focus()
+    input?.setSelectionRange(selectionIndex, selectionIndex)
+  })
 }
 
 function hydrateDraft(payload: ComposerDraftPayload): void {
@@ -1867,6 +2002,16 @@ watch(
       void queueFileMentionSearch()
     }
   },
+)
+
+watch(
+  () => props.skills,
+  () => {
+    if (!isSlashMentionOpen.value) return
+    slashMentionSuggestions.value = filterComposerSlashSuggestions(props.skills ?? [], slashMentionQuery.value, 20)
+    slashMentionHighlightedIndex.value = 0
+  },
+  { deep: true },
 )
 
 watch(
@@ -2091,6 +2236,54 @@ watch(
 
 .thread-composer-file-mention-empty {
   @apply px-2 py-1.5 text-xs text-zinc-500;
+}
+
+.thread-composer-slash-mentions {
+  @apply pb-1;
+}
+
+.thread-composer-slash-mention-row {
+  @apply items-start;
+}
+
+.thread-composer-slash-mention-badge {
+  @apply inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[9px] font-semibold leading-none;
+}
+
+.thread-composer-slash-mention-badge.is-goal {
+  @apply bg-violet-50 text-violet-700;
+}
+
+.thread-composer-slash-mention-badge.is-plan {
+  @apply bg-blue-50 text-blue-700;
+}
+
+.thread-composer-slash-mention-badge.is-repo {
+  @apply bg-sky-50 text-sky-700;
+}
+
+.thread-composer-slash-mention-badge.is-system {
+  @apply bg-zinc-100 text-zinc-700;
+}
+
+.thread-composer-slash-mention-badge.is-plugin {
+  @apply bg-amber-50 text-amber-700;
+}
+
+.thread-composer-slash-mention-badge.is-user {
+  @apply bg-emerald-50 text-emerald-700;
+}
+
+.thread-composer-slash-mention-copy {
+  @apply min-w-0 flex flex-col overflow-hidden;
+}
+
+.thread-composer-slash-mention-name {
+  @apply truncate text-zinc-900;
+}
+
+.thread-composer-slash-mention-desc {
+  @apply mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-zinc-500;
 }
 
 .thread-composer-input {
