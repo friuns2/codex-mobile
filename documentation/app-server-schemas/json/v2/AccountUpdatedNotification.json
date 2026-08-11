@@ -24,8 +24,56 @@
             "chatgptAuthTokens"
           ],
           "type": "string"
+        },
+        {
+          "description": "Backend auth supplied as request headers.",
+          "enum": [
+            "headers"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Programmatic Codex auth backed by a registered Agent Identity.",
+          "enum": [
+            "agentIdentity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Programmatic Codex auth backed by a personal access token.",
+          "enum": [
+            "personalAccessToken"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Amazon Bedrock bearer token managed by Codex.",
+          "enum": [
+            "bedrockApiKey"
+          ],
+          "type": "string"
         }
       ]
+    },
+    "PlanType": {
+      "enum": [
+        "free",
+        "go",
+        "plus",
+        "pro",
+        "prolite",
+        "team",
+        "self_serve_business_prolite",
+        "self_serve_business_usage_based",
+        "business",
+        "ent26",
+        "enterprise_cbp_automation",
+        "enterprise_cbp_usage_based",
+        "enterprise",
+        "edu",
+        "unknown"
+      ],
+      "type": "string"
     }
   },
   "properties": {
@@ -33,6 +81,16 @@
       "anyOf": [
         {
           "$ref": "#/definitions/AuthMode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "planType": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PlanType"
         },
         {
           "type": "null"

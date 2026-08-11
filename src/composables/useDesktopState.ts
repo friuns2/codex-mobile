@@ -2045,9 +2045,9 @@ export function useDesktopState() {
 
       if (
         currentConfig.reasoningEffort &&
-        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)
+        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort as ReasoningEffort)
       ) {
-        selectedReasoningEffort.value = currentConfig.reasoningEffort
+        selectedReasoningEffort.value = currentConfig.reasoningEffort as ReasoningEffort
       }
       selectedSpeedMode.value = currentConfig.speedMode
     } catch (unknownError) {

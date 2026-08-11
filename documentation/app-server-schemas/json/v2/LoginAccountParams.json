@@ -1,5 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "LoginAppBrand": {
+      "enum": [
+        "codex",
+        "chatgpt"
+      ],
+      "type": "string"
+    }
+  },
   "oneOf": [
     {
       "properties": {
@@ -23,18 +32,51 @@
     },
     {
       "properties": {
+        "appBrand": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LoginAppBrand"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "codexStreamlinedLogin": {
+          "type": "boolean"
+        },
         "type": {
           "enum": [
             "chatgpt"
           ],
           "title": "Chatgptv2::LoginAccountParamsType",
           "type": "string"
+        },
+        "useHostedLoginSuccessPage": {
+          "type": "boolean"
         }
       },
       "required": [
         "type"
       ],
       "title": "Chatgptv2::LoginAccountParams",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "enum": [
+            "chatgptDeviceCode"
+          ],
+          "title": "ChatgptDeviceCodev2::LoginAccountParamsType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ChatgptDeviceCodev2::LoginAccountParams",
       "type": "object"
     },
     {
@@ -69,6 +111,31 @@
         "type"
       ],
       "title": "ChatgptAuthTokensv2::LoginAccountParams",
+      "type": "object"
+    },
+    {
+      "description": "[UNSTABLE] Managed Amazon Bedrock login is experimental.",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "amazonBedrock"
+          ],
+          "title": "AmazonBedrockv2::LoginAccountParamsType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiKey",
+        "region",
+        "type"
+      ],
+      "title": "AmazonBedrockv2::LoginAccountParams",
       "type": "object"
     }
   ],

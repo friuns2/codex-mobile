@@ -17,13 +17,46 @@
             "image"
           ],
           "type": "string"
+        },
+        {
+          "description": "Audio attachments included in user turns.",
+          "enum": [
+            "audio"
+          ],
+          "type": "string"
         }
       ]
     },
     "Model": {
       "properties": {
+        "additionalSpeedTiers": {
+          "default": [],
+          "description": "Deprecated: use `serviceTiers` instead.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "availabilityNux": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelAvailabilityNux"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "defaultReasoningEffort": {
           "$ref": "#/definitions/ReasoningEffort"
+        },
+        "defaultServiceTier": {
+          "default": null,
+          "description": "Catalog default service tier id for this model, when one is configured.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
           "type": "string"
@@ -53,6 +86,20 @@
         "model": {
           "type": "string"
         },
+        "modelSpecialty": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serviceTiers": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ModelServiceTier"
+          },
+          "type": "array"
+        },
         "supportedReasoningEfforts": {
           "items": {
             "$ref": "#/definitions/ReasoningEffortOption"
@@ -68,6 +115,16 @@
             "string",
             "null"
           ]
+        },
+        "upgradeInfo": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelUpgradeInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -82,16 +139,68 @@
       ],
       "type": "object"
     },
-    "ReasoningEffort": {
-      "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
-      "enum": [
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
+    "ModelAvailabilityNux": {
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
       ],
+      "type": "object"
+    },
+    "ModelServiceTier": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ModelUpgradeInfo": {
+      "properties": {
+        "migrationMarkdown": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelLink": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "upgradeCopy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "ReasoningEffort": {
+      "description": "A non-empty reasoning effort value advertised by the model.",
+      "minLength": 1,
       "type": "string"
     },
     "ReasoningEffortOption": {

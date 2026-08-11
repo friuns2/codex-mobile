@@ -4,12 +4,30 @@
     "classification": {
       "type": "string"
     },
+    "extraLogFiles": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "includeLogs": {
       "type": "boolean"
     },
     "reason": {
       "type": [
         "string",
+        "null"
+      ]
+    },
+    "tags": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": [
+        "object",
         "null"
       ]
     },
@@ -21,8 +39,7 @@
     }
   },
   "required": [
-    "classification",
-    "includeLogs"
+    "classification"
   ],
   "title": "FeedbackUploadParams",
   "type": "object"

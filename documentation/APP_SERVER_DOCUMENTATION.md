@@ -2,6 +2,13 @@
 
 Документ основан на исходниках [openai/codex](https://github.com/openai/codex) (app-server protocol).
 
+The checked-in contract was refreshed on 2026-08-11 from the locally installed `codex-cli 0.147.0`, including experimental methods:
+
+```sh
+codex app-server generate-json-schema --experimental --out documentation/app-server-schemas/json
+codex app-server generate-ts --experimental --out documentation/app-server-schemas/typescript
+```
+
 ## Локальная материализация схем
 
 Все схемы выгружены из upstream codegen (включая experimental) в:
