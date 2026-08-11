@@ -7,6 +7,7 @@
 - [entities/codex-web-local.md](./entities/codex-web-local.md): project identity, stack, and operational profile.
 
 ## Concepts
+- [concepts/composer-slash-menu.md](./concepts/composer-slash-menu.md): slash-triggered skill discovery plus `/goal` and `/plan` composer actions.
 - [concepts/integrated-terminal.md](./concepts/integrated-terminal.md): Codex.app-style integrated xterm/PTY terminal architecture, edge cases, and verification.
 - [concepts/directory-hub-composio-skills.md](./concepts/directory-hub-composio-skills.md): Directory Hub tab routing, Composio connector behavior, Skills search/install semantics, and edge-case testing.
 - [concepts/merge-to-main-workflow.md](./concepts/merge-to-main-workflow.md): branch integration and conflict-resolution workflow.
@@ -18,6 +19,7 @@
 - [concepts/project-zip-portability.md](./concepts/project-zip-portability.md): project ZIP export/import, chat JSONL portability, and local-only security posture.
 
 ## Sources
+- [../raw/features/composer-slash-menu.md](../raw/features/composer-slash-menu.md): source facts for slash-triggered skills and goal/plan command behavior.
 - [../raw/features/integrated-terminal.md](../raw/features/integrated-terminal.md): source facts for the integrated terminal implementation and follow-up tests.
 - [../raw/features/directory-hub-composio-skills-search.md](../raw/features/directory-hub-composio-skills-search.md): source facts for Directory Hub, Composio connectors, Skills search/install, and edge-case tests.
 - [../raw/features/realtime-chat-rendering-inline-media.md](../raw/features/realtime-chat-rendering-inline-media.md): source facts for realtime chat rendering and inline media sanitization.
