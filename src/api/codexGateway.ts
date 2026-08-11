@@ -1510,12 +1510,29 @@ export type ResumedThread = {
 const RESUME_THREAD_COALESCE_TTL_MS = 30_000
 const recentResumeThreadById = new Map<string, Promise<ResumedThread>>()
 
+function isMissingLegacyCustomEndpointProvider(error: unknown): boolean {
+  return error instanceof Error
+    && /model provider [`']custom_endpoint[`'] not found/iu.test(error.message)
+}
+
 export async function resumeThread(threadId: string): Promise<ResumedThread> {
   const existing = recentResumeThreadById.get(threadId)
   if (existing) return existing
 
   const promise = (async () => {
-    const payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
+    let payload: ThreadResumeResponse
+    try {
+      payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
+    } catch (error) {
+      if (!isMissingLegacyCustomEndpointProvider(error)) throw error
+      payload = await callRpc<ThreadResumeResponse>('thread/resume', {
+        threadId,
+        // Codex 0.147 removed the legacy custom_endpoint provider name. The
+        // top-level openai_base_url configuration continues to route OpenAI
+        // requests to the configured compatible endpoint.
+        modelProvider: 'openai',
+      })
+    }
     const startTurnIndex = readThreadTurnStartIndex(payload)
     const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
     return {
