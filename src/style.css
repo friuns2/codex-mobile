@@ -441,6 +441,11 @@
   @apply text-zinc-300 hover:bg-zinc-700;
 }
 
+:root.dark .thread-composer-file-mention-row.is-active {
+  background: rgb(63 63 70) !important;
+  color: rgb(244 244 245) !important;
+}
+
 :root.dark .thread-composer-slash-mention-badge {
   @apply bg-zinc-600 text-zinc-100;
 }
@@ -476,6 +481,18 @@
 
 :root.dark .thread-composer-slash-mention-desc {
   @apply text-zinc-400;
+}
+
+:root.dark .thread-composer-active-mode.is-goal {
+  border-color: rgb(109 40 217) !important;
+  background: rgb(46 16 101 / 0.7) !important;
+  color: rgb(221 214 254) !important;
+}
+
+:root.dark .thread-composer-active-mode.is-plan {
+  border-color: rgb(29 78 216) !important;
+  background: rgb(23 37 84 / 0.75) !important;
+  color: rgb(191 219 254) !important;
 }
 
 :root.dark .thread-composer-file-chip {

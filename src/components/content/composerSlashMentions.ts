@@ -17,6 +17,11 @@ export type ComposerSlashSuggestion =
       skill: ComposerSlashSkill
     }
 
+export function buildComposerSubmitText(text: string, goalModeSelected: boolean): string {
+  const normalizedText = text.trim()
+  return goalModeSelected ? `/goal ${normalizedText}` : normalizedText
+}
+
 export function filterComposerSlashSuggestions(
   skills: ComposerSlashSkill[],
   query: string,
@@ -29,6 +34,11 @@ export function filterComposerSlashSuggestions(
     { name: 'plan', description: 'Toggle plan mode for this thread' },
   ]
   const matchingCommands = commands.filter((command) => !normalizedQuery || command.name.includes(normalizedQuery))
+
+  for (const command of matchingCommands) {
+    if (suggestions.length >= limit) break
+    suggestions.push({ kind: 'command', ...command })
+  }
 
   const scored: Array<{ skill: ComposerSlashSkill; score: number; label: string }> = []
   for (const skill of skills) {
@@ -58,13 +68,8 @@ export function filterComposerSlashSuggestions(
 
   scored
     .sort((first, second) => first.score - second.score || first.label.localeCompare(second.label))
-    .slice(0, Math.max(0, limit - matchingCommands.length))
+    .slice(0, Math.max(0, limit - suggestions.length))
     .forEach(({ skill }) => suggestions.push({ kind: 'skill', skill }))
-
-  for (const command of matchingCommands) {
-    if (suggestions.length >= limit) break
-    suggestions.push({ kind: 'command', ...command })
-  }
 
   return suggestions.slice(0, Math.max(0, limit))
 }

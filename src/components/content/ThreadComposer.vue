@@ -320,6 +320,29 @@
             :disabled="isComposerConfigDisabled"
             @update:model-value="onReasoningEffortSelect"
           />
+
+          <button
+            v-if="isGoalModeSelected"
+            class="thread-composer-active-mode is-goal"
+            type="button"
+            :aria-label="t('Disable goal mode')"
+            :title="t('Disable goal mode')"
+            @click="disableGoalMode"
+          >
+            <IconTablerTarget class="thread-composer-active-mode-icon" />
+            <span>{{ t('Goal') }}</span>
+          </button>
+          <button
+            v-if="isPlanModeSelected"
+            class="thread-composer-active-mode is-plan"
+            type="button"
+            :aria-label="t('Disable plan mode')"
+            :title="t('Disable plan mode')"
+            @click="toggleCollaborationMode"
+          >
+            <IconTablerChecklist class="thread-composer-active-mode-icon" />
+            <span>{{ t('Plan') }}</span>
+          </button>
         </template>
 
         <div
@@ -440,15 +463,18 @@ import {
 } from '../../api/codexGateway'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
+import IconTablerChecklist from '../icons/IconTablerChecklist.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
 import IconTablerMaximize from '../icons/IconTablerMaximize.vue'
 import IconTablerMicrophone from '../icons/IconTablerMicrophone.vue'
 import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
+import IconTablerTarget from '../icons/IconTablerTarget.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
 import {
+  buildComposerSubmitText,
   filterComposerSlashSuggestions,
   type ComposerSlashSuggestion,
 } from './composerSlashMentions'
@@ -547,6 +573,7 @@ const PROMPT_OPTION_PREFIX = 'prompt:'
 const draft = ref('')
 const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
+const isGoalModeSelected = ref(false)
 const savedPrompts = ref<ComposerPromptInfo[]>([])
 const fileAttachments = ref<FileAttachment[]>([])
 const folderUploadGroups = ref<FolderUploadGroup[]>([])
@@ -990,7 +1017,7 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   const text = draft.value.trim()
   if (!canSubmit.value) return
   emit('submit', {
-    text,
+    text: buildComposerSubmitText(text, isGoalModeSelected.value),
     imageUrls: selectedImages.value.map((image) => image.url),
     fileAttachments: [...fileAttachments.value],
     skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
@@ -1003,6 +1030,7 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   isAttachMenuOpen.value = false
   closeFileMention()
   closeSlashMention()
+  isGoalModeSelected.value = false
   if (isAndroid || isMobile.value) {
     inputRef.value?.blur()
     return
@@ -1164,7 +1192,13 @@ function onModelSelect(value: string): void {
 }
 
 function toggleCollaborationMode(): void {
+  if (!isPlanModeSelected.value) isGoalModeSelected.value = false
   emit('update:selected-collaboration-mode', isPlanModeSelected.value ? 'default' : 'plan')
+}
+
+function disableGoalMode(): void {
+  isGoalModeSelected.value = false
+  void nextTick(() => inputRef.value?.focus())
 }
 
 function onReasoningEffortSelect(value: string): void {
@@ -1781,16 +1815,15 @@ function applySlashMention(suggestion: ComposerSlashSuggestion): void {
       selectedSkills.value = [...selectedSkills.value, suggestion.skill]
     }
   } else if (suggestion.name === 'goal') {
-    const replacement = '/goal '
-    draft.value = `${before}${replacement}${after}`
+    draft.value = `${before}${after}`.trimEnd()
+    isGoalModeSelected.value = !isGoalModeSelected.value
+    if (isGoalModeSelected.value && isPlanModeSelected.value) toggleCollaborationMode()
   } else {
     draft.value = `${before}${after}`.trimEnd()
     toggleCollaborationMode()
   }
 
-  const selectionIndex = suggestion.kind === 'command' && suggestion.name === 'goal'
-    ? start + '/goal '.length
-    : start
+  const selectionIndex = start
   closeSlashMention()
   nextTick(() => {
     input?.focus()
@@ -2405,6 +2438,39 @@ watch(
 
 .thread-composer-control :deep(.composer-dropdown-value) {
   @apply truncate;
+}
+
+.thread-composer-active-mode {
+  @apply inline-flex h-8 shrink-0 items-center gap-1 rounded-full border px-2 text-xs font-medium transition;
+}
+
+.thread-composer-active-mode.is-goal {
+  @apply border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100;
+}
+
+.thread-composer-active-mode.is-plan {
+  @apply border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100;
+}
+
+.thread-composer-active-mode-icon {
+  @apply h-4 w-4;
+}
+
+:global(:root.dark) .thread-composer-file-mention-row.is-active {
+  background: rgb(63 63 70) !important;
+  color: rgb(244 244 245) !important;
+}
+
+:global(:root.dark) .thread-composer-active-mode.is-goal {
+  border-color: rgb(109 40 217) !important;
+  background: rgb(46 16 101 / 0.7) !important;
+  color: rgb(221 214 254) !important;
+}
+
+:global(:root.dark) .thread-composer-active-mode.is-plan {
+  border-color: rgb(29 78 216) !important;
+  background: rgb(23 37 84 / 0.75) !important;
+  color: rgb(191 219 254) !important;
 }
 
 

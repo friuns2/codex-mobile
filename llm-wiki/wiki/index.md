@@ -30,6 +30,7 @@
 - [../raw/features/manual-test-domain-folders.md](../raw/features/manual-test-domain-folders.md): source facts for the manual test documentation split into domain folders.
 - [../raw/projects/codex-web-local.md](../raw/projects/codex-web-local.md): immutable source snapshot for project facts.
 - [../raw/fixes/codex-thread-link-pr174.md](../raw/fixes/codex-thread-link-pr174.md): source facts for PR #174 chat link parsing fixes, review-bot findings, and dynamic-origin thread URLs.
+- [../raw/fixes/composer-slash-mode-toggles.md](../raw/fixes/composer-slash-mode-toggles.md): follow-up source for command-first ordering, active mode buttons, and dark selected-row styling.
 - [../raw/fixes/opencode-zen-big-pickle-codex-cli.md](../raw/fixes/opencode-zen-big-pickle-codex-cli.md): Big Pickle + Codex CLI fix details.
 - [../raw/fixes/opencode-zen-reasoning-content-proxy.md](../raw/fixes/opencode-zen-reasoning-content-proxy.md): Codex Web Local Zen proxy reasoning_content round-trip fix and Docker verification.
 - [../raw/fixes/opencode-zen-docker-auth-provider-models.md](../raw/fixes/opencode-zen-docker-auth-provider-models.md): Docker auth/no-auth provider switching, first-turn live-state materialization, and provider-model loading fixes.

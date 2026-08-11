@@ -4,13 +4,15 @@ The message composer uses `/` as a discovery surface for installed skills and bu
 
 ## Ordering
 
-Installed skills are sorted by match quality and label, then `/goal` and `/plan` are appended. The command slots are reserved before the skill result limit is applied, which keeps both commands visible even when the machine has many skills installed.
+`/goal` and `/plan` are always the first matching rows. Installed skills follow, sorted by match quality and label.
 
 ## Actions
 
 - Skill row: remove the slash token and add the skill to the selected-skill chips.
-- `/goal`: insert `/goal ` and keep focus in the textarea for the objective. Submission continues through the existing goal RPC routing.
-- `/plan`: remove the slash token and toggle the existing collaboration mode. No turn is submitted.
+- `/goal`: remove the slash token and toggle a Goal mode button after the Thinking control. Submitting while active prefixes the objective with `/goal ` for the existing goal RPC routing, then clears the mode.
+- `/plan`: remove the slash token and toggle the existing collaboration mode plus its Plan mode button. No turn is submitted.
+
+Goal and Plan are mutually exclusive. Their active mode buttons are only rendered while selected, and clicking a button turns that mode off.
 
 ## Interaction contract
 
@@ -18,4 +20,4 @@ The trigger must begin at the start of the draft or after whitespace and must no
 
 ## Source
 
-See `llm-wiki/raw/features/composer-slash-menu.md` and the implementation in `src/components/content/composerSlashMentions.ts` plus `src/components/content/ThreadComposer.vue`.
+See `llm-wiki/raw/features/composer-slash-menu.md`, the follow-up source `llm-wiki/raw/fixes/composer-slash-mode-toggles.md`, and the implementation in `src/components/content/composerSlashMentions.ts` plus `src/components/content/ThreadComposer.vue`.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterComposerSlashSuggestions } from './composerSlashMentions'
+import { buildComposerSubmitText, filterComposerSlashSuggestions } from './composerSlashMentions'
 
 const skills = [
   { name: 'browser-use', displayName: 'Browser Use', description: 'Browser automation helper', path: '/skills/browser-use/SKILL.md' },
@@ -7,12 +7,12 @@ const skills = [
 ]
 
 describe('composerSlashMentions', () => {
-  it('shows skills before /goal and /plan for an empty slash query', () => {
+  it('shows /goal and /plan before skills for an empty slash query', () => {
     expect(filterComposerSlashSuggestions(skills, '').map((item) => item.kind === 'command' ? `/${item.name}` : `/${item.skill.name}`)).toEqual([
-      '/browser-use',
-      '/openai-docs',
       '/goal',
       '/plan',
+      '/browser-use',
+      '/openai-docs',
     ])
   })
 
@@ -29,5 +29,10 @@ describe('composerSlashMentions', () => {
   it('matches skill descriptions and paths', () => {
     expect(filterComposerSlashSuggestions(skills, 'official').map((item) => item.kind === 'skill' ? item.skill.name : item.name)).toEqual(['openai-docs'])
     expect(filterComposerSlashSuggestions(skills, 'browser-use').map((item) => item.kind === 'skill' ? item.skill.name : item.name)).toEqual(['browser-use'])
+  })
+
+  it('routes goal mode text through the existing goal slash command', () => {
+    expect(buildComposerSubmitText('Ship the composer fix', true)).toBe('/goal Ship the composer fix')
+    expect(buildComposerSubmitText('Regular prompt', false)).toBe('Regular prompt')
   })
 })
