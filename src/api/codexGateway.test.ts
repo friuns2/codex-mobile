@@ -266,6 +266,34 @@ describe('resumeThread', () => {
     ])
   })
 
+  it('reads a thread when another Codex process owns its active writer', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
+        : { method: '', params: {} }
+      requests.push(body)
+      if (requests.length === 1) {
+        return new Response(JSON.stringify({ error: 'thread shared-thread already has an active writer' }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({
+        result: { thread: { modelProvider: 'openai', turns: [] } },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(resumeThread('shared-thread')).resolves.toMatchObject({ modelProvider: 'openai' })
+    expect(requests).toEqual([
+      { method: 'thread/resume', params: { threadId: 'shared-thread' } },
+      { method: 'thread/read', params: { threadId: 'shared-thread', includeTurns: true } },
+    ])
+  })
+
   it('evicts a stalled resume so later resume attempts are not pinned forever', async () => {
     vi.useFakeTimers()
     const requests: Array<{ method: string; params: Record<string, unknown> }> = []

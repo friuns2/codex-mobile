@@ -1515,23 +1515,37 @@ function isMissingLegacyCustomEndpointProvider(error: unknown): boolean {
     && /model provider [`']custom_endpoint[`'] not found/iu.test(error.message)
 }
 
+function isThreadOwnedByAnotherWriter(error: unknown): boolean {
+  return error instanceof Error
+    && /thread .+ already has an active writer/iu.test(error.message)
+}
+
 export async function resumeThread(threadId: string): Promise<ResumedThread> {
   const existing = recentResumeThreadById.get(threadId)
   if (existing) return existing
 
   const promise = (async () => {
-    let payload: ThreadResumeResponse
+    let payload: ThreadResumeResponse | ThreadReadResponse
     try {
       payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
     } catch (error) {
-      if (!isMissingLegacyCustomEndpointProvider(error)) throw error
-      payload = await callRpc<ThreadResumeResponse>('thread/resume', {
-        threadId,
-        // Codex 0.147 removed the legacy custom_endpoint provider name. The
-        // top-level openai_base_url configuration continues to route OpenAI
-        // requests to the configured compatible endpoint.
-        modelProvider: 'openai',
-      })
+      if (isThreadOwnedByAnotherWriter(error)) {
+        payload = await callRpc<ThreadReadResponse>('thread/read', { threadId, includeTurns: true })
+      } else {
+        if (!isMissingLegacyCustomEndpointProvider(error)) throw error
+        try {
+          payload = await callRpc<ThreadResumeResponse>('thread/resume', {
+            threadId,
+            // Codex 0.147 removed the legacy custom_endpoint provider name. The
+            // top-level openai_base_url configuration continues to route OpenAI
+            // requests to the configured compatible endpoint.
+            modelProvider: 'openai',
+          })
+        } catch (retryError) {
+          if (!isThreadOwnedByAnotherWriter(retryError)) throw retryError
+          payload = await callRpc<ThreadReadResponse>('thread/read', { threadId, includeTurns: true })
+        }
+      }
     }
     const startTurnIndex = readThreadTurnStartIndex(payload)
     const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
