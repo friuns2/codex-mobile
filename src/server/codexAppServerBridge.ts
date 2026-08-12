@@ -15,7 +15,7 @@ import { handleAccountRoutes } from './accountRoutes.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
 import { handleReviewRoutes } from './reviewGit.js'
-import { handleSkillsRoutes, initializeSkillsSyncOnStartup } from './skillsRoutes.js'
+import { handleSkillsRoutes } from './skillsRoutes.js'
 import { TelegramThreadBridge } from './telegramThreadBridge.js'
 import {
   getRandomFreeKey,
@@ -7457,7 +7457,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     }
     return threadSearchIndexPromise
   }
-  void initializeSkillsSyncOnStartup(appServer)
   void readTelegramBridgeConfig()
     .then((config) => {
       if (!config.botToken) return
