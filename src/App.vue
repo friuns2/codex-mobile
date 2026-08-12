@@ -1271,7 +1271,7 @@ type ThreadTerminalPanelExposed = {
 }
 
 type DirectoryTryItemPayload = {
-  kind: 'app' | 'plugin' | 'skill' | 'composio'
+  kind: 'app' | 'plugin' | 'skill'
   name: string
   displayName: string
   skillPath?: string
@@ -4918,9 +4918,7 @@ function buildDirectoryTryPrompt(payload: DirectoryTryItemPayload): string {
     ? 'skill'
     : payload.kind === 'plugin'
       ? 'plugin'
-      : payload.kind === 'composio'
-        ? 'Composio connector'
-        : 'app'
+      : 'app'
   return `Test ${label} ${itemType}. Give me a list of what it can do and one useful example.`
 }
 

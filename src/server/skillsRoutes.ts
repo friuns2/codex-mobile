@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readFile, readdir, rm } from 'node:fs/promises'
+import { readFile, readdir, rm, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -515,6 +515,56 @@ function groupRpcSkillRecords<T extends RpcSkillRecord>(skills: T[]): T[] {
 }
 
 type InstalledSkillInfo = { name: string; path: string; enabled: boolean }
+
+async function scanInstalledSkillsFromDir(skillsDir: string): Promise<Map<string, InstalledSkillInfo>> {
+  const map = new Map<string, InstalledSkillInfo>()
+  try {
+    const entries = await readdir(skillsDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      const skillMd = join(skillsDir, entry.name, 'SKILL.md')
+      try {
+        await stat(skillMd)
+        map.set(entry.name, { name: entry.name, path: skillMd, enabled: true })
+      } catch {}
+    }
+  } catch {}
+  return map
+}
+
+async function scanInstalledSkillsFromDisk(): Promise<Map<string, InstalledSkillInfo>> {
+  return await scanInstalledSkillsFromDir(getSkillsInstallDir())
+}
+
+async function collectInstalledSkillsMap(appServer: AppServerLike): Promise<Map<string, InstalledSkillInfo>> {
+  const installedMap = await scanInstalledSkillsFromDisk()
+  try {
+    const result = await appServer.rpc('skills/list', {}) as { data?: Array<{ skills?: RpcSkillRecord[] }> }
+    for (const entry of result.data ?? []) {
+      for (const skill of groupRpcSkillRecords(entry.skills ?? [])) {
+        if (skill.name) installedMap.set(skill.name, { name: skill.name, path: skill.path ?? '', enabled: skill.enabled !== false })
+      }
+    }
+  } catch {}
+  return installedMap
+}
+
+function extractSkillFrontmatterField(markdown: string, fieldName: string): string {
+  const lines = markdown.split(/\r?\n/)
+  if (lines[0]?.trim() !== '---') return ''
+  const closingIndex = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+  if (closingIndex < 0) return ''
+  const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const match = lines.slice(1, closingIndex).find((line) => new RegExp(`^${escaped}\\s*:`, 'iu').test(line.trim()))
+  return match?.replace(new RegExp(`^${escaped}\\s*:\\s*`, 'iu'), '').replace(/^['"]|['"]$/gu, '').trim() ?? ''
+}
+
+function extractSkillDescriptionFromMarkdown(markdown: string): string {
+  const description = extractSkillFrontmatterField(markdown, 'description')
+  if (description) return description
+  return markdown.split(/\r?\n/).map((line) => line.trim()).find((line) => line && !line.startsWith('#') && !line.startsWith('---')) ?? ''
+}
+
 export async function handleSkillsRoutes(
   req: IncomingMessage,
   res: ServerResponse,

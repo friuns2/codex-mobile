@@ -71,7 +71,7 @@ describe('normalizeThreadMessagesV2', () => {
       id: 'user-2',
       clientId: null,
       content: [
-        { type: 'skill', name: 'composio-cli', path: '/Users/igor/.codex/skills/composio-cli/SKILL.md' },
+        { type: 'skill', name: 'playwright', path: '/Users/igor/.codex/skills/playwright/SKILL.md' },
       ],
     }]))
 
@@ -80,7 +80,7 @@ describe('normalizeThreadMessagesV2', () => {
       id: 'user-2',
       role: 'user',
       text: '',
-      skills: [{ name: 'composio-cli', path: '/Users/igor/.codex/skills/composio-cli/SKILL.md' }],
+      skills: [{ name: 'playwright', path: '/Users/igor/.codex/skills/playwright/SKILL.md' }],
     })
     expect(messages[0].isUnhandled).toBeUndefined()
   })

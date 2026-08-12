@@ -158,93 +158,11 @@ export type DirectoryMcpLoginResult = {
   authorizationUrl: string
 }
 
-export type DirectoryComposioStatus = {
-  available: boolean
-  authenticated: boolean
-  cliVersion: string
-  email: string
-  defaultOrgName: string
-  defaultOrgId: string
-  webUrl: string
-  baseUrl: string
-  testUserId: string
-}
-
-export type DirectoryComposioConnection = {
-  id: string
-  wordId: string
-  alias: string
-  status: string
-  authScheme: string
-  createdAt: string
-  updatedAt: string
-  isComposioManaged: boolean
-  isDisabled: boolean
-}
-
-export type DirectoryComposioConnector = {
-  slug: string
-  name: string
-  description: string
-  logoUrl: string
-  latestVersion: string
-  toolsCount: number
-  triggersCount: number
-  isNoAuth: boolean
-  enabled: boolean
-  authModes: string[]
-  activeCount: number
-  totalConnections: number
-  connectionStatuses: string[]
-}
-
-export type DirectoryComposioTool = {
-  slug: string
-  name: string
-  description: string
-}
-
-export type DirectoryComposioConnectorDetail = {
-  connector: DirectoryComposioConnector
-  connections: DirectoryComposioConnection[]
-  tools: DirectoryComposioTool[]
-  dashboardUrl: string
-}
-
-export type DirectoryComposioLinkResult = {
-  status: string
-  message: string
-  connectedAccountId: string
-  redirectUrl: string
-  toolkit: string
-  projectType: string
-}
-
-export type DirectoryComposioLoginResult = {
-  status: string
-  message: string
-  loginUrl: string
-  cliKey: string
-  expiresAt: string
-}
-
 export type ComposerPromptInfo = {
   name: string
   path: string
   content: string
   description: string
-}
-
-export type DirectoryComposioInstallResult = {
-  ok: boolean
-  command: string
-  output: string
-}
-
-type DirectoryComposioConnectorPage = {
-  data: DirectoryComposioConnector[]
-  nextCursor: string | null
-  total: number
 }
 
 type ProviderModelsResponse = {
@@ -2386,76 +2304,6 @@ export async function startDirectoryMcpLogin(name: string): Promise<DirectoryMcp
   return {
     authorizationUrl: readString(payload.authorizationUrl ?? payload.authorization_url) ?? '',
   }
-}
-
-export async function getDirectoryComposioStatus(): Promise<DirectoryComposioStatus> {
-  const response = await fetch('/codex-api/composio/status')
-  if (!response.ok) {
-    throw new Error(`Failed to load Composio status (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioStatus
-}
-
-export async function listDirectoryComposioConnectors(
-  query = '',
-  cursor: string | null = null,
-  limit = 50,
-): Promise<DirectoryComposioConnectorPage> {
-  const params = new URLSearchParams()
-  if (query.trim()) params.set('query', query.trim())
-  if (cursor) params.set('cursor', cursor)
-  if (limit && Number.isFinite(limit)) params.set('limit', String(Math.max(1, Math.floor(limit))))
-  const suffix = params.toString()
-  const response = await fetch(`/codex-api/composio/connectors${suffix ? `?${suffix}` : ''}`)
-  if (!response.ok) {
-    throw new Error(`Failed to list Composio connectors (${response.status})`)
-  }
-  const payload = await response.json() as DirectoryComposioConnectorPage | { data?: DirectoryComposioConnector[]; nextCursor?: string | null; total?: number }
-  return {
-    data: Array.isArray(payload.data) ? payload.data : [],
-    nextCursor: typeof payload.nextCursor === 'string' && payload.nextCursor.length > 0 ? payload.nextCursor : null,
-    total: typeof payload.total === 'number' && Number.isFinite(payload.total) ? Math.max(0, Math.floor(payload.total)) : 0,
-  }
-}
-
-export async function readDirectoryComposioConnector(slug: string): Promise<DirectoryComposioConnectorDetail> {
-  const response = await fetch(`/codex-api/composio/connector?slug=${encodeURIComponent(slug)}`)
-  if (!response.ok) {
-    throw new Error(`Failed to load Composio connector (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioConnectorDetail
-}
-
-export async function startDirectoryComposioLogin(slug: string): Promise<DirectoryComposioLinkResult> {
-  const response = await fetch('/codex-api/composio/link', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug }),
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to start Composio login (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioLinkResult
-}
-
-export async function startDirectoryComposioCliLogin(): Promise<DirectoryComposioLoginResult> {
-  const response = await fetch('/codex-api/composio/login', {
-    method: 'POST',
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to start Composio CLI login (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioLoginResult
-}
-
-export async function installDirectoryComposioCli(): Promise<DirectoryComposioInstallResult> {
-  const response = await fetch('/codex-api/composio/install', {
-    method: 'POST',
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to install Composio CLI (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioInstallResult
 }
 
 export async function getAccountRateLimitsResponse(): Promise<GetAccountRateLimitsResponse> {

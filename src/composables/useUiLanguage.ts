@@ -272,7 +272,6 @@ const zhCN: Record<string, string> = {
   'Device Login': '设备登录',
   'Logout GitHub': '退出 GitHub',
   'Syncing...': '同步中...',
-  'Startup Sync': '启动同步',
   'Pulling...': '拉取中...',
   'Pull': '拉取',
   'Pushing...': '推送中...',
