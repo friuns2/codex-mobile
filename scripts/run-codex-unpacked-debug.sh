@@ -9,6 +9,8 @@ INSPECT_PORT="${CODEX_NODE_INSPECT_PORT:-9222}"
 DRY_RUN=0
 EXTRA_ARGS=()
 VERIFY_ONLY=0
+TARGET_PREFIX="${CODEX_CDP_TARGET_PREFIX:-app://-/index.html}"
+RENDERER_TIMEOUT="${CODEX_CDP_RENDERER_TIMEOUT:-30}"
 
 find_free_port() {
   local port="$1"
@@ -25,6 +27,42 @@ wait_for_http_json() {
   local waited=0
   while (( waited < timeout )); do
     if curl -fsS "http://127.0.0.1:${port}${path}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+find_cdp_page_target() {
+  local port="$1"
+  local target_prefix="$2"
+  curl -fsS "http://127.0.0.1:${port}/json/list" 2>/dev/null | python3 -c '
+import json, sys
+prefix = sys.argv[1]
+try:
+    targets = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
+page = next((target for target in targets
+             if target.get("type") == "page"
+             and str(target.get("url", "")).startswith(prefix)), None)
+if page:
+    print(page.get("webSocketDebuggerUrl", ""))
+' "$target_prefix"
+}
+
+wait_for_cdp_page_target() {
+  local port="$1"
+  local target_prefix="$2"
+  local timeout="$3"
+  local waited=0
+  local target=""
+  while (( waited < timeout )); do
+    target="$(find_cdp_page_target "$port" "$target_prefix" || true)"
+    if [[ -n "$target" ]]; then
+      printf '%s' "$target"
       return 0
     fi
     sleep 1
@@ -78,6 +116,8 @@ Options:
   --electron-package <pkg> Package to use with pnpm dlx when no local electron binary is found
   --remote-debugging-port N Set Chromium remote debugging port (default: 9229)
   --inspect-port N          Set Node.js inspector port (default: 9222)
+  --target-prefix <url>     Expected renderer URL prefix (default: app://-/index.html)
+  --renderer-timeout N      Seconds to wait for the renderer target (default: 30)
   --verify-only             Only check whether the configured debug endpoints are live
   --dry-run                 Print command only
   -h, --help               Show this help
@@ -108,6 +148,14 @@ while (( $# )); do
       ;;
     --inspect-port)
       INSPECT_PORT="${2:?missing value for --inspect-port}"
+      shift 2
+      ;;
+    --target-prefix)
+      TARGET_PREFIX="${2:?missing value for --target-prefix}"
+      shift 2
+      ;;
+    --renderer-timeout)
+      RENDERER_TIMEOUT="${2:?missing value for --renderer-timeout}"
       shift 2
       ;;
     --verify-only)
@@ -143,6 +191,13 @@ if (( VERIFY_ONLY )); then
   else
     echo "CDP endpoint is not reachable on port ${REMOTE_DEBUG_PORT}" >&2
     exit 1
+  fi
+
+  if target="$(wait_for_cdp_page_target "$REMOTE_DEBUG_PORT" "$TARGET_PREFIX" 1)"; then
+    echo "Renderer: ${target}"
+  else
+    echo "No usable renderer target (${TARGET_PREFIX}*) is reachable on port ${REMOTE_DEBUG_PORT}" >&2
+    exit 3
   fi
 
   echo
@@ -231,6 +286,17 @@ echo
 echo "CDP endpoint is live:"
 curl -fsS "http://127.0.0.1:${REMOTE_DEBUG_PORT}/json/version"
 echo
+
+if ! RENDERER_TARGET="$(wait_for_cdp_page_target "$REMOTE_DEBUG_PORT" "$TARGET_PREFIX" "$RENDERER_TIMEOUT")"; then
+  echo "Error: CDP opened, but no usable renderer target (${TARGET_PREFIX}*) appeared within ${RENDERER_TIMEOUT}s." >&2
+  echo "The external-Electron debug session is unusable for screenshot parity; stopping it." >&2
+  kill "$APP_PID" 2>/dev/null || true
+  wait "$APP_PID" 2>/dev/null || true
+  exit 3
+fi
+
+echo "Renderer target is live:"
+echo "$RENDERER_TARGET"
 
 if wait_for_http_json "$INSPECT_PORT" "/json/list" 5; then
   echo

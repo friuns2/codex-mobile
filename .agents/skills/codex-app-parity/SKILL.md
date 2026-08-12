@@ -183,6 +183,12 @@ If the helper script fails, treat the failure as a skill maintenance signal, not
 
 Use `--verify-only` when you only need to confirm whether the current endpoints are still alive.
 
+The helper is usable only when it prints a `Renderer target is live:` value whose
+URL begins with `app://-/index.html`. A listening `/json/version` endpoint alone
+is insufficient: it can belong to an external-Electron process without a usable
+Codex renderer. The helper now waits for this target and exits with status `3`
+after stopping its own failed debug process when it never appears.
+
 Use a fresh app instance with its own profile directory:
 
 ```bash
@@ -204,9 +210,12 @@ done
 ```
 
 If Codex.app is already running without CDP, `open -a "Codex" --args --remote-debugging-port=3434` usually does **not** enable CDP because Electron reuses the existing app instance. Restart Codex.app with the port enabled.
-Fallback only when a separate instance cannot be used: restart all Codex.app processes and launch the binary with `nohup`.
+Fallback only when a separate instance cannot be used: restart all Codex.app processes and launch the bundle executable with `nohup`. Do not assume that executable is named `Codex`; the installed app currently uses `ChatGPT`.
 
 ```bash
+CODEX_EXECUTABLE="$(find /Applications/Codex.app/Contents/MacOS -maxdepth 1 -type f -perm -111 | head -n 1)"
+test -n "$CODEX_EXECUTABLE"
+
 pkill -TERM -f "/Applications/Codex.app" 2>/dev/null || true
 sleep 2
 if pgrep -f "/Applications/Codex.app" >/dev/null 2>&1; then
@@ -214,7 +223,7 @@ if pgrep -f "/Applications/Codex.app" >/dev/null 2>&1; then
   sleep 1
 fi
 
-nohup "/Applications/Codex.app/Contents/MacOS/Codex" \
+nohup "$CODEX_EXECUTABLE" \
   --remote-debugging-port="$CDP_PORT" \
   >/tmp/codex-cdp.log 2>&1 &
 ```
@@ -230,6 +239,7 @@ Important caveats:
 - Do not call `browser.close()` when the Codex.app session should remain open.
 - In Playwright builds where `browser.disconnect()` is unavailable for CDP sessions, connect, inspect/capture, and exit the test process without `close()`; this preserves the running Codex.app instance.
 - Existing helper processes can keep stale non-CDP state alive; killing all `/Applications/Codex.app` processes is more reliable than only `pkill -x Codex`.
+- A packaged app can rename its macOS executable independently of its bundle name. Discover the executable under `Contents/MacOS` instead of hard-coding `Contents/MacOS/Codex`.
 - CDP inspection can expose local thread titles and workspace names. Avoid pasting sensitive screenshot contents into public artifacts.
 
 ## Findings: CDP Instance Reuse (2026-04-26)
@@ -252,6 +262,12 @@ Important caveats:
   - Node inspector endpoint exposed from `--inspect`
   - WebSocket connection to the Node inspector target succeeds, not just `json/list`
 - When validating a parity session, do not stop at `curl /json/list`; also confirm a real WebSocket connect to the returned `webSocketDebuggerUrl`.
+
+## Findings: Renderer Target Gate and Renamed Bundle Executable (2026-08-12)
+
+- On this Mac, `/Applications/Codex.app/Contents/MacOS/Codex` does not exist; the executable currently is `/Applications/Codex.app/Contents/MacOS/ChatGPT`. Raw-binary fallback commands must discover an executable from `Contents/MacOS` rather than hard-code its filename.
+- An external Electron process can publish `/json/version` and the Node inspector while never exposing a `page` whose URL begins with `app://-/index.html`. That state cannot support renderer screenshots or parity interaction.
+- `scripts/run-codex-unpacked-debug.sh` now treats a matching renderer target as the launch success condition. Its `--verify-only` mode applies the same test, and its normal path exits `3` and stops only the process it launched when the target does not materialize.
 
 ### Architecture Notes
 
