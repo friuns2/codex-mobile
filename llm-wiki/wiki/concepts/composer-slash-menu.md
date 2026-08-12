@@ -14,6 +14,8 @@ The message composer uses `/` as a discovery surface for installed skills and bu
 
 Goal and Plan are mutually exclusive. Their active mode buttons are only rendered while selected, and clicking a button turns that mode off.
 
+For existing threads, Goal is also persisted app-server state. Load it with `thread/goal/get` on thread selection, render the status/objective above the composer, and edit or clear it through `thread/goal/set` and `thread/goal/clear`. Do not treat the slash toggle as the source of truth for an existing goal.
+
 ## Interaction contract
 
 The trigger must begin at the start of the draft or after whitespace and must not contain another slash or whitespace. Arrow keys navigate, Enter or Tab select, and Escape closes. Typing more characters filters both skills and commands.

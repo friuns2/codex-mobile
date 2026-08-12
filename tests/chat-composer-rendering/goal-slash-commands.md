@@ -36,6 +36,9 @@
 24. While a goal-driven turn is running with the goal notice showing `Goal active`, press the Stop/interrupt button
 25. Confirm the turn stops, the goal notice switches to `Goal paused`, and the agent does not auto-continue the turn
 26. Submit `/goal resume`, then confirm the goal returns to `Goal active` (resume later or `/goal clear` when done)
+27. Open an existing thread that already has a persisted goal and confirm its status/objective card appears above the composer without typing `/goal`
+28. Click the goal card pencil or Goal composer pill, edit the objective and status, save, refresh, and confirm both changes persist
+29. Repeat the persisted goal card and editor checks in dark theme, then restore or clear the test goal
 
 #### Expected Results
 - `/goal <objective>` routes to `thread/goal/set` with `status: active`
@@ -55,6 +58,7 @@
 - Stopping an active goal-driven turn pauses the goal first so the agent does not auto-continue
 - Interrupt works even when the active turn id is only known from the persisted thread detail
 - Light and dark theme overlays remain readable
+- Persisted goals hydrate on thread selection and remain editable after refresh
 
 #### Rollback/Cleanup
 - Use `/goal clear` on test threads after manual verification

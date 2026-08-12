@@ -294,8 +294,76 @@ export type StoredQueuedMessage = {
 
 export type ThreadQueueState = Record<string, StoredQueuedMessage[]>
 
+export const THREAD_GOAL_STATUSES = ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const
+export type ThreadGoalStatus = typeof THREAD_GOAL_STATUSES[number]
+export type ThreadGoal = {
+  threadId: string
+  objective: string
+  status: ThreadGoalStatus
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+}
+
+export type ThreadGoalSetInput = {
+  objective?: string
+  status?: ThreadGoalStatus
+  tokenBudget?: number | null
+}
+
 export type ComposerFileSuggestion = {
   path: string
+}
+
+function normalizeThreadGoal(value: unknown): ThreadGoal | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const threadId = readString(record.threadId)
+  const objective = readString(record.objective)
+  const status = readString(record.status)
+  if (!threadId || objective === null || !status || !(THREAD_GOAL_STATUSES as readonly string[]).includes(status)) return null
+  return {
+    threadId,
+    objective,
+    status: status as ThreadGoalStatus,
+    tokenBudget: readNumber(record.tokenBudget),
+    tokensUsed: readNumber(record.tokensUsed) ?? 0,
+    timeUsedSeconds: readNumber(record.timeUsedSeconds) ?? 0,
+    createdAt: readNumber(record.createdAt) ?? 0,
+    updatedAt: readNumber(record.updatedAt) ?? 0,
+  }
+}
+
+export async function getThreadGoal(threadId: string): Promise<ThreadGoal | null> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return null
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/get', { threadId: normalizedThreadId })
+  if (payload.goal === null || payload.goal === undefined) return null
+  const goal = normalizeThreadGoal(payload.goal)
+  if (!goal) throw new Error('thread/goal/get response was malformed')
+  return goal
+}
+
+export async function setThreadGoal(threadId: string, input: ThreadGoalSetInput): Promise<ThreadGoal> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) throw new Error('thread/goal/set requires threadId')
+  const params: Record<string, unknown> = { threadId: normalizedThreadId }
+  if (input.objective?.trim()) params.objective = input.objective.trim()
+  if (input.status) params.status = input.status
+  if (Object.prototype.hasOwnProperty.call(input, 'tokenBudget')) params.tokenBudget = input.tokenBudget
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/set', params)
+  const goal = normalizeThreadGoal(payload.goal)
+  if (!goal) throw new Error('thread/goal/set response was malformed')
+  return goal
+}
+
+export async function clearThreadGoal(threadId: string): Promise<boolean> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return false
+  const payload = await callRpc<{ cleared?: unknown }>('thread/goal/clear', { threadId: normalizedThreadId })
+  return payload.cleared === true
 }
 
 const DEFAULT_COLLABORATION_MODE_OPTIONS: CollaborationModeOption[] = [

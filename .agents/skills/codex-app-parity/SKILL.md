@@ -268,6 +268,13 @@ Important caveats:
 - `scripts/run-codex-unpacked-debug.sh` treats a matching renderer target as the launch success condition. Its `--verify-only` mode applies the same test, and its normal path exits `3` when the target does not materialize.
 - Historical confirmation (2026-05-27): a separate packaged instance launched with `open -na /Applications/Codex.app --args --enable-logging --remote-debugging-port=<port>` published frontend CDP successfully. The older `app.asar` extraction plus `app.asar.unpacked` overlay was for a patched-app experiment, not the normal CDP path.
 
+## Findings: Persisted Thread Goal UI (2026-08-12)
+
+- Persisted goals are independent app-server state and are not included in the normal thread/read rendering model. A parity client must call `thread/goal/get` when selecting an existing thread.
+- Codex.app keeps a compact status/objective bar above the composer and a Goal indicator in the composer. The pencil opens goal editing; web parity can use `thread/goal/set` and `thread/goal/clear` directly.
+- Current goal statuses are `active`, `paused`, `blocked`, `usageLimited`, `budgetLimited`, and `complete`; older local helpers that omit `blocked` and `usageLimited` are stale.
+- An isolated packaged-app renderer may expose `app://-/index.html` over CDP but remain on the avatar overlay or hang during screenshot capture. When the user supplies an exact current desktop screenshot, preserve it as the visual reference and explicitly report the CDP reachability gap rather than claiming the generic overlay proves the target UI.
+
 ### Architecture Notes
 
 - **Renderer → Main Process**: The renderer uses a `Uu` HTTP client class that sends `fetch-request` IPC messages to the main process. The main process class `tle` handles these, adds auth tokens, and uses `electron.net.fetch` to make actual HTTP calls.

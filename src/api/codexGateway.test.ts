@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { clearThreadGoal, getAvailableModelIds, getThreadDetail, getThreadGoal, listDirectoryComposioConnectors, resumeThread, setThreadGoal, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -203,6 +203,40 @@ describe('getThreadDetail', () => {
     await expect(getThreadDetail('legacy-thread')).resolves.toMatchObject({
       modelProvider: 'opencode_zen',
     })
+  })
+})
+
+describe('thread goals', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reads, updates, and clears persisted thread goals', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> }
+      requests.push(body)
+      if (body.method === 'thread/goal/clear') {
+        return new Response(JSON.stringify({ result: { cleared: true } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ result: { goal: {
+        threadId: body.params.threadId,
+        objective: body.params.objective ?? 'Existing objective',
+        status: body.params.status ?? 'blocked',
+        tokenBudget: null,
+        tokensUsed: 12,
+        timeUsedSeconds: 34,
+        createdAt: 1,
+        updatedAt: 2,
+      } } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await expect(getThreadGoal('thread-goal')).resolves.toMatchObject({ objective: 'Existing objective', status: 'blocked' })
+    await expect(setThreadGoal('thread-goal', { objective: 'Edited objective', status: 'active' })).resolves.toMatchObject({ objective: 'Edited objective', status: 'active' })
+    await expect(clearThreadGoal('thread-goal')).resolves.toBe(true)
+    expect(requests).toEqual([
+      { method: 'thread/goal/get', params: { threadId: 'thread-goal' } },
+      { method: 'thread/goal/set', params: { threadId: 'thread-goal', objective: 'Edited objective', status: 'active' } },
+      { method: 'thread/goal/clear', params: { threadId: 'thread-goal' } },
+    ])
   })
 })
 

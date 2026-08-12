@@ -1019,6 +1019,29 @@
                     :has-queue-above="selectedThreadQueuedMessages.length > 0"
                     @respond-server-request="onRespondServerRequest"
                   />
+                  <section v-if="selectedThreadGoal" class="thread-goal-card" :class="`is-${selectedThreadGoal.status}`">
+                    <div class="thread-goal-card-main">
+                      <IconTablerTarget class="thread-goal-card-icon" />
+                      <div class="thread-goal-card-copy">
+                        <strong>Goal {{ formatGoalStatus(selectedThreadGoal.status) }}</strong>
+                        <span>{{ selectedThreadGoal.objective }}</span>
+                      </div>
+                    </div>
+                    <button class="thread-goal-card-edit" type="button" aria-label="Edit goal" title="Edit goal" @click="openGoalEditor">✎</button>
+                  </section>
+                  <section v-if="isGoalEditorOpen" class="thread-goal-editor" role="dialog" aria-label="Edit thread goal">
+                    <textarea v-model="goalEditorObjective" class="thread-goal-editor-input" aria-label="Goal objective" rows="5" />
+                    <div class="thread-goal-editor-status" aria-label="Goal status">
+                      <button v-for="status in goalStatusOptions" :key="status" type="button" :class="{ 'is-active': goalEditorStatus === status }" @click="goalEditorStatus = status">{{ formatGoalStatus(status) }}</button>
+                    </div>
+                    <p v-if="goalEditorError" class="thread-goal-editor-error">{{ goalEditorError }}</p>
+                    <div class="thread-goal-editor-actions">
+                      <button v-if="selectedThreadGoal" type="button" class="is-danger" @click="onClearThreadGoal">Clear goal</button>
+                      <span class="thread-goal-editor-spacer" />
+                      <button type="button" @click="isGoalEditorOpen = false">Cancel</button>
+                      <button type="button" class="is-primary" :disabled="isSavingThreadGoal || !goalEditorObjective.trim()" @click="onSaveThreadGoal">{{ isSavingThreadGoal ? 'Saving…' : 'Save goal' }}</button>
+                    </div>
+                  </section>
                   <ThreadComposer
                     v-else
                     ref="threadComposerRef"
@@ -1041,10 +1064,12 @@
                     :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                     :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                     :dictation-language="dictationLanguage"
+                    :thread-goal="selectedThreadGoal"
                     @update:selected-collaboration-mode="onSelectCollaborationMode"
                     @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
                     @update:selected-reasoning-effort="onSelectReasoningEffort"
                     @update:selected-speed-mode="onSelectSpeedMode"
+                    @edit-goal="openGoalEditor"
                     @interrupt="onInterruptTurn" />
                 </div>
               </template>
@@ -1182,6 +1207,7 @@ import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdow
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
+import IconTablerTarget from './components/icons/IconTablerTarget.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
 import IconTablerTerminal from './components/icons/IconTablerTerminal.vue'
 import IconTablerX from './components/icons/IconTablerX.vue'
@@ -1190,6 +1216,7 @@ import { useMobile } from './composables/useMobile'
 import { useUiLanguage } from './composables/useUiLanguage'
 import { useFeedbackDiagnostics } from './composables/useFeedbackDiagnostics'
 import {
+  clearThreadGoal,
   checkoutGitBranch,
   cloneGithubRepository,
   configureTelegramBot,
@@ -1213,6 +1240,7 @@ import {
   getTelegramStatus,
   getThreadTerminalQuickCommands,
   getThreadTerminalStatus,
+  getThreadGoal,
   getWorkspaceRootsState,
   importProjectZip,
   listLocalDirectories,
@@ -1224,10 +1252,11 @@ import {
   startCodexLogin,
   searchThreads,
   switchAccount,
+  setThreadGoal,
 } from './api/codexGateway'
 import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
-import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
+import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadGoal, ThreadGoalStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
@@ -2097,6 +2126,75 @@ const terminalHeaderDropdownOptions = computed(() => [
   { label: isComposerTerminalOpen.value ? t('Hide terminal') : t('Open terminal'), value: TOGGLE_TERMINAL_COMMAND_VALUE },
   ...terminalHeaderQuickCommands.value.map((command) => ({ label: command.label, value: command.value })),
 ])
+const goalStatusOptions: ThreadGoalStatus[] = ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete']
+const selectedThreadGoal = ref<ThreadGoal | null>(null)
+const isGoalEditorOpen = ref(false)
+const isSavingThreadGoal = ref(false)
+const goalEditorObjective = ref('')
+const goalEditorStatus = ref<ThreadGoalStatus>('active')
+const goalEditorError = ref('')
+
+function formatGoalStatus(status: string): string {
+  if (status === 'usageLimited') return 'usage limited'
+  if (status === 'budgetLimited') return 'budget limited'
+  return status
+}
+
+async function refreshSelectedThreadGoal(): Promise<void> {
+  const threadId = selectedThreadId.value.trim()
+  if (!threadId || isHomeRoute.value) {
+    selectedThreadGoal.value = null
+    return
+  }
+  try {
+    const goal = await getThreadGoal(threadId)
+    if (selectedThreadId.value === threadId) selectedThreadGoal.value = goal
+  } catch (error) {
+    if (selectedThreadId.value === threadId) {
+      selectedThreadGoal.value = null
+      goalEditorError.value = error instanceof Error ? error.message : 'Failed to load goal'
+    }
+  }
+}
+
+function openGoalEditor(): void {
+  goalEditorObjective.value = selectedThreadGoal.value?.objective ?? ''
+  goalEditorStatus.value = selectedThreadGoal.value?.status ?? 'active'
+  goalEditorError.value = ''
+  isGoalEditorOpen.value = true
+}
+
+async function onSaveThreadGoal(): Promise<void> {
+  const threadId = selectedThreadId.value.trim()
+  const objective = goalEditorObjective.value.trim()
+  if (!threadId || !objective || isSavingThreadGoal.value) return
+  isSavingThreadGoal.value = true
+  goalEditorError.value = ''
+  try {
+    selectedThreadGoal.value = await setThreadGoal(threadId, { objective, status: goalEditorStatus.value })
+    isGoalEditorOpen.value = false
+  } catch (error) {
+    goalEditorError.value = error instanceof Error ? error.message : 'Failed to save goal'
+  } finally {
+    isSavingThreadGoal.value = false
+  }
+}
+
+async function onClearThreadGoal(): Promise<void> {
+  const threadId = selectedThreadId.value.trim()
+  if (!threadId || isSavingThreadGoal.value) return
+  isSavingThreadGoal.value = true
+  goalEditorError.value = ''
+  try {
+    await clearThreadGoal(threadId)
+    selectedThreadGoal.value = null
+    isGoalEditorOpen.value = false
+  } catch (error) {
+    goalEditorError.value = error instanceof Error ? error.message : 'Failed to clear goal'
+  } finally {
+    isSavingThreadGoal.value = false
+  }
+}
 const contentStyle = computed(() => {
   const preset = CHAT_WIDTH_PRESETS[chatWidth.value]
   const keyboardInset = Math.max(
@@ -4709,7 +4807,10 @@ watch(
   () => [selectedThreadId.value, composerCwd.value] as const,
   () => {
     clearCommitReviewContext()
+    isGoalEditorOpen.value = false
+    void refreshSelectedThreadGoal()
   },
+  { immediate: true },
 )
 
 watch(
@@ -5144,6 +5245,100 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .composer-with-queue {
   @apply w-full shrink-0 px-2 sm:px-6 flex flex-col gap-2;
+}
+
+.thread-goal-card {
+  @apply flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 shadow-sm;
+}
+
+.thread-goal-card-main {
+  @apply flex min-w-0 items-center gap-2;
+}
+
+.thread-goal-card-icon {
+  @apply h-5 w-5 shrink-0 text-violet-600;
+}
+
+.thread-goal-card-copy {
+  @apply flex min-w-0 items-baseline gap-2;
+}
+
+.thread-goal-card-copy strong {
+  @apply shrink-0 text-sm font-semibold capitalize text-zinc-900;
+}
+
+.thread-goal-card-copy span {
+  @apply truncate text-sm text-zinc-500;
+}
+
+.thread-goal-card-edit {
+  @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-0 bg-transparent text-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900;
+}
+
+.thread-goal-editor {
+  @apply rounded-xl border border-zinc-200 bg-white p-3 shadow-lg;
+}
+
+.thread-goal-editor-input {
+  @apply w-full resize-y rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-violet-400 focus:bg-white;
+}
+
+.thread-goal-editor-status {
+  @apply mt-2 flex flex-wrap gap-1.5;
+}
+
+.thread-goal-editor-status button,
+.thread-goal-editor-actions button {
+  @apply rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium capitalize text-zinc-600 transition hover:bg-zinc-100;
+}
+
+.thread-goal-editor-status button.is-active,
+.thread-goal-editor-actions button.is-primary {
+  @apply border-violet-600 bg-violet-600 text-white hover:bg-violet-700;
+}
+
+.thread-goal-editor-actions button.is-danger {
+  @apply border-rose-200 text-rose-700 hover:bg-rose-50;
+}
+
+.thread-goal-editor-actions {
+  @apply mt-3 flex items-center gap-2;
+}
+
+.thread-goal-editor-spacer {
+  @apply flex-1;
+}
+
+.thread-goal-editor-error {
+  @apply mt-2 text-xs text-rose-600;
+}
+
+:global(:root.dark) .thread-goal-card,
+:global(:root.dark) .thread-goal-editor {
+  @apply border-zinc-700 bg-zinc-900;
+}
+
+:global(:root.dark) .thread-goal-card-copy strong {
+  @apply text-zinc-100;
+}
+
+:global(:root.dark) .thread-goal-card-copy span,
+:global(:root.dark) .thread-goal-card-edit {
+  @apply text-zinc-400;
+}
+
+:global(:root.dark) .thread-goal-editor-input {
+  @apply border-zinc-700 bg-zinc-800 text-zinc-100 focus:border-violet-500 focus:bg-zinc-800;
+}
+
+:global(:root.dark) .thread-goal-editor-status button,
+:global(:root.dark) .thread-goal-editor-actions button {
+  @apply border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700;
+}
+
+:global(:root.dark) .thread-goal-editor-status button.is-active,
+:global(:root.dark) .thread-goal-editor-actions button.is-primary {
+  @apply border-violet-500 bg-violet-600 text-white hover:bg-violet-500;
 }
 
 .composer-runtime-error {

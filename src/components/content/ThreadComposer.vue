@@ -322,12 +322,12 @@
           />
 
           <button
-            v-if="isGoalModeSelected"
+            v-if="threadGoal || isGoalModeSelected"
             class="thread-composer-active-mode is-goal"
             type="button"
-            :aria-label="t('Disable goal mode')"
-            :title="t('Disable goal mode')"
-            @click="disableGoalMode"
+            :aria-label="threadGoal ? t('Edit goal') : t('Disable goal mode')"
+            :title="threadGoal ? t('Edit goal') : t('Disable goal mode')"
+            @click="threadGoal ? $emit('edit-goal') : disableGoalMode()"
           >
             <IconTablerTarget class="thread-composer-active-mode-icon" />
             <span>{{ t('Goal') }}</span>
@@ -510,6 +510,7 @@ const props = defineProps<{
   dictationClickToToggle?: boolean
   dictationAutoSend?: boolean
   dictationLanguage?: string
+  threadGoal?: { objective: string; status: string } | null
 }>()
 
 export type FileAttachment = { label: string; path: string; fsPath: string }
@@ -542,6 +543,7 @@ const emit = defineEmits<{
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
   'update:selected-speed-mode': [mode: SpeedMode]
+  'edit-goal': []
 }>()
 const { t } = useUiLanguage()
 
