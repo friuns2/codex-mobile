@@ -266,7 +266,7 @@ fi
   if ((${#EXTRA_ARGS[@]})); then CMD+=("${EXTRA_ARGS[@]}"); fi
   LAUNCH_LABEL="external Electron diagnostic"
 else
-  CMD=(open -na "$APP_PATH" --args "--remote-debugging-port=$REMOTE_DEBUG_PORT" "--user-data-dir=/tmp/codex-cdp-$REMOTE_DEBUG_PORT")
+  CMD=(open -na "$APP_PATH" --args "--enable-logging" "--remote-debugging-port=$REMOTE_DEBUG_PORT" "--user-data-dir=/tmp/codex-cdp-$REMOTE_DEBUG_PORT")
   if ((${#EXTRA_ARGS[@]})); then CMD+=("${EXTRA_ARGS[@]}"); fi
   LAUNCH_LABEL="native Codex.app"
 fi

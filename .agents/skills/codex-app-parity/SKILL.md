@@ -266,6 +266,7 @@ Important caveats:
 - On this Mac, `/Applications/Codex.app/Contents/MacOS/Codex` does not exist; the executable currently is `/Applications/Codex.app/Contents/MacOS/ChatGPT`. Raw-binary fallback commands must discover an executable from `Contents/MacOS` rather than hard-code its filename.
 - The native `open -na` path is the default because it produced a stable `app://-/index.html` renderer target on port `9240` on 2026-08-12. External Electron is diagnostic opt-in only.
 - `scripts/run-codex-unpacked-debug.sh` treats a matching renderer target as the launch success condition. Its `--verify-only` mode applies the same test, and its normal path exits `3` when the target does not materialize.
+- Historical confirmation (2026-05-27): a separate packaged instance launched with `open -na /Applications/Codex.app --args --enable-logging --remote-debugging-port=<port>` published frontend CDP successfully. The older `app.asar` extraction plus `app.asar.unpacked` overlay was for a patched-app experiment, not the normal CDP path.
 
 ### Architecture Notes
 
