@@ -9,6 +9,7 @@ INSPECT_PORT="${CODEX_NODE_INSPECT_PORT:-9222}"
 DRY_RUN=0
 EXTRA_ARGS=()
 VERIFY_ONLY=0
+EXTERNAL_ELECTRON=0
 TARGET_PREFIX="${CODEX_CDP_TARGET_PREFIX:-app://-/index.html}"
 RENDERER_TIMEOUT="${CODEX_CDP_RENDERER_TIMEOUT:-30}"
 
@@ -112,8 +113,9 @@ Usage:
 
 Options:
   --app <path>             Codex.app path (default: /Applications/Codex.app)
-  --electron <path>         Custom electron binary path
-  --electron-package <pkg> Package to use with pnpm dlx when no local electron binary is found
+  --external-electron       Launch app.asar with Electron (diagnostic opt-in only)
+  --electron <path>         Electron binary for --external-electron
+  --electron-package <pkg> Package to use with pnpm dlx for --external-electron
   --remote-debugging-port N Set Chromium remote debugging port (default: 9229)
   --inspect-port N          Set Node.js inspector port (default: 9222)
   --target-prefix <url>     Expected renderer URL prefix (default: app://-/index.html)
@@ -124,7 +126,8 @@ Options:
 
 Examples:
   ./run-codex-unpacked-debug.sh
-  ./run-codex-unpacked-debug.sh --app /Applications/Codex.app -- --webui --port 4310
+  ./run-codex-unpacked-debug.sh
+  ./run-codex-unpacked-debug.sh --external-electron
 USAGE
 }
 
@@ -137,6 +140,10 @@ while (( $# )); do
     --electron)
       ELECTRON_PATH="${2:?missing value for --electron}"
       shift 2
+      ;;
+    --external-electron)
+      EXTERNAL_ELECTRON=1
+      shift
       ;;
     --electron-package)
       ELECTRON_PACKAGE="${2:?missing value for --electron-package}"
@@ -229,7 +236,11 @@ if [[ ! -x "$CLI_PATH" ]]; then
   exit 1
 fi
 
-if [[ -n "$ELECTRON_PATH" ]]; then
+REMOTE_DEBUG_PORT="$(find_free_port "$REMOTE_DEBUG_PORT")"
+INSPECT_PORT="$(find_free_port "$INSPECT_PORT")"
+
+if (( EXTERNAL_ELECTRON )); then
+  if [[ -n "$ELECTRON_PATH" ]]; then
   if [[ ! -x "$ELECTRON_PATH" ]]; then
     echo "Error: specified electron is not executable: $ELECTRON_PATH" >&2
     exit 1
@@ -243,26 +254,25 @@ else
   prepare_external_electron_native_shims "$APP_RESOURCES_DIR" "$ELECTRON_PACKAGE"
 fi
 
-REMOTE_DEBUG_PORT="$(find_free_port "$REMOTE_DEBUG_PORT")"
-INSPECT_PORT="$(find_free_port "$INSPECT_PORT")"
-
-ELECTRON_FLAGS=(
-  "--enable-logging"
-  "--remote-debugging-port=$REMOTE_DEBUG_PORT"
-  "--inspect=$INSPECT_PORT"
-)
-
-export ELECTRON_FORCE_IS_PACKAGED=true
-export CODEX_CLI_PATH="$CLI_PATH"
-export CUSTOM_CLI_PATH="$CLI_PATH"
-
-CMD=("${ELECTRON_CMD[@]}" "${ELECTRON_FLAGS[@]}" "$APP_ENTRY")
-if ((${#EXTRA_ARGS[@]})); then
-  CMD+=("${EXTRA_ARGS[@]}")
+  ELECTRON_FLAGS=(
+    "--enable-logging"
+    "--remote-debugging-port=$REMOTE_DEBUG_PORT"
+    "--inspect=$INSPECT_PORT"
+  )
+  export ELECTRON_FORCE_IS_PACKAGED=true
+  export CODEX_CLI_PATH="$CLI_PATH"
+  export CUSTOM_CLI_PATH="$CLI_PATH"
+  CMD=("${ELECTRON_CMD[@]}" "${ELECTRON_FLAGS[@]}" "$APP_ENTRY")
+  if ((${#EXTRA_ARGS[@]})); then CMD+=("${EXTRA_ARGS[@]}"); fi
+  LAUNCH_LABEL="external Electron diagnostic"
+else
+  CMD=(open -na "$APP_PATH" --args "--remote-debugging-port=$REMOTE_DEBUG_PORT" "--user-data-dir=/tmp/codex-cdp-$REMOTE_DEBUG_PORT")
+  if ((${#EXTRA_ARGS[@]})); then CMD+=("${EXTRA_ARGS[@]}"); fi
+  LAUNCH_LABEL="native Codex.app"
 fi
 
-echo "Launching Codex (unpacked) with Electron debug flags"
-echo "App: $APP_ENTRY"
+echo "Launching ${LAUNCH_LABEL} with CDP"
+echo "App: $APP_PATH"
 echo "CDP port: $REMOTE_DEBUG_PORT"
 echo "Inspector port: $INSPECT_PORT"
 echo "Command:"
@@ -278,7 +288,7 @@ APP_PID=$!
 
 if ! wait_for_http_json "$REMOTE_DEBUG_PORT" "/json/version" 20; then
   echo "Error: CDP endpoint did not come up on port ${REMOTE_DEBUG_PORT}" >&2
-  wait "$APP_PID"
+  wait "$APP_PID" || true
   exit 1
 fi
 
@@ -288,9 +298,9 @@ curl -fsS "http://127.0.0.1:${REMOTE_DEBUG_PORT}/json/version"
 echo
 
 if ! RENDERER_TARGET="$(wait_for_cdp_page_target "$REMOTE_DEBUG_PORT" "$TARGET_PREFIX" "$RENDERER_TIMEOUT")"; then
-  echo "Error: CDP opened, but no usable renderer target (${TARGET_PREFIX}*) appeared within ${RENDERER_TIMEOUT}s." >&2
-  echo "The external-Electron debug session is unusable for screenshot parity; stopping it." >&2
-  kill "$APP_PID" 2>/dev/null || true
+  echo "Error: CDP opened, but no renderer target (${TARGET_PREFIX}*) appeared within ${RENDERER_TIMEOUT}s." >&2
+  echo "Launch did not meet the parity debug contract." >&2
+  if (( EXTERNAL_ELECTRON )); then kill "$APP_PID" 2>/dev/null || true; fi
   wait "$APP_PID" 2>/dev/null || true
   exit 3
 fi
@@ -298,14 +308,14 @@ fi
 echo "Renderer target is live:"
 echo "$RENDERER_TARGET"
 
-if wait_for_http_json "$INSPECT_PORT" "/json/list" 5; then
+if (( EXTERNAL_ELECTRON )) && wait_for_http_json "$INSPECT_PORT" "/json/list" 5; then
   echo
   echo "Node inspector endpoint is live:"
   curl -fsS "http://127.0.0.1:${INSPECT_PORT}/json/list"
   echo
-else
+elif (( EXTERNAL_ELECTRON )); then
   echo
   echo "Warning: Node inspector endpoint did not come up on port ${INSPECT_PORT}" >&2
 fi
 
-wait "$APP_PID"
+if (( EXTERNAL_ELECTRON )); then wait "$APP_PID"; fi

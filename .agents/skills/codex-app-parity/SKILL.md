@@ -158,9 +158,9 @@ done
 
 If a usable target is found, reuse it and do not launch another Codex instance.
 
-Only if no reusable CDP target exists, prefer running a separate Codex.app debug instance so the user's normal Codex session is not interrupted and the CDP target can stay alive after tests.
+Only if no reusable CDP target exists, run the helper's separate native Codex.app debug instance so the user's normal Codex session is not interrupted and the CDP target can stay alive after tests.
 
-In this repo, prefer the maintained helper script first:
+In this repo, prefer the maintained helper script first. It launches an isolated native Codex.app instance by default:
 
 ```bash
 bash /Users/igor/Git-projects/codex-web-local/scripts/run-codex-unpacked-debug.sh
@@ -168,11 +168,10 @@ bash /Users/igor/Git-projects/codex-web-local/scripts/run-codex-unpacked-debug.s
 
 The script:
 
-- launches Codex.app from the installed `app.asar` under external Electron
-- pins the external runtime to `electron@41.2.0`
-- auto-picks free CDP and Node inspector ports
-- verifies the endpoints after launch
-- prepares the required native Sparkle shim for external-Electron runs
+- uses `open -na` with its own `--user-data-dir`, leaving the normal Codex session untouched
+- auto-picks a free CDP port and verifies the app renderer target
+- prints the page WebSocket URL only after an `app://-/index.html` page is live
+- supports `--external-electron` only for a focused diagnostic that explicitly needs unpacked `app.asar` behavior
 
 If the helper script fails, treat the failure as a skill maintenance signal, not just a one-off launch error:
 
@@ -183,11 +182,10 @@ If the helper script fails, treat the failure as a skill maintenance signal, not
 
 Use `--verify-only` when you only need to confirm whether the current endpoints are still alive.
 
-The helper is usable only when it prints a `Renderer target is live:` value whose
+The helper is ready only when it prints a `Renderer target is live:` value whose
 URL begins with `app://-/index.html`. A listening `/json/version` endpoint alone
-is insufficient: it can belong to an external-Electron process without a usable
-Codex renderer. The helper now waits for this target and exits with status `3`
-after stopping its own failed debug process when it never appears.
+does not establish that the Codex renderer has started. The helper waits for this
+target and exits with status `3` if it does not appear.
 
 Use a fresh app instance with its own profile directory:
 
@@ -248,11 +246,11 @@ Important caveats:
 - Before using `open -na "Codex"` or starting a fresh debug profile, probe common local ports and reuse an existing endpoint when it already serves a valid `app://-/index.html` page target.
 - Creating unnecessary extra Codex.app instances makes parity work noisier and can leave behind multiple stale debug profiles under `/tmp/codex-cdp-*`.
 
-## Findings: External Electron Debug Launcher (2026-05-06)
+## Findings: External Electron Diagnostic Launcher (2026-05-06)
 
 - In this workspace, the most reliable parity-debug launch path is now:
   - `bash /Users/igor/Git-projects/codex-web-local/scripts/run-codex-unpacked-debug.sh`
-- The helper intentionally uses external Electron instead of `/Applications/Codex.app/Contents/MacOS/Codex`, because that preserves the generic Electron-style process/icon behavior some parity workflows expect while still launching the installed Codex `app.asar`.
+- The helper can use external Electron for diagnostics that explicitly need direct `app.asar` execution; this is no longer the default parity path.
 - Using an unpinned external Electron such as `pnpm dlx electron` can break startup because Codex.app expects Electron-41-era native resources; the current helper pins the runtime to `electron@41.2.0`.
 - External-Electron startup also needs Codex’s bundled Sparkle native addon available at the external Electron resource path. The helper now prepares a shim by linking:
   - `/Applications/Codex.app/Contents/Resources/native/sparkle.node`
@@ -266,8 +264,8 @@ Important caveats:
 ## Findings: Renderer Target Gate and Renamed Bundle Executable (2026-08-12)
 
 - On this Mac, `/Applications/Codex.app/Contents/MacOS/Codex` does not exist; the executable currently is `/Applications/Codex.app/Contents/MacOS/ChatGPT`. Raw-binary fallback commands must discover an executable from `Contents/MacOS` rather than hard-code its filename.
-- An external Electron process can publish `/json/version` and the Node inspector while never exposing a `page` whose URL begins with `app://-/index.html`. That state cannot support renderer screenshots or parity interaction.
-- `scripts/run-codex-unpacked-debug.sh` now treats a matching renderer target as the launch success condition. Its `--verify-only` mode applies the same test, and its normal path exits `3` and stops only the process it launched when the target does not materialize.
+- The native `open -na` path is the default because it produced a stable `app://-/index.html` renderer target on port `9240` on 2026-08-12. External Electron is diagnostic opt-in only.
+- `scripts/run-codex-unpacked-debug.sh` treats a matching renderer target as the launch success condition. Its `--verify-only` mode applies the same test, and its normal path exits `3` when the target does not materialize.
 
 ### Architecture Notes
 
