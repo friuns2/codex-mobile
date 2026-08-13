@@ -1635,39 +1635,6 @@
   @apply text-zinc-500;
 }
 
-:root.dark .skills-sync-panel {
-  @apply border-zinc-700 bg-zinc-800;
-}
-
-:root.dark .skills-sync-header {
-  @apply text-zinc-300;
-}
-
-:root.dark .skills-sync-badge {
-  @apply border-zinc-600 bg-zinc-700 text-zinc-200;
-}
-
-:root.dark .skills-sync-badge-link {
-  @apply text-zinc-200 hover:text-white hover:border-zinc-500;
-}
-
-:root.dark .skills-sync-device,
-:root.dark .skills-sync-meta {
-  @apply text-zinc-400;
-}
-
-:root.dark .skills-sync-device a {
-  @apply text-blue-400 hover:text-blue-300;
-}
-
-:root.dark .skills-sync-device code {
-  @apply border border-zinc-600 bg-zinc-700 px-1.5 py-0.5 rounded text-zinc-200;
-}
-
-:root.dark .skills-sync-error {
-  @apply border-rose-800 bg-rose-950/40 text-rose-200;
-}
-
 :root.dark .skills-search-panel {
   @apply border-zinc-700 bg-zinc-900;
 }
