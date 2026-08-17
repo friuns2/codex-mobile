@@ -101,6 +101,7 @@
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @copy-thread-chat="onCopyThreadChat"
             @automations-changed="onAutomationsChanged"
+            @import-project="onChooseProjectImportZip"
             @start-new-chat="onStartProjectlessNewChat" />
         </div>
 
@@ -624,9 +625,6 @@
                   </button>
                   <button class="new-thread-folder-action" type="button" @click="onOpenProjectSetupModal">
                     {{ t('Create Project') }}
-                  </button>
-                  <button class="new-thread-folder-action" type="button" :disabled="isProjectImporting" @click="onChooseProjectImportZip">
-                    {{ isProjectImporting ? t('Importing…') : t('Import Project') }}
                   </button>
                   <input
                     ref="projectImportInputRef"

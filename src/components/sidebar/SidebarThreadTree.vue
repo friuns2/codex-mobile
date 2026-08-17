@@ -147,6 +147,13 @@
                 <span>{{ t('Chats first') }}</span>
                 <span v-if="showChatsFirst">✓</span>
               </button>
+              <button
+                class="organize-menu-item"
+                type="button"
+                @click="emit('import-project')"
+              >
+                <span>{{ t('Import Project') }}</span>
+              </button>
               <div class="organize-menu-separator" />
               <p class="organize-menu-title">{{ t('Sort by') }}</p>
               <button
@@ -937,6 +944,7 @@ const emit = defineEmits<{
   'copy-thread-chat': [threadId: string]
   'fork-thread': [threadId: string]
   'start-new-chat': []
+  'import-project': []
   'automations-changed': []
 }>()
 
