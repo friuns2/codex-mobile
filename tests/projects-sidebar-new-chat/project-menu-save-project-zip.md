@@ -11,11 +11,12 @@
 3. Confirm the export modal shows progress while the ZIP is prepared, then shows `Download` and `Share` buttons.
 4. Inspect the ZIP contents.
 5. Open a thread action menu for a thread inside the same project, click `Export Project`, and confirm it prepares the same project ZIP.
-6. On the new-thread screen, click `Import Project` next to `Create Project`, choose the downloaded archive in the ZIP file picker, and import it.
+6. Open the sidebar `Projects` organize menu, click `Import Project`, choose the downloaded archive in the ZIP file picker, and import it.
 7. Switch to dark theme and repeat steps 1-3.
 
 #### Expected Results
 - The project menu contains `Export Project` between `Browse files` and automation actions.
+- The `Projects` organize menu contains `Import Project`; the new-thread action row does not duplicate it.
 - Each thread menu contains `Export Project` after `Browse files`, exporting that thread's project folder, including projectless chat folders and other local directories.
 - Clicking `Export Project` opens a modal, shows progress while the ZIP downloads into a blob, then keeps the modal open with `Download` and `Share` buttons.
 - Clicking `Download` saves the prepared ZIP; clicking `Share` invokes the browser file share flow when supported.
