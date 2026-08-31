@@ -25,13 +25,14 @@ import {
 import { createServer as createApp } from '../server/httpServer.js'
 import { generatePassword } from '../server/password.js'
 import { spawnSyncCommand } from '../utils/commandInvocation.js'
+import { resolveCodexHome } from '../codexHome.js'
 
 const program = new Command().name('codexapp').description('Shared browser UI for the host Codex environment')
 const __dirname = dirname(fileURLToPath(import.meta.url))
 let hasPromptedCloudflaredInstall = false
 
 function getCodexHomePath(): string {
-  return process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
+  return resolveCodexHome()
 }
 
 function getCloudflaredPromptMarkerPath(): string {

@@ -292,7 +292,7 @@ git commit -m "feat: supervise the Codex app-server process"
 - Consumes: `resolveCodexHome(env, homeDirectory)` and native app-server notifications.
 - Produces: `DesktopStateCoordinator.start()`, `stop()`, `subscribe(listener)`, `noteNativeNotification(notification)`, `getRevision()`; event method is `codex-ui/state-invalidated`.
 
-- [ ] **Step 1: Write Codex home resolution and invalidation coalescing tests**
+- [x] **Step 1: Write Codex home resolution and invalidation coalescing tests**
 
 ```ts
 expect(resolveCodexHome({ CODEX_HOME: ' D:\\Codex Data ' }, 'C:\\Users\\me')).toBe('D:\\Codex Data')
@@ -318,13 +318,13 @@ expect(events[0].params).toMatchObject({ scopes: ['threads', 'projects'], reason
 
 Add cases for root global-state changes, archived sessions, SQLite/WAL signals, native notification thread IDs, monotonically increasing revisions, reconciliation, missing directories, and `stop()` closing all watchers/timers.
 
-- [ ] **Step 2: Run focused tests and confirm failures**
+- [x] **Step 2: Run focused tests and confirm failures**
 
 Run: `pnpm exec vitest run src/codexHome.test.ts src/server/desktopStateCoordinator.test.ts`
 
 Expected: FAIL because both modules are absent.
 
-- [ ] **Step 3: Implement the shared home resolver**
+- [x] **Step 3: Implement the shared home resolver**
 
 ```ts
 export function resolveCodexHome(
@@ -338,7 +338,7 @@ export function resolveCodexHome(
 
 Replace bridge and CLI duplicate home-path implementations only where behavior is identical.
 
-- [ ] **Step 4: Implement the coordinator with bounded observation**
+- [x] **Step 4: Implement the coordinator with bounded observation**
 
 Watch at most the `CODEX_HOME` root, `sessions`, and `archived_sessions`. Root events for `.codex-global-state.json`, `session_index.jsonl`, `state_*.sqlite*`, and `thread_history_*.sqlite*` map to `threads` plus `projects`; session directory events map to the same scopes. Native `item/*` and `turn/*` events with a thread ID add that ID and `workspace` where file changes are involved.
 
@@ -362,11 +362,11 @@ export type CodexUiInvalidation = {
 
 Use one 250 ms debounce timer and one 30 second reconciliation timer. Reconciliation fingerprints watched targets using existence, `mtimeMs`, and size; it never reads session bodies.
 
-- [ ] **Step 5: Connect native notifications and coordinator lifecycle**
+- [x] **Step 5: Connect native notifications and coordinator lifecycle**
 
 Create one coordinator in shared bridge state. Start it once, call `noteNativeNotification()` before forwarding each native app-server event, merge its invalidations into `subscribeNotifications`, and stop it from bridge disposal.
 
-- [ ] **Step 6: Run focused and bridge tests**
+- [x] **Step 6: Run focused and bridge tests**
 
 Run:
 
@@ -374,9 +374,9 @@ Run:
 pnpm exec vitest run src/codexHome.test.ts src/server/desktopStateCoordinator.test.ts src/server/codexAppServerBridge.archive.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts
 ```
 
-Expected: all selected tests pass and watcher-count assertions never exceed three.
+Expected: all new tests pass and watcher-count assertions never exceed three. The recorded backend queue fake-timer cleanup remains the only Windows baseline failure in this focused bridge set.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 ```text
 git add src/codexHome.ts src/codexHome.test.ts src/realtimeProtocol.ts src/server/desktopStateCoordinator.ts src/server/desktopStateCoordinator.test.ts src/server/codexAppServerBridge.ts src/cli/index.ts

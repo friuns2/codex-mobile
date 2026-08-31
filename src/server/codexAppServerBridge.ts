@@ -51,6 +51,8 @@ import type { CollaborationModeKind, ReasoningEffort } from '../types/codex.js'
 import { isAbsoluteLikePath } from '../pathUtils.js'
 import { CodexProcessManager } from './codexProcessManager.js'
 import type { CodexAppServerHealth } from '../realtimeProtocol.js'
+import { DesktopStateCoordinator } from './desktopStateCoordinator.js'
+import { resolveCodexHome } from '../codexHome.js'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -4053,8 +4055,7 @@ async function listFilesWithRipgrep(cwd: string): Promise<string[]> {
 }
 
 function getCodexHomeDir(): string {
-  const codexHome = process.env.CODEX_HOME?.trim()
-  return codexHome && codexHome.length > 0 ? codexHome : join(homedir(), '.codex')
+  return resolveCodexHome()
 }
 
 function getSkillsInstallDir(): string {
@@ -7339,10 +7340,12 @@ type SharedBridgeState = {
   methodCatalog: MethodCatalog
   telegramBridge: TelegramThreadBridge
   backendQueueProcessor: BackendQueueProcessor
+  desktopStateCoordinator: DesktopStateCoordinator
+  unsubscribeDesktopStateSource: () => void
 }
 
 const SHARED_BRIDGE_KEY = '__codexRemoteSharedBridge__'
-const SHARED_BRIDGE_VERSION = 'experimental-api-v2'
+const SHARED_BRIDGE_VERSION = 'experimental-api-v3'
 
 function getSharedBridgeState(): SharedBridgeState {
   const globalScope = globalThis as typeof globalThis & {
@@ -7357,17 +7360,26 @@ function getSharedBridgeState(): SharedBridgeState {
     existing.appServer.dispose()
     existing.backendQueueProcessor?.dispose()
     existing.terminalManager?.dispose()
+    existing.unsubscribeDesktopStateSource?.()
+    existing.desktopStateCoordinator?.stop()
   }
 
   const appServer = new AppServerProcess()
   const terminalManager = new ThreadTerminalManager()
   const backendQueueProcessor = new BackendQueueProcessor(appServer)
+  const desktopStateCoordinator = new DesktopStateCoordinator({ codexHome: getCodexHomeDir() })
+  const unsubscribeDesktopStateSource = appServer.onNotification((notification) => {
+    desktopStateCoordinator.noteNativeNotification(notification)
+  })
+  desktopStateCoordinator.start()
   const created: SharedBridgeState = {
     version: SHARED_BRIDGE_VERSION,
     appServer,
     terminalManager,
     methodCatalog: new MethodCatalog(),
     backendQueueProcessor,
+    desktopStateCoordinator,
+    unsubscribeDesktopStateSource,
     telegramBridge: new TelegramThreadBridge(appServer, {
       onChatSeen: (chatId) => {
         void rememberTelegramChatId(chatId).catch(() => {})
@@ -7455,7 +7467,15 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
 }
 
 export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
-  const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = getSharedBridgeState()
+  const {
+    appServer,
+    terminalManager,
+    methodCatalog,
+    telegramBridge,
+    backendQueueProcessor,
+    desktopStateCoordinator,
+  } = getSharedBridgeState()
+  desktopStateCoordinator.start()
   let threadSearchIndex: ThreadSearchIndex | null = null
   let threadSearchIndexPromise: Promise<ThreadSearchIndex> | null = null
 
@@ -9645,6 +9665,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     telegramBridge.stop()
     terminalManager.dispose()
     backendQueueProcessor.dispose()
+    desktopStateCoordinator.stop()
     appServer.dispose()
   }
   middleware.subscribeNotifications = (
@@ -9662,9 +9683,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         atIso: new Date().toISOString(),
       })
     })
+    const unsubscribeDesktopState = desktopStateCoordinator.subscribe(listener)
     return () => {
       unsubscribeAppServer()
       unsubscribeTerminal()
+      unsubscribeDesktopState()
     }
   }
 
