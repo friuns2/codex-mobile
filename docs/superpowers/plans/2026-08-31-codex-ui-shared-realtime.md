@@ -144,7 +144,7 @@ Set-Location -LiteralPath $ProjectRoot
 node --version
 pnpm --version
 codex --version
-pnpm install --frozen-lockfile
+pnpm install
 pnpm run build
 ```
 
