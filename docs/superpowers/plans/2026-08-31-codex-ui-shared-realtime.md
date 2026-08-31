@@ -552,7 +552,7 @@ git commit -m "feat: synchronize shared browser clients selectively"
 - Consumes: reactive `appServerHealth` from `useDesktopState()`.
 - Produces: stable label/tone mapping and an accessible compact badge shown only outside the healthy steady state or in the existing utility header area.
 
-- [ ] **Step 1: Write health presentation tests**
+- [x] **Step 1: Write health presentation tests**
 
 ```ts
 expect(presentServerHealth({ state: 'ready', restartAttempts: 0 })).toEqual({ label: 'Codex connected', tone: 'ok' })
@@ -560,21 +560,21 @@ expect(presentServerHealth({ state: 'restarting', restartAttempts: 2 })).toEqual
 expect(presentServerHealth({ state: 'failed', restartAttempts: 3 })).toEqual({ label: 'Codex unavailable', tone: 'error' })
 ```
 
-- [ ] **Step 2: Run the presentation test and confirm failure**
+- [x] **Step 2: Run the presentation test and confirm failure**
 
 Run: `pnpm exec vitest run src/serverHealthPresentation.test.ts`
 
 Expected: FAIL because the module is absent.
 
-- [ ] **Step 3: Implement the mapping and badge**
+- [x] **Step 3: Implement the mapping and badge**
 
 The badge uses a fixed 20 px status dot/icon area and short text, `role="status"`, and `aria-live="polite"`. It does not resize adjacent tool buttons as status changes. Use the project's existing icon package if a connection/server icon is already available; otherwise use the status dot already established by sidebar thread states.
 
-- [ ] **Step 4: Wire light and dark styles**
+- [x] **Step 4: Wire light and dark styles**
 
 Add shared styles in `src/style.css` for `ok`, `warning`, and `error`. Use neutral surface colors plus green/amber/red state accents; do not introduce a large banner or card.
 
-- [ ] **Step 5: Run unit and frontend type/build checks**
+- [x] **Step 5: Run unit and frontend type/build checks**
 
 Run:
 
@@ -585,7 +585,7 @@ pnpm run build:frontend
 
 Expected: unit test passes and Vue/TypeScript/Vite build exits `0`.
 
-- [ ] **Step 6: Commit Task 6**
+- [x] **Step 6: Commit Task 6**
 
 ```text
 git add src/components/common/ServerHealthBadge.vue src/serverHealthPresentation.ts src/serverHealthPresentation.test.ts src/App.vue src/style.css

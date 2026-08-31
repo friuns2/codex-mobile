@@ -539,6 +539,7 @@
             </span>
           </template>
           <template #actions>
+            <ServerHealthBadge :health="appServerHealth" />
             <ComposerDropdown
               v-if="canShowTerminalToggle"
               class="content-header-terminal-command"
@@ -1180,6 +1181,7 @@ import ComposerDropdown from './components/content/ComposerDropdown.vue'
 import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdown.vue'
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
+import ServerHealthBadge from './components/common/ServerHealthBadge.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
@@ -1423,6 +1425,7 @@ const {
   selectedReasoningEffort,
   selectedSpeedMode,
   codexCliMissingError,
+  appServerHealth,
   installedSkills,
   accountRateLimitSnapshots,
   messages,

@@ -349,6 +349,22 @@
   @apply text-zinc-200;
 }
 
+:root.dark .server-health-badge {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-300;
+}
+
+:root.dark .server-health-badge[data-tone='ok'] .server-health-dot {
+  @apply bg-emerald-400;
+}
+
+:root.dark .server-health-badge[data-tone='warning'] .server-health-dot {
+  @apply bg-amber-400;
+}
+
+:root.dark .server-health-badge[data-tone='error'] .server-health-dot {
+  @apply bg-rose-400;
+}
+
 :root.dark .sidebar-thread-controls-button {
   @apply text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800;
 }
@@ -1874,6 +1890,44 @@
 :root.dark .automation-detail-grid div,
 :root.dark .automation-detail-prompt p {
   @apply bg-zinc-900 text-zinc-200;
+}
+
+.server-health-badge {
+  @apply flex h-8 w-36 shrink-0 items-center rounded-full border border-zinc-200 bg-white px-1.5 text-xs font-medium text-zinc-600;
+}
+
+.server-health-indicator {
+  @apply grid h-5 w-5 shrink-0 place-items-center;
+}
+
+.server-health-dot {
+  @apply block h-2 w-2 rounded-full;
+}
+
+.server-health-badge[data-tone='ok'] .server-health-dot {
+  @apply bg-emerald-500;
+}
+
+.server-health-badge[data-tone='warning'] .server-health-dot {
+  @apply bg-amber-500;
+}
+
+.server-health-badge[data-tone='error'] .server-health-dot {
+  @apply bg-rose-500;
+}
+
+.server-health-label {
+  @apply min-w-0 flex-1 truncate;
+}
+
+@media (max-width: 640px) {
+  .server-health-badge {
+    @apply w-8 justify-center p-0;
+  }
+
+  .server-health-label {
+    @apply sr-only;
+  }
 }
 
 @media (max-width: 768px) {
