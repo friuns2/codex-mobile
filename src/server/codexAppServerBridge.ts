@@ -44,10 +44,13 @@ import { ThreadTerminalManager } from './terminalManager.js'
 import { getSpawnInvocation } from '../utils/commandInvocation.js'
 import {
   resolveCodexCommand,
+  resolveCodexCommandInfo,
   resolveRipgrepCommand,
 } from '../commandResolution.js'
 import type { CollaborationModeKind, ReasoningEffort } from '../types/codex.js'
 import { isAbsoluteLikePath } from '../pathUtils.js'
+import { CodexProcessManager } from './codexProcessManager.js'
+import type { CodexAppServerHealth } from '../realtimeProtocol.js'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -6372,6 +6375,7 @@ const MERGEABLE_ITEM_TYPES = new Set([
 
 class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
+  private readonly processManager = new CodexProcessManager()
   private initialized = false
   private initializePromise: Promise<void> | null = null
   private readBuffer = ''
@@ -6390,10 +6394,12 @@ class AppServerProcess {
   private activeConfigSignature = ''
 
 
-  private getCodexCommand(): string {
-    const codexCommand = resolveCodexCommand()
+  private getCodexCommand() {
+    const codexCommand = resolveCodexCommandInfo()
     if (!codexCommand) {
-      throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
+      const message = 'Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.'
+      this.processManager.reportUnavailable(getCodexHomeDir(), message)
+      throw new Error(message)
     }
     return codexCommand
   }
@@ -6439,11 +6445,20 @@ class AppServerProcess {
     this.stopping = false
     const config = this.buildAppServerConfig()
     this.activeConfigSignature = this.getAppServerConfigSignature(config)
-    const invocation = getSpawnInvocation(this.getCodexCommand(), config.args)
+    const codexCommand = this.getCodexCommand()
     const spawnEnv = Object.keys(config.env).length > 0
       ? { ...process.env, ...config.env }
       : undefined
-    const proc = spawn(invocation.command, invocation.args, { stdio: ['pipe', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}) })
+    this.processManager.start({
+      command: codexCommand.command,
+      args: config.args,
+      ...(spawnEnv ? { env: spawnEnv } : {}),
+      commandSource: codexCommand.source,
+      codexHome: getCodexHomeDir(),
+    }, (proc) => this.attachProcess(proc))
+  }
+
+  private attachProcess(proc: ChildProcessWithoutNullStreams): void {
     this.process = proc
 
     proc.stdout.setEncoding('utf8')
@@ -6463,11 +6478,6 @@ class AppServerProcess {
       }
     })
 
-    proc.stderr.setEncoding('utf8')
-    proc.stderr.on('data', () => {
-      // Keep stderr silent in dev middleware; JSON-RPC errors are forwarded via responses.
-    })
-
     proc.on('exit', () => {
       if (this.process !== proc) {
         return
@@ -6485,6 +6495,13 @@ class AppServerProcess {
       this.initializePromise = null
       this.readBuffer = ''
     })
+
+    if (this.processManager.getHealth().restartAttempts > 0) {
+      queueMicrotask(() => {
+        if (this.stopping) return
+        void this.ensureInitialized().catch(() => {})
+      })
+    }
   }
 
   private sendLine(payload: Record<string, unknown>): void {
@@ -6821,6 +6838,7 @@ class AppServerProcess {
 
   private async call(method: string, params: unknown): Promise<unknown> {
     this.start()
+    await this.processManager.waitForProcess()
     const id = this.nextId++
 
     return new Promise((resolve, reject) => {
@@ -6856,6 +6874,7 @@ class AppServerProcess {
         method: 'initialized',
       })
       this.initialized = true
+      this.processManager.markReady()
     }).finally(() => {
       this.initializePromise = null
     })
@@ -6874,6 +6893,14 @@ class AppServerProcess {
     return () => {
       this.notificationListeners.delete(listener)
     }
+  }
+
+  getHealth(): CodexAppServerHealth {
+    return this.processManager.getHealth()
+  }
+
+  onHealthChange(listener: (health: CodexAppServerHealth) => void): () => void {
+    return this.processManager.subscribeHealth(listener)
   }
 
   async respondToServerRequest(payload: unknown): Promise<void> {
@@ -6913,11 +6940,10 @@ class AppServerProcess {
   }
 
   dispose(): void {
-    if (!this.process) return
-
     const proc = this.process
     this.stopping = true
     this.process = null
+    this.processManager.stop()
     this.initialized = false
     this.initializePromise = null
     this.activeConfigSignature = ''
@@ -6930,17 +6956,7 @@ class AppServerProcess {
     this.pending.clear()
     this.pendingServerRequests.clear()
 
-    try {
-      proc.stdin.end()
-    } catch {
-      // ignore close errors on shutdown
-    }
-
-    try {
-      proc.kill('SIGTERM')
-    } catch {
-      // ignore kill errors on shutdown
-    }
+    if (!proc) return
 
     const forceKillTimer = setTimeout(() => {
       if (!proc.killed) {

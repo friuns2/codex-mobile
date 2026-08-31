@@ -179,7 +179,7 @@ git commit -m "feat: brand codex-ui and add host deployment scripts"
 - Consumes: `getSpawnInvocation(command, args, platform)` and `buildAppServerArgs()`.
 - Produces: `CodexProcessManager.start(spec, attach)`, `stop()`, `markReady()`, `getHealth()`, and `subscribeHealth(listener)`; `CodexAppServerHealth` is the stable API payload.
 
-- [ ] **Step 1: Define health and lifecycle tests with a fake child process**
+- [x] **Step 1: Define health and lifecycle tests with a fake child process**
 
 ```ts
 const manager = new CodexProcessManager({
@@ -201,13 +201,13 @@ expect(fakeTimers.onlyDelay()).toBe(500)
 
 Add cases for single active process, stderr capped at 40 lines/16 KiB, bearer/token text redaction, spawn `error`, exponential delays capped at 10 seconds, stable readiness resetting attempts, and `stop()` preventing restart. Add command-resolution cases proving environment override, PATH, and package source classification.
 
-- [ ] **Step 2: Run the manager test and confirm module-not-found failure**
+- [x] **Step 2: Run the manager test and confirm module-not-found failure**
 
 Run: `pnpm exec vitest run src/server/codexProcessManager.test.ts`
 
 Expected: FAIL because `codexProcessManager.ts` does not exist.
 
-- [ ] **Step 3: Implement protocol types and the process manager**
+- [x] **Step 3: Implement protocol types and the process manager**
 
 ```ts
 export type CodexProcessState = 'stopped' | 'starting' | 'ready' | 'restarting' | 'failed'
@@ -239,7 +239,7 @@ export type AttachCodexProcess = (process: ChildProcessWithoutNullStreams) => vo
 
 Before storing stderr, replace bearer credentials, JSON token fields, and query-string token/password values with `[redacted]`. Keep only the newest 40 lines and no more than 16 KiB.
 
-- [ ] **Step 4: Return command source with resolution**
+- [x] **Step 4: Return command source with resolution**
 
 Add:
 
@@ -254,13 +254,13 @@ export function resolveCodexCommandInfo(): ResolvedCommand | null
 
 Retain `resolveCodexCommand(): string | null` as a compatibility wrapper returning `.command`.
 
-- [ ] **Step 5: Integrate the manager into `AppServerProcess`**
+- [x] **Step 5: Integrate the manager into `AppServerProcess`**
 
 Replace direct `spawn()` ownership with one `CodexProcessManager`. The bridge's existing stdout parsing, pending JSON-RPC map, server-request map, and stream caches remain in `AppServerProcess`. Its attach callback wires stdout and lifecycle events for each spawned child; on exit it rejects pending RPCs and resets initialization before the manager restarts.
 
 `ensureInitialized()` waits on the existing shared initialization promise. `initialize` success calls `manager.markReady()`. A restarting process never converts `thread/list` to an empty result.
 
-- [ ] **Step 6: Run process and existing bridge tests**
+- [x] **Step 6: Run process and existing bridge tests**
 
 Run:
 
@@ -268,9 +268,9 @@ Run:
 pnpm exec vitest run src/server/codexProcessManager.test.ts src/server/appServerRuntimeConfig.test.ts src/server/codexAppServerBridge.archive.test.ts src/server/codexAppServerBridge.authRefresh.test.ts src/server/codexAppServerBridge.providerModels.test.ts
 ```
 
-Expected: all selected test files pass.
+Expected: all new tests pass. On the recorded Windows baseline, the existing symlink canonicalization and POSIX permission-bit assertions remain the only failures in this focused set.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```text
 git add src/commandResolution.ts src/realtimeProtocol.ts src/server/codexProcessManager.ts src/server/codexProcessManager.test.ts src/server/codexAppServerBridge.ts

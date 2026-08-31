@@ -8,6 +8,20 @@ export type CommandInvocation = {
   args: string[]
 }
 
+export type ResolvedCommand = {
+  command: string
+  source: 'environment' | 'path' | 'package'
+}
+
+export type CommandResolutionOptions = {
+  env?: NodeJS.ProcessEnv
+  platform?: NodeJS.Platform
+  homeDirectory?: string
+  canRun?: (command: string, args: string[]) => boolean
+  exists?: (path: string) => boolean
+  findOnPath?: (name: string) => string[]
+}
+
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   const unique: string[] = []
   for (const value of values) {
@@ -22,15 +36,20 @@ function isPathLike(command: string): boolean {
   return command.includes('/') || command.includes('\\') || /^[a-zA-Z]:/.test(command)
 }
 
-function isRunnableCommand(command: string, args: string[] = []): boolean {
-  if (isPathLike(command) && !existsSync(command)) {
+function isRunnableCommand(
+  command: string,
+  args: string[] = [],
+  canRun: (command: string, args: string[]) => boolean = canRunCommand,
+  exists: (path: string) => boolean = existsSync,
+): boolean {
+  if (isPathLike(command) && !exists(command)) {
     return false
   }
-  return canRunCommand(command, args)
+  return canRun(command, args)
 }
 
-function getWindowsAppDataNpmPrefix(): string | null {
-  const appData = process.env.APPDATA?.trim()
+function getWindowsAppDataNpmPrefix(env: NodeJS.ProcessEnv = process.env): string | null {
+  const appData = env.APPDATA?.trim()
   return appData ? join(appData, 'npm') : null
 }
 
@@ -43,29 +62,56 @@ function getPotentialNpmPrefixes(): string[] {
   ])
 }
 
-function getPotentialCodexPackageDirs(prefix: string): string[] {
+function getPotentialNpmPrefixesFor(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  homeDirectory: string,
+): string[] {
+  return uniqueStrings([
+    env.npm_config_prefix,
+    env.PREFIX,
+    join(homeDirectory, '.npm-global'),
+    platform === 'win32' ? getWindowsAppDataNpmPrefix(env) : null,
+  ])
+}
+
+function getPotentialCodexPackageDirs(prefix: string, platform: NodeJS.Platform = process.platform): string[] {
   const dirs = [join(prefix, 'node_modules', '@openai', 'codex')]
-  if (process.platform !== 'win32') {
+  if (platform !== 'win32') {
     dirs.push(join(prefix, 'lib', 'node_modules', '@openai', 'codex'))
   }
   return dirs
 }
 
-function getPotentialCodexExecutables(prefix: string): string[] {
-  return getPotentialCodexPackageDirs(prefix).map((packageDir) => (
-    process.platform === 'win32'
-      ? join(
-          packageDir,
-          'node_modules',
-          '@openai',
-          'codex-win32-x64',
-          'vendor',
-          'x86_64-pc-windows-msvc',
-          'codex',
-          'codex.exe',
-        )
-      : join(packageDir, 'bin', 'codex')
-  ))
+function getPotentialCodexExecutables(prefix: string, platform: NodeJS.Platform = process.platform): string[] {
+  return getPotentialCodexPackageDirs(prefix, platform).flatMap((packageDir) => {
+    if (platform !== 'win32') return [join(packageDir, 'bin', 'codex')]
+    const vendorRoot = join(
+      packageDir,
+      'node_modules',
+      '@openai',
+      'codex-win32-x64',
+      'vendor',
+      'x86_64-pc-windows-msvc',
+    )
+    return [
+      join(vendorRoot, 'bin', 'codex.exe'),
+      join(vendorRoot, 'codex', 'codex.exe'),
+    ]
+  })
+}
+
+function findCommandsOnPath(name: string, platform: NodeJS.Platform): string[] {
+  if (platform !== 'win32') return [name]
+  const result = spawnSync('where.exe', [name], {
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  if (result.error || result.status !== 0) return []
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean)
 }
 
 function getPotentialRipgrepExecutables(prefix: string): string[] {
@@ -118,14 +164,30 @@ export function prependPathEntry(existingPath: string, entry: string): string {
 }
 
 export function resolveCodexCommand(): string | null {
-  const explicit = process.env.CODEXUI_CODEX_COMMAND?.trim()
-  const packageCandidates = getPotentialNpmPrefixes().flatMap(getPotentialCodexExecutables)
-  const fallbackCandidates = process.platform === 'win32'
-    ? [...packageCandidates, 'codex']
-    : ['codex', ...packageCandidates]
+  return resolveCodexCommandInfo()?.command ?? null
+}
 
-  for (const candidate of uniqueStrings([explicit, ...fallbackCandidates])) {
-    if (isRunnableCommand(candidate, ['--version'])) {
+export function resolveCodexCommandInfo(options: CommandResolutionOptions = {}): ResolvedCommand | null {
+  const env = options.env ?? process.env
+  const platform = options.platform ?? process.platform
+  const homeDirectory = options.homeDirectory ?? homedir()
+  const canRun = options.canRun ?? canRunCommand
+  const exists = options.exists ?? existsSync
+  const findOnPath = options.findOnPath ?? ((name: string) => findCommandsOnPath(name, platform))
+  const explicit = env.CODEXUI_CODEX_COMMAND?.trim()
+  const pathCandidates = platform === 'win32'
+    ? [...findOnPath('codex.exe'), ...findOnPath('codex.cmd')]
+    : findOnPath('codex')
+  const packageCandidates = getPotentialNpmPrefixesFor(env, platform, homeDirectory)
+    .flatMap((prefix) => getPotentialCodexExecutables(prefix, platform))
+  const candidates: ResolvedCommand[] = [
+    ...(explicit ? [{ command: explicit, source: 'environment' as const }] : []),
+    ...pathCandidates.map((command) => ({ command, source: 'path' as const })),
+    ...packageCandidates.map((command) => ({ command, source: 'package' as const })),
+  ]
+
+  for (const candidate of candidates) {
+    if (isRunnableCommand(candidate.command, ['--version'], canRun, exists)) {
       return candidate
     }
   }
