@@ -7,11 +7,11 @@
   "author": "Pavel Voronin, Igor Levochkin",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/friuns2/codexui.git"
+    "url": "git+https://github.com/ylwhlhp/codex-ui.git"
   },
-  "homepage": "https://github.com/friuns2/codexui#readme",
+  "homepage": "https://github.com/ylwhlhp/codex-ui#readme",
   "bugs": {
-    "url": "https://github.com/friuns2/codexui/issues"
+    "url": "https://github.com/ylwhlhp/codex-ui/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -37,14 +37,6 @@
     "scripts/dev-random-home.cjs",
     "scripts/fix-pty-native-build.cjs"
   ],
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@firebase/util",
-      "esbuild",
-      "node-pty",
-      "protobufjs"
-    ]
-  },
   "scripts": {
     "dev": "node scripts/dev.cjs",
     "dev2": "node scripts/dev-random-home.cjs",
@@ -75,14 +67,14 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "@tailwindcss/vite": "^4.1.18",
+    "@tailwindcss/vite": "4.1.18",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.2",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^5.2.1",
     "playwright": "^1.59.1",
-    "tailwindcss": "^4.1.18",
+    "tailwindcss": "4.1.18",
     "tsup": "^8.4.0",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",

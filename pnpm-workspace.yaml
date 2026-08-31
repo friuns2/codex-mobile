@@ -1,0 +1,5 @@
+allowBuilds:
+  '@firebase/util': true
+  esbuild: true
+  node-pty: true
+  protobufjs: true

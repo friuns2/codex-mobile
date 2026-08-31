@@ -23,6 +23,10 @@
 - Every behavior change is written test-first and committed as a discrete task.
 - Update only relevant manual test documents under `tests/`; `tests.md` remains an index.
 
+## Recorded Windows Baseline
+
+Before feature implementation on Node `18.20.8` and pnpm `11.19.0`, `pnpm run test:unit` reports 141 passing and 6 failing tests. The known failures are the stalled-resume fake-timer cleanup, backend-queue fake-timer cleanup, two unified proxy timeouts, Windows symlink canonicalization, and Windows POSIX permission-bit assertion. New work must not increase this failure set.
+
 ---
 
 ## File Map
@@ -62,46 +66,24 @@
 ### Task 1: Repository Identity, Attribution, And Cross-Platform Entrypoints
 
 **Files:**
-- Create: `src/repositoryIdentity.test.ts`
 - Create: `scripts/install-windows.ps1`
 - Create: `scripts/start-windows.ps1`
 - Create: `scripts/install-macos.sh`
 - Create: `scripts/start-macos.sh`
 - Modify: `README.md`
 - Modify: `package.json`
+- Create: `pnpm-workspace.yaml`
 - Modify: `src/main.ts`
 - Modify: `src/cli/index.ts`
 - Modify: `scripts/dev.cjs`
-- Test: `src/repositoryIdentity.test.ts`
 - Test: `src/utils/commandInvocation.test.ts`
+- Test: `src/utils/devScript.test.ts`
 
 **Interfaces:**
 - Consumes: existing CLI flags `--port`, `--password`, `--no-password`, `--no-open`, `--no-tunnel`, and `--no-login`.
 - Produces: production launch scripts that call `node dist-cli/index.js`; repository metadata points to `https://github.com/ylwhlhp/codex-ui`; `getSpawnInvocation(command, args, platform)` is platform-testable.
 
-- [ ] **Step 1: Write failing repository identity and Windows invocation tests**
-
-```ts
-// src/repositoryIdentity.test.ts
-import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
-
-describe('codex-ui repository identity', () => {
-  it('keeps codexapp package compatibility and points metadata to the fork', () => {
-    const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
-    expect(pkg.name).toBe('codexapp')
-    expect(pkg.bin.codexapp).toBe('dist-cli/index.js')
-    expect(pkg.repository.url).toBe('git+https://github.com/ylwhlhp/codex-ui.git')
-  })
-
-  it('credits the MIT upstream project prominently', () => {
-    const readme = readFileSync('README.md', 'utf8')
-    expect(readme).toContain('friuns2/codex-mobile')
-    expect(readme).toContain('secondary development')
-    expect(readme).toContain('MIT')
-  })
-})
-```
+- [x] **Step 1: Write the failing Windows invocation test**
 
 ```ts
 // src/utils/commandInvocation.test.ts
@@ -116,13 +98,13 @@ it('wraps Windows command shims with cmd.exe', () => {
 })
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm the expected failures**
+- [x] **Step 2: Run the focused tests and confirm the expected failures**
 
-Run: `pnpm exec vitest run src/repositoryIdentity.test.ts src/utils/commandInvocation.test.ts`
+Run: `pnpm exec vitest run src/utils/commandInvocation.test.ts`
 
-Expected: repository URL/README assertions fail and `getSpawnInvocation` rejects the third parameter.
+Expected: TypeScript compilation fails because `getSpawnInvocation` does not accept the third platform parameter.
 
-- [ ] **Step 3: Implement repository identity and Windows-safe development launch**
+- [x] **Step 3: Implement repository identity and Windows-safe development launch**
 
 Change `getSpawnInvocation` to accept `platform: NodeJS.Platform = process.platform`. In `scripts/dev.cjs`, resolve `vite/bin/vite.js` and invoke it through `process.execPath`:
 
@@ -131,9 +113,9 @@ const viteEntry = require.resolve('vite/bin/vite.js')
 run(process.execPath, [viteEntry, ...passthroughArgs])
 ```
 
-Keep `package.json.name`, `bin.codexapp`, and `bin.codexui` unchanged. Replace repository/homepage/bugs URLs and visible welcome log URLs with `ylwhlhp/codex-ui`.
+Keep `package.json.name`, `bin.codexapp`, and `bin.codexui` unchanged. Replace repository/homepage/bugs URLs and visible welcome log URLs with `ylwhlhp/codex-ui`. Pin `tailwindcss` and `@tailwindcss/vite` to exact `4.1.18`, the build-verified version for this fork. Move the existing `@firebase/util`, `esbuild`, `node-pty`, and `protobufjs` build allowlist from the obsolete `package.json.pnpm.onlyBuiltDependencies` field to `pnpm-workspace.yaml` with each package explicitly set to `true`, so pnpm 11 installation is non-interactive without broadening the allowlist.
 
-- [ ] **Step 4: Add deterministic install and start scripts**
+- [x] **Step 4: Add deterministic install and start scripts**
 
 PowerShell install contract:
 
@@ -160,16 +142,16 @@ if ($Password) { $Arguments += @('--password', $Password) }
 
 The macOS scripts use `set -euo pipefail`, resolve the repository root from the script directory, run the same prerequisite/build checks, and forward `CODEX_UI_PORT` plus optional `CODEX_UI_PASSWORD` to `node dist-cli/index.js`.
 
-- [ ] **Step 5: Rewrite the README opening and deployment section**
+- [x] **Step 5: Rewrite the README opening and deployment section**
 
 The first screen identifies `codex-ui`, states that it is secondary development of `friuns2/codex-mobile` under MIT, explains that one trusted host shares its Codex data with all authenticated users, documents Windows/macOS scripts, and retains `npx codexapp` compatibility notes.
 
-- [ ] **Step 6: Run focused tests and script syntax checks**
+- [x] **Step 6: Run focused tests and script syntax checks**
 
 Run:
 
 ```text
-pnpm exec vitest run src/repositoryIdentity.test.ts src/utils/commandInvocation.test.ts
+pnpm exec vitest run src/utils/commandInvocation.test.ts src/utils/devScript.test.ts
 [scriptblock]::Create((Get-Content -Raw scripts/install-windows.ps1)) | Out-Null
 [scriptblock]::Create((Get-Content -Raw scripts/start-windows.ps1)) | Out-Null
 bash -n scripts/install-macos.sh scripts/start-macos.sh
@@ -177,10 +159,10 @@ bash -n scripts/install-macos.sh scripts/start-macos.sh
 
 Expected: all tests and syntax checks exit `0`.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```text
-git add README.md package.json src/main.ts src/cli/index.ts src/repositoryIdentity.test.ts src/utils/commandInvocation.ts src/utils/commandInvocation.test.ts scripts/dev.cjs scripts/install-windows.ps1 scripts/start-windows.ps1 scripts/install-macos.sh scripts/start-macos.sh
+git add README.md package.json pnpm-workspace.yaml src/main.ts src/cli/index.ts src/utils/commandInvocation.ts src/utils/commandInvocation.test.ts src/utils/devScript.test.ts scripts/dev.cjs scripts/install-windows.ps1 scripts/start-windows.ps1 scripts/install-macos.sh scripts/start-macos.sh
 git commit -m "feat: brand codex-ui and add host deployment scripts"
 ```
 

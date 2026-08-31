@@ -1,15 +1,22 @@
-# 🔥 codexapp
+# codex-ui
 
-### 🚀 Run Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀
+Run one shared Codex browser UI from a Windows or macOS host.
 
 [![npm](https://img.shields.io/npm/v/codexapp?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/codexapp)
-[![platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20Android-blue?style=for-the-badge)](#-quick-start)
+[![platform](https://img.shields.io/badge/Host-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=for-the-badge)](#-quick-start)
 [![node](https://img.shields.io/badge/Node-18%2B-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![license](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](./LICENSE)
 
-> **Codex UI in your browser. No drama. One command.**
->  
-> **Yes, that is your Codex desktop app experience exposed over web UI. Yes, it runs cross-platform.**
+> [!IMPORTANT]
+> This repository is a secondary development of
+> [`friuns2/codex-mobile`](https://github.com/friuns2/codex-mobile), distributed
+> under the MIT License. The upstream project and its contributors retain their
+> original copyright. This fork adds shared-host realtime synchronization,
+> Windows/macOS deployment support, and `codex-ui` branding.
+
+`codex-ui` runs on one trusted computer. Every authenticated browser uses that
+host's Codex sessions, projects, authentication, and project files. It is a
+shared environment: users do not receive isolated accounts or private sessions.
 
 ```text
  ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗██╗   ██╗██╗
@@ -42,6 +49,37 @@ npx codexapp
 # 🌐 Then open in browser
 # http://localhost:18923
 ```
+
+The npm package and executable remain named `codexapp` for compatibility. The
+repository and visible product name are `codex-ui`.
+
+### Build and host this fork
+
+Clone the repository on the computer that already owns the Codex sessions and
+projects. That computer is the central host.
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/ylwhlhp/codex-ui.git
+cd codex-ui
+.\scripts\install-windows.ps1
+.\scripts\start-windows.ps1 -Port 5900
+```
+
+macOS:
+
+```bash
+git clone https://github.com/ylwhlhp/codex-ui.git
+cd codex-ui
+./scripts/install-macos.sh
+CODEX_UI_PORT=5900 ./scripts/start-macos.sh
+```
+
+The server listens on all host interfaces. Open `http://<host-ip>:5900` from
+another computer and sign in with the shared password printed at startup. Use a
+trusted LAN, Tailscale, or another private network; every signed-in user has the
+host user's effective Codex capabilities.
 
 By default, `codexapp` now also starts:
 
@@ -275,4 +313,6 @@ Built for speed, portability, and a little bit of chaos 😏
 
 ---
 
-Forked from [pavel-voronin/codex-web-local](https://github.com/pavel-voronin/codex-web-local) by Pavel Voronin.
+Secondary development of [friuns2/codex-mobile](https://github.com/friuns2/codex-mobile),
+which derives from [pavel-voronin/codex-web-local](https://github.com/pavel-voronin/codex-web-local).
+See [LICENSE](./LICENSE) for the MIT license text.

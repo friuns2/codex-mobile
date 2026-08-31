@@ -31,8 +31,14 @@ function run(command, args, options = {}) {
 }
 
 const passthroughArgs = process.argv.slice(2)
-const viteBinPath = join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
-const vueTscBinPath = join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vue-tsc.cmd' : 'vue-tsc')
+let viteEntryPath = ''
+
+function resolveViteEntry() {
+  const candidate = join(process.cwd(), 'node_modules', 'vite', 'bin', 'vite.js')
+  return existsSync(candidate) ? candidate : ''
+}
+
+viteEntryPath = resolveViteEntry()
 
 if (isAndroidRuntime()) {
   const cliPath = join(process.cwd(), 'dist-cli', 'index.js')
@@ -49,14 +55,20 @@ if (isAndroidRuntime()) {
   ])
 }
 
-if (!existsSync(viteBinPath) || !existsSync(vueTscBinPath)) {
-  const install = spawnSync('pnpm', ['install'], { stdio: 'inherit', env: process.env })
+if (!viteEntryPath) {
+  const install = process.platform === 'win32'
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', 'pnpm install'], { stdio: 'inherit', env: process.env })
+    : spawnSync('pnpm', ['install'], { stdio: 'inherit', env: process.env })
   if (install.error) {
     throw install.error
   }
   if (install.status !== 0) {
     process.exit(install.status ?? 1)
   }
+  viteEntryPath = resolveViteEntry()
+  if (!viteEntryPath) {
+    throw new Error('Vite entry point is unavailable after dependency installation')
+  }
 }
 
-run(viteBinPath, passthroughArgs)
+run(process.execPath, [viteEntryPath, ...passthroughArgs])

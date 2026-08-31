@@ -11,8 +11,8 @@ function quoteCmdExeArg(value: string): string {
   return `"${normalized}"`
 }
 
-function needsCmdExeWrapper(command: string): boolean {
-  if (process.platform !== 'win32') {
+function needsCmdExeWrapper(command: string, platform: NodeJS.Platform): boolean {
+  if (platform !== 'win32') {
     return false
   }
 
@@ -29,8 +29,12 @@ function needsCmdExeWrapper(command: string): boolean {
   return WINDOWS_CMD_NAMES.has(baseName)
 }
 
-export function getSpawnInvocation(command: string, args: string[] = []): { command: string; args: string[] } {
-  if (needsCmdExeWrapper(command)) {
+export function getSpawnInvocation(
+  command: string,
+  args: string[] = [],
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (needsCmdExeWrapper(command, platform)) {
     return {
       command: 'cmd.exe',
       args: ['/d', '/s', '/c', [quoteCmdExeArg(command), ...args.map((arg) => quoteCmdExeArg(arg))].join(' ')],
