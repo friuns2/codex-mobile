@@ -1,7 +1,7 @@
 # codex-ui Shared Realtime Host Design
 
 Date: 2026-08-31
-Status: Draft for user review
+Status: Approved for implementation
 
 ## 1. Summary
 
