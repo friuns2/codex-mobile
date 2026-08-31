@@ -110,6 +110,43 @@ async function flushRealtimeTasks(): Promise<void> {
   for (let index = 0; index < 10; index += 1) await Promise.resolve()
 }
 
+function installControlledTimers(): { advanceBy: (delayMs: number) => Promise<void> } {
+  installTestWindow()
+  let nowMs = 0
+  let nextTimerId = 1
+  const timers = new Map<number, { atMs: number; callback: () => void }>()
+  vi.mocked(window.setTimeout).mockImplementation(((callback: TimerHandler, delay?: number) => {
+    const timerId = nextTimerId
+    nextTimerId += 1
+    if (typeof callback === 'function') {
+      timers.set(timerId, { atMs: nowMs + (delay ?? 0), callback: () => callback() })
+    }
+    return timerId
+  }) as typeof window.setTimeout)
+  vi.mocked(window.clearTimeout).mockImplementation(((timerId?: number) => {
+    if (typeof timerId === 'number') timers.delete(timerId)
+  }) as typeof window.clearTimeout)
+
+  return {
+    async advanceBy(delayMs: number): Promise<void> {
+      const targetMs = nowMs + delayMs
+      while (true) {
+        const nextTimer = Array.from(timers.entries())
+          .filter(([, timer]) => timer.atMs <= targetMs)
+          .sort((first, second) => first[1].atMs - second[1].atMs)[0]
+        if (!nextTimer) break
+        const [timerId, timer] = nextTimer
+        timers.delete(timerId)
+        nowMs = timer.atMs
+        timer.callback()
+        await flushRealtimeTasks()
+      }
+      nowMs = targetMs
+      await flushRealtimeTasks()
+    },
+  }
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
@@ -691,6 +728,44 @@ describe('startup request deduplication', () => {
 
     expect(gatewayMocks.getThreadGroupsPage).toHaveBeenCalledTimes(1)
     expect(gatewayMocks.getThreadDetail).toHaveBeenCalledTimes(1)
+  })
+
+  it('coalesces a native event with the server filesystem invalidation that follows 250ms later', async () => {
+    const timers = installControlledTimers()
+    let notificationHandler: ((notification: { method: string; params?: unknown; atIso?: string }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'Project', threads: [thread('thread-1', '/tmp/project')] }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    gatewayMocks.getThreadGroupsPage.mockClear()
+    state.startPolling()
+
+    notificationHandler!({
+      method: 'thread/name/updated',
+      params: { threadId: 'thread-1', threadName: 'Updated title' },
+      atIso: '2026-08-31T00:00:00.000Z',
+    })
+    await timers.advanceBy(250)
+    notificationHandler!({
+      method: 'codex-ui/state-invalidated',
+      params: {
+        scopes: ['threads', 'projects'],
+        threadIds: ['thread-1'],
+        reason: 'filesystem',
+        revision: 1,
+      },
+      atIso: '2026-08-31T00:00:00.250Z',
+    })
+    await timers.advanceBy(350)
+
+    expect(gatewayMocks.getThreadGroupsPage).toHaveBeenCalledTimes(1)
   })
 
   it('forces one recovery refresh when ready reports a newer revision', async () => {
