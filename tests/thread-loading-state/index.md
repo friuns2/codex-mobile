@@ -34,3 +34,4 @@ Return to the [manual test index](../../tests.md).
 | [Thread conversation loads earlier turns on demand](thread-conversation-loads-earlier-turns-on-demand.md) |
 | [Missing thread route errors render in chat](missing-thread-route-errors-render-in-chat.md) |
 | [Non-thread startup selection priming](non-thread-startup-selection-priming.md) |
+| [Desktop and browser shared realtime sync](desktop-and-browser-shared-realtime-sync.md) |

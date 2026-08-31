@@ -605,21 +605,21 @@ git commit -m "feat: show shared Codex host health"
 - Consumes: all preceding production behavior.
 - Produces: reproducible manual checks, verified build/package, two-client convergence evidence, and measured request/watcher bounds.
 
-- [ ] **Step 1: Add exact manual deployment coverage**
+- [x] **Step 1: Add exact manual deployment coverage**
 
 Document prerequisites, `scripts/install-windows.ps1`/`scripts/start-windows.ps1` actions, the equivalent macOS scripts, expected bind URL, shared-password login from another computer, project path with spaces, and cleanup that stops only the test server.
 
-- [ ] **Step 2: Add exact realtime convergence coverage**
+- [x] **Step 2: Add exact realtime convergence coverage**
 
 Document two simultaneous browsers plus Codex desktop, creating a uniquely named desktop session, waiting through the 250 ms debounce, verifying both browsers show it without reload, starting a turn in Browser A, verifying Browser B, terminating only the managed app-server child, and verifying cached sessions remain while health changes and recovery completes.
 
-- [ ] **Step 3: Run the complete automated suite and classify baseline failures**
+- [x] **Step 3: Run the complete automated suite and classify baseline failures**
 
 Run: `pnpm run test:unit`
 
 Expected: all new tests pass. Any pre-existing Windows path/permission/timeouts are listed separately with their exact test names and compared to the baseline recorded before implementation.
 
-- [ ] **Step 4: Build and perform package smoke checks**
+- [x] **Step 4: Build and perform package smoke checks**
 
 Run:
 
@@ -631,19 +631,19 @@ node dist-cli/index.js --help
 
 Expected: build and pack exit `0`; CLI help includes `codexapp`-compatible options and no runtime module error.
 
-- [ ] **Step 5: Run the built server against the host Codex environment**
+- [x] **Step 5: Run the built server against the host Codex environment**
 
 Choose an unused port above the Windows excluded range, start `node dist-cli/index.js --port <port> --no-open --no-tunnel --no-login`, authenticate, and confirm `thread/list` returns existing host sessions rather than `No chats`. Record the chosen port and stop only this server when verification is complete.
 
-- [ ] **Step 6: Verify two browser clients and themes**
+- [x] **Step 6: Verify two browser clients and themes**
 
 At desktop `1440x900` and mobile `375x812`, exercise the real changed status UI and shared session refresh in light and dark themes. Save screenshots under `output/playwright/` and assert no overlap, clipped status text, duplicate live overlays, or empty session replacement during restart.
 
-- [ ] **Step 7: Run the required performance audit**
+- [x] **Step 7: Run the required performance audit**
 
 Run `pnpm run profile:browser` and `pnpm run profile:thread` against the current verification server. Record `duplicateCounts`, `warnings`, `totalApiKB`, first-page `thread/list` count, selected `thread/read` count, and the coordinator watcher count. Confirm one app-server process, at most three Codex state watchers, one concurrent list refresh, and one selected-thread refresh per coalesced invalidation.
 
-- [ ] **Step 8: Update manual indexes and commit verification docs**
+- [x] **Step 8: Update manual indexes and commit verification docs**
 
 ```text
 git add tests/cli-network-platform/windows-macos-shared-host-deployment.md tests/cli-network-platform/index.md tests/thread-loading-state/desktop-and-browser-shared-realtime-sync.md tests/thread-loading-state/index.md docs/superpowers/plans/2026-08-31-codex-ui-shared-realtime.md
