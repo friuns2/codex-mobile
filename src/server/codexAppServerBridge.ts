@@ -7328,9 +7328,13 @@ class MethodCatalog {
   }
 }
 
-type CodexBridgeMiddleware = ((req: IncomingMessage, res: ServerResponse, next: () => void) => Promise<void>) & {
+export type CodexBridgeNotification = { method: string; params: unknown; atIso: string }
+
+export type CodexBridgeMiddleware = ((req: IncomingMessage, res: ServerResponse, next: () => void) => Promise<void>) & {
   dispose: () => void
-  subscribeNotifications: (listener: (value: { method: string; params: unknown; atIso: string }) => void) => () => void
+  subscribeNotifications: (listener: (value: CodexBridgeNotification) => void) => () => void
+  getHealth: () => CodexAppServerHealth
+  getRealtimeRevision: () => number
 }
 
 type SharedBridgeState = {
@@ -7342,6 +7346,7 @@ type SharedBridgeState = {
   backendQueueProcessor: BackendQueueProcessor
   desktopStateCoordinator: DesktopStateCoordinator
   unsubscribeDesktopStateSource: () => void
+  unsubscribeProcessHealthSource: () => void
 }
 
 const SHARED_BRIDGE_KEY = '__codexRemoteSharedBridge__'
@@ -7361,6 +7366,7 @@ function getSharedBridgeState(): SharedBridgeState {
     existing.backendQueueProcessor?.dispose()
     existing.terminalManager?.dispose()
     existing.unsubscribeDesktopStateSource?.()
+    existing.unsubscribeProcessHealthSource?.()
     existing.desktopStateCoordinator?.stop()
   }
 
@@ -7371,6 +7377,9 @@ function getSharedBridgeState(): SharedBridgeState {
   const unsubscribeDesktopStateSource = appServer.onNotification((notification) => {
     desktopStateCoordinator.noteNativeNotification(notification)
   })
+  const unsubscribeProcessHealthSource = appServer.onHealthChange((health) => {
+    desktopStateCoordinator.noteProcessHealth(health.state)
+  })
   desktopStateCoordinator.start()
   const created: SharedBridgeState = {
     version: SHARED_BRIDGE_VERSION,
@@ -7380,6 +7389,7 @@ function getSharedBridgeState(): SharedBridgeState {
     backendQueueProcessor,
     desktopStateCoordinator,
     unsubscribeDesktopStateSource,
+    unsubscribeProcessHealthSource,
     telegramBridge: new TelegramThreadBridge(appServer, {
       onChatSeen: (chatId) => {
         void rememberTelegramChatId(chatId).catch(() => {})
@@ -9635,7 +9645,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           res.write(`data: ${JSON.stringify(notification)}\n\n`)
         })
 
-        res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`)
+        res.write(`event: ready\ndata: ${JSON.stringify({ ok: true, revision: desktopStateCoordinator.getRevision() })}\n\n`)
         const keepAlive = setInterval(() => {
           res.write(': ping\n\n')
         }, 15000)
@@ -9669,7 +9679,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     appServer.dispose()
   }
   middleware.subscribeNotifications = (
-    listener: (value: { method: string; params: unknown; atIso: string }) => void,
+    listener: (value: CodexBridgeNotification) => void,
   ) => {
     const unsubscribeAppServer = appServer.onNotification((notification: { method: string; params: unknown }) => {
       listener({
@@ -9684,12 +9694,22 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
       })
     })
     const unsubscribeDesktopState = desktopStateCoordinator.subscribe(listener)
+    const unsubscribeHealth = appServer.onHealthChange((health) => {
+      listener({
+        method: 'codex-ui/app-server-health',
+        params: health,
+        atIso: new Date().toISOString(),
+      })
+    })
     return () => {
       unsubscribeAppServer()
       unsubscribeTerminal()
       unsubscribeDesktopState()
+      unsubscribeHealth()
     }
   }
+  middleware.getHealth = () => appServer.getHealth()
+  middleware.getRealtimeRevision = () => desktopStateCoordinator.getRevision()
 
   return middleware
 }

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync, watch as watchFs } from 'node:fs'
 import { join } from 'node:path'
 import type {
+  CodexProcessState,
   CodexUiInvalidation,
   CodexUiInvalidationReason,
   CodexUiInvalidationScope,
@@ -113,6 +114,7 @@ export class DesktopStateCoordinator {
   private lastFingerprint = ''
   private revision = 0
   private started = false
+  private lastProcessState: CodexProcessState | null = null
 
   constructor(dependencies: DesktopStateCoordinatorDependencies) {
     this.codexHome = dependencies.codexHome
@@ -191,6 +193,12 @@ export class DesktopStateCoordinator {
     if (scopes.length === 0) return
     const threadId = extractThreadId(notification.params)
     this.queueInvalidation(scopes, 'app-server', threadId ? [threadId] : [])
+  }
+
+  noteProcessHealth(state: CodexProcessState): void {
+    const recovered = this.lastProcessState === 'restarting' && state === 'ready'
+    this.lastProcessState = state
+    this.queueInvalidation(recovered ? ['health', 'threads'] : ['health'], recovered ? 'restart' : 'app-server')
   }
 
   getRevision(): number {

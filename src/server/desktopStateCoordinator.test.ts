@@ -140,4 +140,20 @@ describe('DesktopStateCoordinator', () => {
     expect(harness.closed).toHaveLength(3)
     expect(harness.delays()).toEqual([])
   })
+
+  it('invalidates threads when the managed process recovers', () => {
+    const harness = createHarness()
+    const coordinator = new DesktopStateCoordinator({ codexHome: 'C:\\Codex', ...harness.dependencies })
+    const events: CodexUiInvalidation[] = []
+    coordinator.subscribe((event) => events.push(event))
+    coordinator.start()
+
+    coordinator.noteProcessHealth('restarting')
+    harness.runDelay(250)
+    coordinator.noteProcessHealth('ready')
+    harness.runDelay(250)
+
+    expect(events[0]?.params).toEqual({ scopes: ['health'], reason: 'app-server', revision: 1 })
+    expect(events[1]?.params).toEqual({ scopes: ['health', 'threads'], reason: 'restart', revision: 2 })
+  })
 })

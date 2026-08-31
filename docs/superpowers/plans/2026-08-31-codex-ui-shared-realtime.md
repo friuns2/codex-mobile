@@ -395,7 +395,7 @@ git commit -m "feat: observe shared Codex desktop state"
 - Consumes: `CodexAppServerHealth`, `CodexUiInvalidation`, coordinator revision, and existing password middleware.
 - Produces: authenticated `GET /codex-api/health`, WebSocket/SSE `ready` payload `{ ok: true, revision }`, and one shared event fanout.
 
-- [ ] **Step 1: Write HTTP/WebSocket contract tests**
+- [x] **Step 1: Write HTTP/WebSocket contract tests**
 
 ```ts
 it('protects health with the shared password', async () => {
@@ -423,13 +423,13 @@ it('includes current revision in ready', async () => {
 
 Define `startTestServer(instance)` in the test with Node's `createServer`, `listen(0, '127.0.0.1')`, and a Promise wrapper around `http.request`; its returned `close()` calls both HTTP close and `instance.dispose()`. Use the `ws` client already in dependencies for the ready assertion; do not add Supertest.
 
-- [ ] **Step 2: Run the server test and confirm interface failures**
+- [x] **Step 2: Run the server test and confirm interface failures**
 
 Run: `pnpm exec vitest run src/server/httpServer.test.ts`
 
 Expected: FAIL because bridge injection, health, and revision interfaces do not exist.
 
-- [ ] **Step 3: Add bridge dependency injection and health methods**
+- [x] **Step 3: Add bridge dependency injection and health methods**
 
 Extend `ServerOptions` with an internal optional `bridge` for tests. Extend `CodexBridgeMiddleware`:
 
@@ -442,11 +442,11 @@ Handle `GET /codex-api/health` inside the authenticated bridge route and return 
 
 Subscribe to `CodexProcessManager` health changes and fan them out as `codex-ui/app-server-health` notifications. A transition back to `ready` also publishes one `threads` invalidation with reason `restart`.
 
-- [ ] **Step 4: Make WebSocket attachment disposable**
+- [x] **Step 4: Make WebSocket attachment disposable**
 
 Track the upgrade handler and `WebSocketServer`. `ServerInstance.dispose()` unsubscribes listeners, closes client sockets, closes the WebSocket server, disposes the bridge, and is idempotent. Both WebSocket and SSE ready messages include the current revision.
 
-- [ ] **Step 5: Run server and auth tests**
+- [x] **Step 5: Run server and auth tests**
 
 Run:
 
@@ -456,7 +456,7 @@ pnpm exec vitest run src/server/httpServer.test.ts src/server/codexAppServerBrid
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```text
 git add src/realtimeProtocol.ts src/server/codexAppServerBridge.ts src/server/httpServer.ts src/server/httpServer.test.ts

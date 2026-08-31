@@ -4,7 +4,7 @@ import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import { existsSync } from 'node:fs'
 import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
-import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
+import { createCodexBridgeMiddleware, type CodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
 import { createDirectoryListingHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from './localBrowseUi.js'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -15,6 +15,7 @@ const spaEntryFile = join(distDir, 'index.html')
 
 export type ServerOptions = {
   password?: string
+  bridge?: CodexBridgeMiddleware
 }
 
 export type ServerInstance = {
@@ -74,18 +75,27 @@ function readWildcardPathParam(value: unknown): string {
 
 export function createServer(options: ServerOptions = {}): ServerInstance {
   const app = express()
-  const bridge = createCodexBridgeMiddleware()
+  const bridge = options.bridge ?? createCodexBridgeMiddleware()
   const authSession = options.password ? createAuthSession(options.password) : null
+  let attachedServer: HttpServer | null = null
+  let attachedWebSocketServer: WebSocketServer | null = null
+  let upgradeHandler: ((req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => void) | null = null
+  let disposed = false
 
   // 1. Auth middleware (if password is set)
   if (authSession) {
     app.use(authSession.middleware)
   }
 
-  // 2. Bridge middleware for /codex-api/*
+  // 2. Managed app-server health uses the same authorization boundary.
+  app.get('/codex-api/health', (_req, res) => {
+    res.status(200).json({ data: bridge.getHealth() })
+  })
+
+  // 3. Bridge middleware for /codex-api/*
   app.use(bridge)
 
-  // 3. Serve local images referenced in markdown (desktop parity for absolute image paths)
+  // 4. Serve local images referenced in markdown (desktop parity for absolute image paths)
   app.get('/codex-local-image', (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const localPath = normalizeLocalImagePath(rawPath)
@@ -251,11 +261,29 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
 
   return {
     app,
-    dispose: () => bridge.dispose(),
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      if (attachedServer && upgradeHandler) {
+        attachedServer.off('upgrade', upgradeHandler)
+      }
+      if (attachedWebSocketServer) {
+        for (const client of attachedWebSocketServer.clients) client.terminate()
+        attachedWebSocketServer.close()
+      }
+      attachedServer = null
+      attachedWebSocketServer = null
+      upgradeHandler = null
+      bridge.dispose()
+    },
     attachWebSocket: (server: HttpServer) => {
+      if (disposed) throw new Error('Cannot attach websocket after server disposal')
+      if (attachedWebSocketServer) return
       const wss = new WebSocketServer({ noServer: true })
+      attachedServer = server
+      attachedWebSocketServer = wss
 
-      server.on('upgrade', (req: IncomingMessage, socket, head) => {
+      upgradeHandler = (req: IncomingMessage, socket, head) => {
         const url = new URL(req.url ?? '', 'http://localhost')
         if (url.pathname !== '/codex-api/ws') {
           return
@@ -270,10 +298,15 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
         wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
           wss.emit('connection', ws, req)
         })
-      })
+      }
+      server.on('upgrade', upgradeHandler)
 
       wss.on('connection', (ws: WebSocket) => {
-        ws.send(JSON.stringify({ method: 'ready', params: { ok: true }, atIso: new Date().toISOString() }))
+        ws.send(JSON.stringify({
+          method: 'ready',
+          params: { ok: true, revision: bridge.getRealtimeRevision() },
+          atIso: new Date().toISOString(),
+        }))
         const unsubscribe = bridge.subscribeNotifications((notification) => {
           if (ws.readyState !== 1) return
           ws.send(JSON.stringify(notification))
