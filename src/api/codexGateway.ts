@@ -20,7 +20,8 @@ import type {
   ThreadStartResponse,
   Turn,
 } from './appServerDtos'
-import { extractErrorMessage, normalizeCodexApiError } from './codexErrors'
+import { CodexApiError, extractErrorMessage, normalizeCodexApiError } from './codexErrors'
+import type { CodexAppServerHealth } from '../realtimeProtocol'
 import {
   readActiveTurnIdFromResponse,
   normalizeThreadGroupsV2,
@@ -425,6 +426,27 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+export async function getAppServerHealth(): Promise<CodexAppServerHealth> {
+  const response = await fetch('/codex-api/health')
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `App-server health failed with HTTP ${String(response.status)}`),
+      { code: 'http_error', status: response.status },
+    )
+  }
+  const data = asRecord(asRecord(payload)?.data)
+  if (!data) {
+    throw new CodexApiError('App-server health returned malformed data', { code: 'invalid_response' })
+  }
+  return data as CodexAppServerHealth
 }
 
 function readString(value: unknown): string | null {

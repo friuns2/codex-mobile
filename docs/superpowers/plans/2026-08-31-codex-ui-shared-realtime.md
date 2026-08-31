@@ -477,7 +477,7 @@ git commit -m "feat: expose authenticated realtime host health"
 - Consumes: `codex-ui/state-invalidated`, `codex-ui/app-server-health`, and `ready.params.revision`.
 - Produces: `parseCodexUiInvalidation()`, `getAppServerHealth()`, reactive `appServerHealth`, and deduplicated forced thread refreshes.
 
-- [ ] **Step 1: Write parser and composable regression tests**
+- [x] **Step 1: Write parser and composable regression tests**
 
 ```ts
 expect(parseCodexUiInvalidation({
@@ -489,7 +489,7 @@ expect(parseCodexUiInvalidation({
 
 In `useDesktopState.test.ts`, emit two revision-3 invalidations plus one native `turn/completed`; assert one forced first-page list request and one selected-thread read. Reject the refresh and assert existing `projectGroups` and cached messages remain unchanged. Emit `ready` with revision 8 after revision 3 and assert one recovery refresh.
 
-- [ ] **Step 2: Run focused client tests and confirm failures**
+- [x] **Step 2: Run focused client tests and confirm failures**
 
 Run:
 
@@ -499,7 +499,7 @@ pnpm exec vitest run src/api/realtimeInvalidation.test.ts src/composables/useDes
 
 Expected: parser module is absent and new invalidation cases fail.
 
-- [ ] **Step 3: Implement strict invalidation parsing and health fetching**
+- [x] **Step 3: Implement strict invalidation parsing and health fetching**
 
 Accept only known scopes, reasons, finite positive revisions, and non-empty string thread IDs. Unknown notification methods return `null`. Add:
 
@@ -512,17 +512,17 @@ export async function getAppServerHealth(): Promise<CodexAppServerHealth> {
 }
 ```
 
-- [ ] **Step 4: Queue selective refreshes in the composable**
+- [x] **Step 4: Queue selective refreshes in the composable**
 
 Maintain `lastRealtimeRevision`. Ignore duplicate/lower revisions. A revision gap or `ready` after a disconnected stream queues a forced list refresh. `threads` queues the list plus only an open affected thread; `projects` queues the list/root state; `workspace` queues the selected project status path without scanning all projects; `health` refreshes health.
 
 Reuse the existing `loadThreadsPromise`, `isPolling`, `pendingThreadsRefresh`, and trailing timer. Do not introduce a second refresh scheduler.
 
-- [ ] **Step 5: Preserve cached thread groups on list failure**
+- [x] **Step 5: Preserve cached thread groups on list failure**
 
 Keep `loadedThreadListGroups`, `projectGroups`, `hasLoadedThreads`, and selected cached messages unchanged when a forced list request throws. Set health/error state without applying an empty page.
 
-- [ ] **Step 6: Run focused and full composable tests**
+- [x] **Step 6: Run focused and full composable tests**
 
 Run:
 
@@ -532,7 +532,7 @@ pnpm exec vitest run src/api/realtimeInvalidation.test.ts src/api/codexGateway.t
 
 Expected: all selected tests pass with no duplicate request assertions.
 
-- [ ] **Step 7: Commit Task 5**
+- [x] **Step 7: Commit Task 5**
 
 ```text
 git add src/api/realtimeInvalidation.ts src/api/realtimeInvalidation.test.ts src/api/codexRpcClient.ts src/api/codexGateway.ts src/composables/useDesktopState.ts src/composables/useDesktopState.test.ts

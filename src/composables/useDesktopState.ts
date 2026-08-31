@@ -7,6 +7,7 @@ import {
   getAccountRateLimits,
   renameThread,
   getAvailableModelIds,
+  getAppServerHealth,
   getCurrentModelConfig,
   getPendingServerRequests,
   getSkillsList,
@@ -38,7 +39,9 @@ import {
   type WorkspaceRootsState,
 } from '../api/codexGateway'
 import { CodexApiError } from '../api/codexErrors'
+import { parseCodexUiInvalidation } from '../api/realtimeInvalidation'
 import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
+import type { CodexAppServerHealth } from '../realtimeProtocol'
 import type {
   CollaborationModeKind,
   CollaborationModeOption,
@@ -1477,6 +1480,7 @@ export function useDesktopState() {
   const isRollingBack = ref(false)
 
   const error = ref('')
+  const appServerHealth = ref<CodexAppServerHealth | null>(null)
   const isPolling = ref(false)
   const hasLoadedThreads = ref(false)
 
@@ -1524,6 +1528,7 @@ export function useDesktopState() {
   let pendingThreadsRefresh = false
   let pendingThreadsRefreshForce = false
   const pendingThreadMessageRefresh = new Set<string>()
+  let lastRealtimeRevision = 0
   const lastMessageLoadAtByThreadId = new Map<string, number>()
   const lastMessageLoadFailureAtByThreadId = new Map<string, number>()
   let threadListNextCursor: string | null = null
@@ -3994,6 +3999,14 @@ export function useDesktopState() {
 
   }
 
+  function scheduleEventDrivenSync(): void {
+    if (eventSyncTimer !== null || typeof window === 'undefined') return
+    eventSyncTimer = window.setTimeout(() => {
+      eventSyncTimer = null
+      void syncFromNotifications()
+    }, EVENT_SYNC_DEBOUNCE_MS)
+  }
+
   function queueEventDrivenSync(notification: RpcNotification): void {
     if (notification.method === 'thread/tokenUsage/updated') return
 
@@ -4018,11 +4031,70 @@ export function useDesktopState() {
       pendingThreadsRefreshForce = true
     }
 
-    if (eventSyncTimer !== null || typeof window === 'undefined') return
-    eventSyncTimer = window.setTimeout(() => {
-      eventSyncTimer = null
-      void syncFromNotifications()
-    }, EVENT_SYNC_DEBOUNCE_MS)
+    scheduleEventDrivenSync()
+  }
+
+  function readReadyRevision(params: unknown): number | null {
+    const revision = asRecord(params)?.revision
+    return typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0
+      ? revision
+      : null
+  }
+
+  function readAppServerHealth(params: unknown): CodexAppServerHealth | null {
+    const health = asRecord(params)
+    const state = health?.state
+    if (
+      state !== 'stopped' &&
+      state !== 'starting' &&
+      state !== 'ready' &&
+      state !== 'restarting' &&
+      state !== 'failed'
+    ) {
+      return null
+    }
+    return health as CodexAppServerHealth
+  }
+
+  async function refreshAppServerHealth(): Promise<void> {
+    try {
+      appServerHealth.value = await getAppServerHealth()
+    } catch {
+      // Retain the last known state while the managed app-server or host is reconnecting.
+    }
+  }
+
+  function queueCodexUiInvalidation(notification: RpcNotification): boolean {
+    const invalidation = parseCodexUiInvalidation(notification)
+    if (!invalidation) return false
+    if (invalidation.revision <= lastRealtimeRevision) return true
+
+    const hasRevisionGap = invalidation.revision > lastRealtimeRevision + 1
+    lastRealtimeRevision = invalidation.revision
+    const scopes = new Set(invalidation.scopes)
+
+    if (hasRevisionGap || scopes.has('threads') || scopes.has('projects')) {
+      pendingThreadsRefresh = true
+      pendingThreadsRefreshForce = true
+    }
+
+    const activeThreadId = selectedThreadId.value
+    if (
+      activeThreadId &&
+      invalidation.threadIds?.includes(activeThreadId) &&
+      (scopes.has('threads') || scopes.has('workspace'))
+    ) {
+      pendingThreadMessageRefresh.add(activeThreadId)
+    }
+
+    if (scopes.has('health')) {
+      void refreshAppServerHealth()
+    }
+
+    if (pendingThreadsRefresh || pendingThreadMessageRefresh.size > 0) {
+      scheduleEventDrivenSync()
+    }
+    return true
   }
 
   async function hydrateWorkspaceRootsStateIfNeeded(
@@ -4359,13 +4431,13 @@ export function useDesktopState() {
     await loadThreadsPromise
   }
 
-  async function loadMessages(threadId: string, options: { silent?: boolean } = {}) {
+  async function loadMessages(threadId: string, options: { silent?: boolean; force?: boolean } = {}) {
     if (!threadId) {
       return
     }
     const recentLoadFailure =
       Date.now() - (lastMessageLoadFailureAtByThreadId.get(threadId) ?? 0) < RECENT_THREAD_MESSAGE_LOAD_REUSE_MS
-    if (turnErrorByThreadId.value[threadId]?.transient && (options.silent === true || recentLoadFailure)) {
+    if (options.force !== true && turnErrorByThreadId.value[threadId]?.transient && (options.silent === true || recentLoadFailure)) {
       return
     }
 
@@ -4388,6 +4460,7 @@ export function useDesktopState() {
       const loadedRecently =
         Date.now() - (lastMessageLoadAtByThreadId.get(threadId) ?? 0) < RECENT_THREAD_MESSAGE_LOAD_REUSE_MS
       const canReuseLoadedMessages =
+        options.force !== true &&
         alreadyLoaded &&
         (
           loadedRecently ||
@@ -5483,10 +5556,12 @@ export function useDesktopState() {
         (shouldRefreshThreads && loadedMessagesByThreadId.value[activeThreadId] !== true)
 
       if (shouldRefreshActiveThread) {
-        await loadMessages(activeThreadId, { silent: true })
+        await loadMessages(activeThreadId, { silent: true, force: isActiveDirty })
       }
-    } catch {
-      // Keep UI stable on transient event sync failures.
+    } catch (syncError) {
+      if (shouldRefreshThreads) {
+        error.value = syncError instanceof Error ? syncError.message : 'Failed to refresh shared Codex state'
+      }
     } finally {
       isPolling.value = false
 
@@ -5503,12 +5578,13 @@ export function useDesktopState() {
     }
   }
 
-  async function recoverBridgeState(): Promise<void> {
+  async function recoverBridgeState(options: { forceThreads?: boolean } = {}): Promise<void> {
     await loadPendingServerRequestsFromBridge()
-    pendingThreadsRefresh = !hasLoadedThreads.value
+    pendingThreadsRefresh = pendingThreadsRefresh || options.forceThreads === true || !hasLoadedThreads.value
+    pendingThreadsRefreshForce = pendingThreadsRefreshForce || options.forceThreads === true
     if (
       selectedThreadId.value &&
-      loadedMessagesByThreadId.value[selectedThreadId.value] !== true
+      (options.forceThreads === true || loadedMessagesByThreadId.value[selectedThreadId.value] !== true)
     ) {
       pendingThreadMessageRefresh.add(selectedThreadId.value)
     }
@@ -5520,12 +5596,24 @@ export function useDesktopState() {
 
     if (stopNotificationStream) return
     void loadPendingServerRequestsFromBridge()
+    void refreshAppServerHealth()
     stopNotificationStream = subscribeCodexNotifications((notification) => {
       if (notification.method === 'ready') {
         clearAllTransientTurnErrors()
-        void recoverBridgeState()
+        const revision = readReadyRevision(notification.params)
+        const forceThreads = revision !== null && revision > lastRealtimeRevision
+        if (revision !== null) {
+          lastRealtimeRevision = Math.max(lastRealtimeRevision, revision)
+        }
+        void recoverBridgeState({ forceThreads })
         return
       }
+      if (notification.method === 'codex-ui/app-server-health') {
+        const health = readAppServerHealth(notification.params)
+        if (health) appServerHealth.value = health
+        return
+      }
+      if (queueCodexUiInvalidation(notification)) return
       applyRealtimeUpdates(notification)
       queueEventDrivenSync(notification)
     })
@@ -5564,6 +5652,7 @@ export function useDesktopState() {
     }
 
     pendingThreadsRefresh = false
+    pendingThreadsRefreshForce = false
     pendingThreadMessageRefresh.clear()
     pendingTurnStartsById.clear()
     if (eventSyncTimer !== null && typeof window !== 'undefined') {
@@ -5679,6 +5768,7 @@ export function useDesktopState() {
     selectedReasoningEffort,
     selectedSpeedMode,
     codexCliMissingError,
+    appServerHealth,
     installedSkills,
     accountRateLimitSnapshots,
     messages,

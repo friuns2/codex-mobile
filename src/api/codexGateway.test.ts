@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { getAppServerHealth, getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -203,6 +203,33 @@ describe('getThreadDetail', () => {
     await expect(getThreadDetail('legacy-thread')).resolves.toMatchObject({
       modelProvider: 'opencode_zen',
     })
+  })
+})
+
+describe('getAppServerHealth', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads the authenticated managed process health endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('/codex-api/health')
+      return new Response(JSON.stringify({
+        data: {
+          state: 'restarting',
+          commandSource: 'path',
+          codexHome: 'C:\\Users\\me\\.codex',
+          startedAtIso: null,
+          lastReadyAtIso: null,
+          restartAttempts: 2,
+          lastExitCode: 1,
+          lastError: 'exited',
+          stderr: [],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await expect(getAppServerHealth()).resolves.toMatchObject({ state: 'restarting', restartAttempts: 2 })
   })
 })
 

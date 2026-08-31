@@ -18,6 +18,7 @@ const gatewayMocks = vi.hoisted(() => ({
   getAvailableCollaborationModes: vi.fn(),
   getAvailableModelIds: vi.fn(),
   getCurrentModelConfig: vi.fn(),
+  getAppServerHealth: vi.fn(),
   getPendingServerRequests: vi.fn(),
   getSkillsList: vi.fn(),
   getThreadDetail: vi.fn(),
@@ -84,7 +85,30 @@ beforeEach(() => {
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
+  gatewayMocks.getAppServerHealth.mockResolvedValue({
+    state: 'ready',
+    commandSource: 'path',
+    codexHome: 'C:\\Users\\me\\.codex',
+    startedAtIso: null,
+    lastReadyAtIso: null,
+    restartAttempts: 0,
+    lastExitCode: null,
+    lastError: null,
+    stderr: [],
+  })
 })
+
+function installImmediateTimers(): void {
+  installTestWindow()
+  vi.mocked(window.setTimeout).mockImplementation(((callback: TimerHandler) => {
+    if (typeof callback === 'function') void Promise.resolve().then(() => callback())
+    return 1
+  }) as typeof window.setTimeout)
+}
+
+async function flushRealtimeTasks(): Promise<void> {
+  for (let index = 0; index < 10; index += 1) await Promise.resolve()
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -615,6 +639,173 @@ describe('startup request deduplication', () => {
     } finally {
       nowSpy.mockRestore()
     }
+  })
+
+  it('coalesces duplicate invalidations and native completion into one targeted refresh', async () => {
+    installImmediateTimers()
+    let notificationHandler: ((notification: { method: string; params?: unknown; atIso?: string }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'Project', threads: [thread('thread-1', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [{ id: 'message-1', role: 'assistant', text: 'Existing message', messageType: 'agentMessage' }],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-1')
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    await state.loadMessages('thread-1')
+    gatewayMocks.getThreadGroupsPage.mockClear()
+    gatewayMocks.getThreadDetail.mockClear()
+
+    state.startPolling()
+    expect(notificationHandler).toBeDefined()
+    const invalidation = {
+      method: 'codex-ui/state-invalidated',
+      params: {
+        scopes: ['threads'],
+        threadIds: ['thread-1'],
+        reason: 'filesystem',
+        revision: 3,
+      },
+      atIso: '2026-08-31T00:00:00.000Z',
+    }
+    notificationHandler!(invalidation)
+    notificationHandler!(invalidation)
+    notificationHandler!({
+      method: 'item/completed',
+      params: { threadId: 'thread-1', item: { id: 'item-1', type: 'reasoning' } },
+      atIso: '2026-08-31T00:00:00.100Z',
+    })
+    await flushRealtimeTasks()
+
+    expect(gatewayMocks.getThreadGroupsPage).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledTimes(1)
+  })
+
+  it('forces one recovery refresh when ready reports a newer revision', async () => {
+    installImmediateTimers()
+    let notificationHandler: ((notification: { method: string; params?: unknown; atIso?: string }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'Project', threads: [thread('thread-1', '/tmp/project')] }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    state.startPolling()
+    expect(notificationHandler).toBeDefined()
+
+    notificationHandler!({
+      method: 'codex-ui/state-invalidated',
+      params: { scopes: ['health'], reason: 'restart', revision: 3 },
+      atIso: '2026-08-31T00:00:00.000Z',
+    })
+    await flushRealtimeTasks()
+    gatewayMocks.getThreadGroupsPage.mockClear()
+
+    notificationHandler!({
+      method: 'ready',
+      params: { ok: true, revision: 8 },
+      atIso: '2026-08-31T00:00:01.000Z',
+    })
+    await flushRealtimeTasks()
+
+    expect(gatewayMocks.getThreadGroupsPage).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps cached projects and messages when a forced realtime refresh fails', async () => {
+    installImmediateTimers()
+    let notificationHandler: ((notification: { method: string; params?: unknown; atIso?: string }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'Project', threads: [thread('thread-1', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [{ id: 'message-1', role: 'assistant', text: 'Keep me', messageType: 'agentMessage' }],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-1')
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    await state.loadMessages('thread-1')
+    const cachedProjects = JSON.parse(JSON.stringify(state.projectGroups.value))
+    const cachedMessages = JSON.parse(JSON.stringify(state.messages.value))
+    gatewayMocks.getThreadGroupsPage.mockReset().mockRejectedValue(new Error('temporary app-server failure'))
+
+    state.startPolling()
+    expect(notificationHandler).toBeDefined()
+    notificationHandler!({
+      method: 'codex-ui/state-invalidated',
+      params: {
+        scopes: ['threads'],
+        threadIds: ['thread-1'],
+        reason: 'restart',
+        revision: 1,
+      },
+      atIso: '2026-08-31T00:00:00.000Z',
+    })
+    await flushRealtimeTasks()
+
+    expect(gatewayMocks.getThreadGroupsPage).toHaveBeenCalledTimes(1)
+    expect(state.projectGroups.value).toEqual(cachedProjects)
+    expect(state.messages.value).toEqual(cachedMessages)
+    expect(state.error.value).toContain('temporary app-server failure')
+  })
+
+  it('exposes initial and pushed app-server health', async () => {
+    installImmediateTimers()
+    let notificationHandler: ((notification: { method: string; params?: unknown; atIso?: string }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+
+    const state = useDesktopState()
+    state.startPolling()
+    await flushRealtimeTasks()
+    expect(state.appServerHealth.value?.state).toBe('ready')
+
+    notificationHandler!({
+      method: 'codex-ui/app-server-health',
+      params: {
+        state: 'restarting',
+        commandSource: 'path',
+        codexHome: 'C:\\Users\\me\\.codex',
+        startedAtIso: null,
+        lastReadyAtIso: null,
+        restartAttempts: 1,
+        lastExitCode: 1,
+        lastError: 'exited',
+        stderr: [],
+      },
+      atIso: '2026-08-31T00:00:01.000Z',
+    })
+
+    expect(state.appServerHealth.value?.state).toBe('restarting')
   })
 })
 
