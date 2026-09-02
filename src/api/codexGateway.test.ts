@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { cancelCodexLogin, getAvailableModelIds, getCodexLoginStatus, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startCodexLogin, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -27,6 +27,60 @@ function mockRpcFetch(): { requests: Array<{ method: string, params: Record<stri
 
   return { requests }
 }
+
+describe('Codex device login API', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('starts device auth and normalizes automatic completion status', async () => {
+    const requests: Array<{ url: string; method: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      requests.push({ url, method: init?.method ?? 'GET' })
+      if (url.endsWith('/login/start')) {
+        return new Response(JSON.stringify({
+          data: {
+            verificationUrl: 'https://auth.openai.com/codex/device',
+            userCode: 'ABCD-12345',
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({
+        data: {
+          state: 'complete',
+          activeAccountId: 'account-1',
+          activeStorageId: 'storage-1',
+          accounts: [{ accountId: 'account-1', storageId: 'storage-1' }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await expect(startCodexLogin()).resolves.toEqual({
+      verificationUrl: 'https://auth.openai.com/codex/device',
+      userCode: 'ABCD-12345',
+    })
+    await expect(getCodexLoginStatus()).resolves.toMatchObject({
+      state: 'complete',
+      activeAccountId: 'account-1',
+      activeStorageId: 'storage-1',
+    })
+    expect(requests).toEqual([
+      { url: '/codex-api/accounts/login/start', method: 'POST' },
+      { url: '/codex-api/accounts/login/status', method: 'GET' },
+    ])
+  })
+
+  it('cancels an abandoned device login', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(cancelCodexLogin()).resolves.toBeUndefined()
+    expect(fetch).toHaveBeenCalledWith('/codex-api/accounts/login/cancel', { method: 'POST' })
+  })
+})
 
 describe('startThreadTurn collaboration mode payloads', () => {
   afterEach(() => {

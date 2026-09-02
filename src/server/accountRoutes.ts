@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
+import { extractCodexDeviceAuthDetails, stripTerminalFormatting } from './codexDeviceAuth.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
 
 type AppServerLike = {
@@ -92,18 +93,21 @@ const ACCOUNT_QUOTA_REFRESH_TTL_MS = 5 * 60 * 1000
 const ACCOUNT_QUOTA_LOADING_STALE_MS = 2 * 60 * 1000
 const ACCOUNT_INSPECTION_TIMEOUT_MS = 25 * 1000
 const LOGIN_URL_TIMEOUT_MS = 15 * 1000
-const LOGIN_CALLBACK_TIMEOUT_MS = 20 * 1000
-const LOGIN_AUTH_FILE_TIMEOUT_MS = 10 * 1000
+const LOGIN_OUTPUT_LIMIT = 16 * 1024
 
 let backgroundRefreshPromise: Promise<void> | null = null
 let activeLogin: {
   proc: ChildProcessWithoutNullStreams
-  loginUrl: string | null
+  verificationUrl: string | null
+  userCode: string | null
   output: string
   exited: boolean
   exitCode: number | null
   exitSignal: NodeJS.Signals | null
   exitPromise: Promise<void>
+  completionPromise: Promise<AccountsListResult> | null
+  completionResult: AccountsListResult | null
+  completionError: string | null
 } | null = null
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -978,25 +982,71 @@ async function importAccountFromAuthPath(path: string): Promise<{
   }
 }
 
-function extractLoginUrl(output: string): string | null {
-  const match = output.match(/https:\/\/auth\.openai\.com\/oauth\/authorize\?\S+/u)
-  return match?.[0] ?? null
+type AccountsListResult = {
+  activeAccountId: string | null
+  activeStorageId: string | null
+  importedAccountId: string
+  importedStorageId: string
+  accounts: Array<StoredAccountEntry & { isActive: boolean }>
 }
 
-function isLocalCallbackUrl(rawUrl: string): boolean {
-  try {
-    const parsed = new URL(rawUrl)
-    if (parsed.protocol !== 'http:') return false
-    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]' || parsed.hostname === '::1'
-  } catch {
-    return false
+function toAccountsListResult(
+  state: StoredAccountsState,
+  importedAccountId: string,
+  importedStorageId: string,
+): AccountsListResult {
+  return {
+    activeAccountId: importedAccountId,
+    activeStorageId: importedStorageId,
+    importedAccountId,
+    importedStorageId,
+    accounts: sortAccounts(state.accounts, importedStorageId).map((entry) => toPublicAccountEntry(entry, importedStorageId)),
   }
 }
 
-async function waitForLoginUrl(): Promise<string> {
-  if (activeLogin?.loginUrl) return activeLogin.loginUrl
+async function activateImportedAccount(
+  appServer: AppServerLike,
+  imported: Awaited<ReturnType<typeof importAccountFromAuthPath>>,
+): Promise<AccountsListResult> {
+  appServer.dispose()
+  const inspection = await validateSwitchedAccount(appServer)
+  const state = await readStoredAccountsState()
+  const { importedAccountId, importedStorageId } = imported
+  const target = state.accounts.find((entry) => entry.storageId === importedStorageId) ?? null
+  if (!target) throw new Error('account_not_found')
 
-  return await new Promise<string>((resolve, reject) => {
+  const nextEntry: StoredAccountEntry = {
+    ...target,
+    email: inspection.metadata.email ?? target.email,
+    planType: inspection.metadata.planType ?? target.planType,
+    lastActivatedAtIso: new Date().toISOString(),
+    quotaSnapshot: inspection.quotaSnapshot ?? target.quotaSnapshot,
+    quotaUpdatedAtIso: new Date().toISOString(),
+    quotaStatus: 'ready',
+    quotaError: null,
+    unavailableReason: null,
+  }
+  const nextState = withUpsertedAccount({
+    activeAccountId: importedAccountId,
+    activeStorageId: importedStorageId,
+    accounts: state.accounts,
+  }, nextEntry)
+  await writeStoredAccountsState(nextState)
+
+  const backgroundState = await scheduleAccountsBackgroundRefresh({
+    force: true,
+    prioritizeStorageId: importedStorageId,
+    storageIds: nextState.accounts.filter((entry) => entry.storageId !== importedStorageId).map((entry) => entry.storageId),
+  })
+  return toAccountsListResult(backgroundState, importedAccountId, importedStorageId)
+}
+
+async function waitForLoginDetails(): Promise<{ verificationUrl: string; userCode: string }> {
+  if (activeLogin?.verificationUrl && activeLogin.userCode) {
+    return { verificationUrl: activeLogin.verificationUrl, userCode: activeLogin.userCode }
+  }
+
+  return await new Promise<{ verificationUrl: string; userCode: string }>((resolve, reject) => {
     const startedAt = Date.now()
     const timer = setInterval(() => {
       if (!activeLogin) {
@@ -1004,30 +1054,31 @@ async function waitForLoginUrl(): Promise<string> {
         reject(new Error('Login process is not running.'))
         return
       }
-      if (activeLogin.loginUrl) {
+      if (activeLogin.verificationUrl && activeLogin.userCode) {
         clearInterval(timer)
-        resolve(activeLogin.loginUrl)
+        resolve({ verificationUrl: activeLogin.verificationUrl, userCode: activeLogin.userCode })
         return
       }
       if (activeLogin.exited) {
         clearInterval(timer)
-        reject(new Error(activeLogin.output.trim() || 'codex login exited before returning a login URL.'))
+        reject(new Error(stripTerminalFormatting(activeLogin.output).trim() || 'codex login exited before returning a device code.'))
         return
       }
       if (Date.now() - startedAt > LOGIN_URL_TIMEOUT_MS) {
         clearInterval(timer)
-        reject(new Error('Timed out waiting for codex login URL.'))
+        reject(new Error('Timed out waiting for Codex device login.'))
       }
     }, 100)
   })
 }
 
-async function startCodexLogin(): Promise<string> {
+async function startCodexLogin(): Promise<{ verificationUrl: string; userCode: string }> {
   if (activeLogin && !activeLogin.exited) {
-    return await waitForLoginUrl()
+    return await waitForLoginDetails()
   }
 
-  const proc = spawn('codex', ['login'], {
+  activeLogin = null
+  const proc = spawn('codex', ['login', '--device-auth'], {
     env: process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -1035,11 +1086,15 @@ async function startCodexLogin(): Promise<string> {
 
   activeLogin = {
     proc,
-    loginUrl: null,
+    verificationUrl: null,
+    userCode: null,
     output: '',
     exited: false,
     exitCode: null,
     exitSignal: null,
+    completionPromise: null,
+    completionResult: null,
+    completionError: null,
     exitPromise: new Promise<void>((resolve) => {
       proc.once('exit', (code, signal) => {
         if (activeLogin?.proc === proc) {
@@ -1054,8 +1109,10 @@ async function startCodexLogin(): Promise<string> {
 
   const appendOutput = (chunk: Buffer | string) => {
     if (!activeLogin || activeLogin.proc !== proc) return
-    activeLogin.output += chunk.toString()
-    activeLogin.loginUrl = activeLogin.loginUrl ?? extractLoginUrl(activeLogin.output)
+    activeLogin.output = `${activeLogin.output}${chunk.toString()}`.slice(-LOGIN_OUTPUT_LIMIT)
+    const details = extractCodexDeviceAuthDetails(activeLogin.output)
+    activeLogin.verificationUrl = activeLogin.verificationUrl ?? details?.verificationUrl ?? null
+    activeLogin.userCode = activeLogin.userCode ?? details?.userCode ?? null
   }
 
   proc.stdout.on('data', appendOutput)
@@ -1067,48 +1124,13 @@ async function startCodexLogin(): Promise<string> {
   })
 
   try {
-    return await waitForLoginUrl()
+    return await waitForLoginDetails()
   } catch (error) {
     if (activeLogin?.proc === proc && !activeLogin.exited) {
       proc.kill('SIGTERM')
     }
     activeLogin = null
     throw error
-  }
-}
-
-async function curlLoginCallback(callbackUrl: string): Promise<void> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), LOGIN_CALLBACK_TIMEOUT_MS)
-  try {
-    const response = await fetch(callbackUrl, {
-      redirect: 'manual',
-      signal: controller.signal,
-    })
-    if (response.status >= 400) {
-      throw new Error(`Login callback returned HTTP ${response.status}.`)
-    }
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-async function getActiveAuthMtimeMs(): Promise<number | null> {
-  try {
-    return (await stat(getActiveAuthPath())).mtimeMs
-  } catch {
-    return null
-  }
-}
-
-async function waitForAuthFileUpdate(previousMtimeMs: number | null): Promise<void> {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt <= LOGIN_AUTH_FILE_TIMEOUT_MS) {
-    const nextMtimeMs = await getActiveAuthMtimeMs()
-    if (nextMtimeMs !== null && (previousMtimeMs === null || nextMtimeMs > previousMtimeMs)) {
-      return
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250))
   }
 }
 
@@ -1156,49 +1178,7 @@ export async function handleAccountRoutes(
       const imported = await importAccountFromAuthPath(getActiveAuthPath())
 
       try {
-        appServer.dispose()
-        const inspection = await validateSwitchedAccount(appServer)
-        const state = await readStoredAccountsState()
-        const importedAccountId = imported.importedAccountId
-        const importedStorageId = imported.importedStorageId
-        const target = state.accounts.find((entry) => entry.storageId === importedStorageId) ?? null
-        if (!target) {
-          throw new Error('account_not_found')
-        }
-
-        const nextEntry: StoredAccountEntry = {
-          ...target,
-          email: inspection.metadata.email ?? target.email,
-          planType: inspection.metadata.planType ?? target.planType,
-          lastActivatedAtIso: new Date().toISOString(),
-          quotaSnapshot: inspection.quotaSnapshot ?? target.quotaSnapshot,
-          quotaUpdatedAtIso: new Date().toISOString(),
-          quotaStatus: 'ready',
-          quotaError: null,
-          unavailableReason: null,
-        }
-        const nextState = withUpsertedAccount({
-          activeAccountId: importedAccountId,
-          activeStorageId: importedStorageId,
-          accounts: state.accounts,
-        }, nextEntry)
-        await writeStoredAccountsState(nextState)
-
-        const backgroundState = await scheduleAccountsBackgroundRefresh({
-          force: true,
-          prioritizeStorageId: importedStorageId,
-          storageIds: nextState.accounts.filter((entry) => entry.storageId !== importedStorageId).map((entry) => entry.storageId),
-        })
-
-        setJson(res, 200, {
-          data: {
-            activeAccountId: importedAccountId,
-            activeStorageId: importedStorageId,
-            importedAccountId,
-            importedStorageId,
-            accounts: sortAccounts(backgroundState.accounts, importedStorageId).map((entry) => toPublicAccountEntry(entry, importedStorageId)),
-          },
-        })
+        setJson(res, 200, { data: await activateImportedAccount(appServer, imported) })
       } catch (error) {
         setJson(res, 502, {
           error: 'account_refresh_failed',
@@ -1218,12 +1198,10 @@ export async function handleAccountRoutes(
 
   if (req.method === 'POST' && url.pathname === '/codex-api/accounts/login/start') {
     try {
-      const loginUrl = await startCodexLogin()
+      const details = await startCodexLogin()
       setJson(res, 200, {
         ok: true,
-        data: {
-          loginUrl,
-        },
+        data: details,
       })
     } catch (error) {
       setJson(res, 500, {
@@ -1234,79 +1212,54 @@ export async function handleAccountRoutes(
     return true
   }
 
-  if (req.method === 'POST' && url.pathname === '/codex-api/accounts/login/complete') {
+  if (req.method === 'GET' && url.pathname === '/codex-api/accounts/login/status') {
+    const login = activeLogin
+    if (!login) {
+      setJson(res, 200, { data: { state: 'idle' } })
+      return true
+    }
+    if (!login.exited) {
+      setJson(res, 200, { data: { state: 'pending' } })
+      return true
+    }
+    if (login.completionResult) {
+      setJson(res, 200, { data: { state: 'complete', ...login.completionResult } })
+      return true
+    }
+    if (login.completionError) {
+      setJson(res, 200, { data: { state: 'error', message: login.completionError } })
+      return true
+    }
+    if (login.exitCode !== 0) {
+      const message = stripTerminalFormatting(login.output).trim()
+        || `Codex login exited with ${login.exitSignal ?? `code ${login.exitCode ?? 'unknown'}`}.`
+      login.completionError = message
+      setJson(res, 200, { data: { state: 'error', message } })
+      return true
+    }
+
     try {
-      const payload = await readJsonBody(req)
-      const callbackUrl = typeof payload?.callbackUrl === 'string' ? payload.callbackUrl.trim() : ''
-      if (!callbackUrl) {
-        setJson(res, 400, { error: 'missing_callback_url', message: 'Paste the localhost callback URL from the browser.' })
-        return true
-      }
-      if (!isLocalCallbackUrl(callbackUrl)) {
-        setJson(res, 400, { error: 'invalid_callback_url', message: 'The callback URL must use http://localhost or http://127.0.0.1.' })
-        return true
-      }
-      if (!activeLogin || activeLogin.exited) {
-        setJson(res, 409, { error: 'login_not_running', message: 'Start Codex login before submitting the callback URL.' })
-        return true
-      }
-
-      const previousAuthMtimeMs = await getActiveAuthMtimeMs()
-      await curlLoginCallback(callbackUrl)
-      await waitForAuthFileUpdate(previousAuthMtimeMs)
-
-      const imported = await importAccountFromAuthPath(getActiveAuthPath())
-      stopActiveLogin()
-      appServer.dispose()
-      const inspection = await validateSwitchedAccount(appServer)
-      const state = await readStoredAccountsState()
-      const importedAccountId = imported.importedAccountId
-      const importedStorageId = imported.importedStorageId
-      const target = state.accounts.find((entry) => entry.storageId === importedStorageId) ?? null
-      if (!target) {
-        throw new Error('account_not_found')
-      }
-
-      const nextEntry: StoredAccountEntry = {
-        ...target,
-        email: inspection.metadata.email ?? target.email,
-        planType: inspection.metadata.planType ?? target.planType,
-        lastActivatedAtIso: new Date().toISOString(),
-        quotaSnapshot: inspection.quotaSnapshot ?? target.quotaSnapshot,
-        quotaUpdatedAtIso: new Date().toISOString(),
-        quotaStatus: 'ready',
-        quotaError: null,
-        unavailableReason: null,
-      }
-      const nextState = withUpsertedAccount({
-        activeAccountId: importedAccountId,
-        activeStorageId: importedStorageId,
-        accounts: state.accounts,
-      }, nextEntry)
-      await writeStoredAccountsState(nextState)
-
-      const backgroundState = await scheduleAccountsBackgroundRefresh({
-        force: true,
-        prioritizeStorageId: importedStorageId,
-        storageIds: nextState.accounts.filter((entry) => entry.storageId !== importedStorageId).map((entry) => entry.storageId),
-      })
-
+      login.completionPromise = login.completionPromise ?? importAccountFromAuthPath(getActiveAuthPath())
+        .then(async (imported) => await activateImportedAccount(appServer, imported))
+      const result = await login.completionPromise
+      login.completionResult = result
+      setJson(res, 200, { data: { state: 'complete', ...result } })
+    } catch (error) {
+      const message = getErrorMessage(error, 'Failed to complete Codex login')
+      login.completionError = message
       setJson(res, 200, {
-        ok: true,
         data: {
-          activeAccountId: importedAccountId,
-          activeStorageId: importedStorageId,
-          importedAccountId,
-          importedStorageId,
-          accounts: sortAccounts(backgroundState.accounts, importedStorageId).map((entry) => toPublicAccountEntry(entry, importedStorageId)),
+          state: 'error',
+          message,
         },
       })
-    } catch (error) {
-      setJson(res, 500, {
-        error: 'account_login_complete_failed',
-        message: getErrorMessage(error, 'Failed to complete Codex login'),
-      })
     }
+    return true
+  }
+
+  if (req.method === 'POST' && url.pathname === '/codex-api/accounts/login/cancel') {
+    stopActiveLogin()
+    setJson(res, 200, { ok: true })
     return true
   }
 

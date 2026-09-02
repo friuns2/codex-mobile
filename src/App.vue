@@ -112,104 +112,89 @@
         >
           <Transition name="settings-panel">
             <div
-              v-if="isSettingsOpen"
-              ref="settingsPanelRef"
-              class="sidebar-settings-panel"
+              v-if="isAccountMenuOpen"
+              ref="accountPanelRef"
+              class="sidebar-account-panel"
               @click.stop
             >
-              <div class="sidebar-settings-account-section">
-                <div class="sidebar-settings-account-header">
-                  <div class="sidebar-settings-account-header-main">
-                    <button
-                      class="sidebar-settings-account-collapse"
-                      type="button"
-                      :aria-expanded="!isAccountsSectionCollapsed"
-                      :title="isAccountsSectionCollapsed ? t('Expand accounts') : t('Collapse accounts')"
-                      @click="toggleAccountsSectionCollapsed"
-                    >
-                      <span class="sidebar-settings-account-collapse-icon">{{ isAccountsSectionCollapsed ? '▸' : '▾' }}</span>
-                    </button>
-                    <span class="sidebar-settings-account-title">{{ t('Accounts') }}</span>
-                    <span class="sidebar-settings-account-count">{{ accounts.length }}</span>
-                  </div>
-                  <button
-                    class="sidebar-settings-account-refresh"
-                    type="button"
-                    :disabled="isRefreshingAccounts || isSwitchingAccounts || isStartingCodexLogin || isCompletingCodexLogin"
-                    @click="onRefreshAccounts"
-                  >
-                    {{ isRefreshingAccounts ? t('Reloading…') : t('Reload') }}
-                  </button>
-                </div>
-                <template v-if="!isAccountsSectionCollapsed">
-                  <div v-if="accountActionError" class="sidebar-settings-account-error visible-error-with-feedback">
-                    <span>{{ accountActionError }}</span>
-                    <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
-                  </div>
-                  <div class="sidebar-settings-account-login">
-                    <button
-                      class="sidebar-settings-account-login-button"
-                      type="button"
-                      :disabled="isRefreshingAccounts || isSwitchingAccounts || isStartingCodexLogin || isCompletingCodexLogin"
-                      @click="onStartCodexLogin"
-                    >
-                      {{ isStartingCodexLogin ? t('Starting login…') : t('Login') }}
-                    </button>
-                    <a
-                      v-if="codexLoginUrl"
-                      class="sidebar-settings-account-login-link"
-                      :href="codexLoginUrl"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {{ t('Open login URL') }}
-                    </a>
-                  </div>
-                  <p v-if="accounts.length === 0" class="sidebar-settings-account-empty">
-                    {{ t('Click Login, or run `codex login`, then click reload.') }}
+              <div class="sidebar-account-panel-header">
+                <div class="sidebar-account-panel-identity">
+                  <p class="sidebar-account-panel-eyebrow">{{ t('Account') }}</p>
+                  <h2 class="sidebar-account-panel-title">{{ activeSidebarAccount?.email || t('Codex account') }}</h2>
+                  <p v-if="activeSidebarAccount" class="sidebar-account-panel-subtitle">
+                    {{ formatAccountMeta(activeSidebarAccount) }}
                   </p>
-                  <div v-else class="sidebar-settings-account-list">
-                  <article
-                    v-for="account in accounts"
-                    :key="account.storageId"
-                    class="sidebar-settings-account-item"
-                    :class="{
-                      'is-active': account.isActive,
-                      'is-unavailable': isAccountUnavailable(account),
-                      'is-confirming-remove': isRemoveConfirmationActive(account),
-                      'is-remove-visible': isRemoveVisible(account),
-                    }"
-                    :title="buildAccountTitle(account)"
-                    @mouseenter="onAccountCardPointerEnter(account.storageId)"
-                    @mouseleave="onAccountCardPointerLeave(account.storageId)"
-                  >
-                    <div class="sidebar-settings-account-main">
+                </div>
+                <button
+                  class="sidebar-account-panel-refresh"
+                  type="button"
+                  :disabled="isRefreshingAccounts || isSwitchingAccounts || isStartingCodexLogin || isCompletingCodexLogin"
+                  @click="onRefreshAccounts"
+                >
+                  {{ isRefreshingAccounts ? t('Reloading…') : t('Reload') }}
+                </button>
+              </div>
+
+              <div v-if="accountRateLimitSnapshots.length > 0" class="sidebar-account-rate-limits">
+                <RateLimitStatus :snapshots="accountRateLimitSnapshots" />
+              </div>
+
+              <div v-if="accountActionError" class="sidebar-account-panel-error visible-error-with-feedback">
+                <span>{{ accountActionError }}</span>
+                <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
+              </div>
+
+              <div class="sidebar-account-panel-actions">
+                <button
+                  class="sidebar-settings-account-login-button"
+                  type="button"
+                  :disabled="isRefreshingAccounts || isSwitchingAccounts || isStartingCodexLogin || isCompletingCodexLogin"
+                  @click="onStartCodexLogin"
+                >
+                  {{ isStartingCodexLogin ? t('Starting login…') : accounts.length === 0 ? t('Sign in with ChatGPT') : t('Add account') }}
+                </button>
+              </div>
+
+              <p v-if="accounts.length === 0" class="sidebar-account-panel-empty">
+                {{ t('Sign in to use Codex models and see your usage here.') }}
+              </p>
+              <div v-else class="sidebar-settings-account-list sidebar-account-list">
+                <article
+                  v-for="account in accounts"
+                  :key="account.storageId"
+                  class="sidebar-settings-account-item"
+                  :class="{
+                    'is-active': account.isActive,
+                    'is-unavailable': isAccountUnavailable(account),
+                    'is-confirming-remove': isRemoveConfirmationActive(account),
+                    'is-remove-visible': isRemoveVisible(account),
+                  }"
+                  :title="buildAccountTitle(account)"
+                  @mouseenter="onAccountCardPointerEnter(account.storageId)"
+                  @mouseleave="onAccountCardPointerLeave(account.storageId)"
+                >
+                  <div class="sidebar-account-card-avatar" aria-hidden="true">{{ getAccountInitial(account) }}</div>
+                  <div class="sidebar-settings-account-main">
+                    <div class="sidebar-account-card-heading">
                       <p class="sidebar-settings-account-email">{{ account.email || t('Account') }}</p>
-                      <p class="sidebar-settings-account-meta">
-                        {{ formatAccountMeta(account) }}
-                      </p>
-                      <p class="sidebar-settings-account-quota">
-                        {{ formatAccountQuota(account) }}
-                      </p>
-                      <p class="sidebar-settings-account-id">
-                        Workspace {{ shortAccountId(account.accountId) }}
-                      </p>
+                      <span v-if="account.isActive" class="sidebar-account-active-badge">{{ t('Active') }}</span>
                     </div>
-                    <div class="sidebar-settings-account-actions">
+                    <p class="sidebar-settings-account-meta">{{ formatAccountMeta(account) }}</p>
+                    <p class="sidebar-settings-account-quota">{{ formatAccountQuota(account) }}</p>
+                    <p class="sidebar-settings-account-id">{{ t('Workspace') }} {{ shortAccountId(account.accountId) }}</p>
+                    <div class="sidebar-account-card-actions">
                       <button
+                        v-if="!account.isActive"
                         class="sidebar-settings-account-switch"
                         type="button"
-                        :disabled="isAccountActionDisabled(account) || account.isActive || isAccountUnavailable(account)"
+                        :disabled="isAccountActionDisabled(account) || isAccountUnavailable(account)"
                         @click="onSwitchAccount(account.storageId)"
                       >
                         {{ getAccountSwitchLabel(account) }}
                       </button>
                       <button
                         class="sidebar-settings-account-remove"
-                        :class="{
-                          'is-visible': isRemoveVisible(account),
-                          'is-confirming': isRemoveConfirmationActive(account),
-                        }"
+                        :class="{ 'is-visible': true, 'is-confirming': isRemoveConfirmationActive(account) }"
                         type="button"
                         :disabled="isAccountActionDisabled(account)"
                         @click="onRemoveAccount(account.storageId)"
@@ -217,10 +202,18 @@
                         {{ getAccountRemoveLabel(account) }}
                       </button>
                     </div>
-                  </article>
                   </div>
-                </template>
+                </article>
               </div>
+            </div>
+          </Transition>
+          <Transition name="settings-panel">
+            <div
+              v-if="isSettingsOpen"
+              ref="settingsPanelRef"
+              class="sidebar-settings-panel"
+              @click.stop
+            >
               <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.sendWithEnter" @click="toggleSendWithEnter">
                 <span class="sidebar-settings-label">{{ t('Require ⌘ + enter to send') }}</span>
                 <span class="sidebar-settings-toggle" :class="{ 'is-on': !sendWithEnter }" />
@@ -495,18 +488,33 @@
               </div>
             </div>
           </Transition>
-          <button
-            ref="settingsButtonRef"
-            class="sidebar-settings-button"
-            type="button"
-            @click.stop="isSettingsOpen = !isSettingsOpen"
-          >
-            <IconTablerSettings class="sidebar-settings-icon" />
-            <span>{{ t('Settings') }}</span>
-            <span class="sidebar-settings-button-version">
-              {{ worktreeName }} · v{{ appVersion }}
-            </span>
-          </button>
+          <div class="sidebar-footer-buttons">
+            <button
+              ref="accountButtonRef"
+              class="sidebar-account-button"
+              type="button"
+              :aria-expanded="isAccountMenuOpen"
+              :aria-label="t('Open account menu')"
+              @click.stop="toggleAccountMenu"
+            >
+              <span class="sidebar-account-button-avatar" aria-hidden="true">{{ activeAccountInitial }}</span>
+              <span class="sidebar-account-button-copy">
+                <span class="sidebar-account-button-label">{{ activeSidebarAccount?.email || t('Sign in') }}</span>
+                <span class="sidebar-account-button-meta">{{ activeSidebarAccount ? formatAccountMeta(activeSidebarAccount) : t('Codex account') }}</span>
+              </span>
+              <span class="sidebar-account-button-chevron" aria-hidden="true">{{ isAccountMenuOpen ? '▾' : '▴' }}</span>
+            </button>
+            <button
+              ref="settingsButtonRef"
+              class="sidebar-settings-button"
+              type="button"
+              :aria-label="t('Settings')"
+              :title="`${t('Settings')} · ${worktreeName} v${appVersion}`"
+              @click.stop="toggleSettingsMenu"
+            >
+              <IconTablerSettings class="sidebar-settings-icon" />
+            </button>
+          </div>
         </div>
       </section>
     </template>
@@ -1100,16 +1108,15 @@
     role="presentation"
     @click="onCancelCodexLoginModal"
   >
-    <form
+    <section
       class="codex-login-modal"
       role="dialog"
       aria-modal="true"
-      :aria-label="t('Complete Codex login')"
-      @submit.prevent="onSubmitCodexLoginCallback"
+      :aria-label="t('Sign in to Codex')"
       @click.stop
     >
       <div class="codex-login-modal-header">
-        <h2 class="codex-login-modal-title">{{ t('Complete Codex login') }}</h2>
+        <h2 class="codex-login-modal-title">{{ t('Sign in to Codex') }}</h2>
         <button
           class="codex-login-modal-close"
           type="button"
@@ -1121,26 +1128,21 @@
         </button>
       </div>
       <p class="codex-login-modal-copy">
-        {{ t('Finish login in the browser, then paste the localhost callback URL here.') }}
+        {{ t('Tap continue, then enter this one-time code on OpenAI. This screen will finish automatically.') }}
       </p>
-      <a
-        v-if="codexLoginUrl"
-        class="codex-login-modal-link"
-        :href="codexLoginUrl"
-        target="_blank"
-        rel="noreferrer"
+      <button
+        class="codex-login-modal-code"
+        type="button"
+        :aria-label="t('Copy device code')"
+        @click="onCopyCodexDeviceCode"
       >
-        {{ t('Open login URL') }}
-      </a>
-      <input
-        ref="codexLoginCallbackInputRef"
-        v-model="codexLoginCallbackUrl"
-        class="codex-login-modal-input"
-        type="url"
-        inputmode="url"
-        :placeholder="t('Paste localhost callback URL')"
-        :disabled="isCompletingCodexLogin"
-      >
+        <span>{{ codexDeviceCode }}</span>
+        <small>{{ hasCopiedCodexDeviceCode ? t('Copied') : t('Tap to copy') }}</small>
+      </button>
+      <p v-if="codexLoginIsWaiting" class="codex-login-modal-status" aria-live="polite">
+        <span class="codex-login-modal-spinner" aria-hidden="true"></span>
+        {{ t('Waiting for sign-in…') }}
+      </p>
       <div v-if="accountActionError" class="codex-login-modal-error visible-error-with-feedback">
         <span>{{ accountActionError }}</span>
         <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
@@ -1154,15 +1156,18 @@
         >
           {{ t('Cancel') }}
         </button>
-        <button
+        <a
+          v-if="codexLoginUrl"
           class="codex-login-modal-submit"
-          type="submit"
-          :disabled="isCompletingCodexLogin || codexLoginCallbackUrl.trim().length === 0"
+          :href="codexLoginUrl"
+          target="_blank"
+          rel="noreferrer"
+          @click="onOpenCodexDeviceLogin"
         >
-          {{ isCompletingCodexLogin ? t('Completing…') : t('Complete') }}
-        </button>
+          {{ t('Copy code & continue') }}
+        </a>
       </div>
-    </form>
+    </section>
   </div>
 </template>
 
@@ -1204,9 +1209,10 @@ import {
   getReviewSummary,
   getWorktreeBranchOptions,
   getAccounts,
-  completeCodexLogin,
+  cancelCodexLogin,
   createLocalDirectory,
   getFirstLaunchPluginsCardPreference,
+  getCodexLoginStatus,
   getHomeDirectory,
   getTelegramConfig,
   getProjectRootSuggestion,
@@ -1240,7 +1246,6 @@ const AutomationsPanel = defineAsyncComponent(() => import('./components/content
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
-const ACCOUNTS_SECTION_COLLAPSED_STORAGE_KEY = 'codex-web-local.accounts-section-collapsed.v1'
 const TERMINAL_QUICK_COMMAND_STORAGE_KEY = 'codex-web-local.terminal-quick-commands.v1'
 const TOGGLE_TERMINAL_COMMAND_VALUE = '__toggle_terminal__'
 const worktreeName = import.meta.env.VITE_WORKTREE_NAME ?? 'unknown'
@@ -1554,6 +1559,8 @@ const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
 const settingsAreaRef = ref<HTMLElement | null>(null)
 const settingsPanelRef = ref<HTMLElement | null>(null)
 const settingsButtonRef = ref<HTMLElement | null>(null)
+const accountPanelRef = ref<HTMLElement | null>(null)
+const accountButtonRef = ref<HTMLElement | null>(null)
 const serverMatchedThreadIds = ref<string[] | null>(null)
 let threadSearchTimer: ReturnType<typeof setTimeout> | null = null
 let terminalKeyboardFocusFallbackTimer: ReturnType<typeof setTimeout> | null = null
@@ -1567,7 +1574,7 @@ let threadWorktreeSummaryRequestId = 0
 const defaultNewProjectName = ref('New Project (1)')
 const homeDirectory = ref('')
 const isSettingsOpen = ref(false)
-const isAccountsSectionCollapsed = ref(loadAccountsSectionCollapsed())
+const isAccountMenuOpen = ref(false)
 const isReviewPaneOpen = ref(false)
 const reviewInitialFilePath = ref('')
 const reviewInitialCommitSha = ref('')
@@ -1595,14 +1602,18 @@ function toThreadBranchCommitsKey(branch: string, includeResetHistory: boolean):
 
 const createFolderInputRef = ref<HTMLInputElement | null>(null)
 const accounts = ref<UiAccountEntry[]>([])
+const activeSidebarAccount = computed(() => accounts.value.find((account) => account.isActive) ?? accounts.value[0] ?? null)
+const activeAccountInitial = computed(() => getAccountInitial(activeSidebarAccount.value))
 const isRefreshingAccounts = ref(false)
 const isSwitchingAccounts = ref(false)
 const isStartingCodexLogin = ref(false)
 const isCompletingCodexLogin = ref(false)
 const isCodexLoginModalOpen = ref(false)
 const codexLoginUrl = ref('')
-const codexLoginCallbackUrl = ref('')
-const codexLoginCallbackInputRef = ref<HTMLInputElement | null>(null)
+const codexDeviceCode = ref('')
+const hasCopiedCodexDeviceCode = ref(false)
+const codexLoginIsWaiting = ref(false)
+let codexLoginPollTimer: number | null = null
 const removingAccountId = ref('')
 const confirmingRemoveAccountId = ref('')
 const hoveredAccountId = ref('')
@@ -2170,6 +2181,7 @@ onUnmounted(() => {
     window.clearInterval(accountStatePollTimer)
     accountStatePollTimer = null
   }
+  clearCodexLoginPoll()
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
@@ -2458,6 +2470,11 @@ function shortAccountId(accountId: string): string {
   return accountId.length > 8 ? accountId.slice(-8) : accountId
 }
 
+function getAccountInitial(account: UiAccountEntry | null): string {
+  const source = account?.email?.trim() || account?.accountId?.trim() || ''
+  return source ? source.charAt(0).toUpperCase() : 'U'
+}
+
 function formatAccountMeta(account: UiAccountEntry): string {
   const segments = [account.planType || t('unknown')]
   if (account.authMode) {
@@ -2652,15 +2669,21 @@ async function onSwitchAccount(storageId: string): Promise<void> {
 async function onStartCodexLogin(): Promise<void> {
   if (isRefreshingAccounts.value || isSwitchingAccounts.value || isStartingCodexLogin.value || isCompletingCodexLogin.value) return
   accountActionError.value = ''
-  codexLoginCallbackUrl.value = ''
+  codexDeviceCode.value = ''
+  hasCopiedCodexDeviceCode.value = false
   isStartingCodexLogin.value = true
   try {
-    const loginUrl = await startCodexLogin()
-    codexLoginUrl.value = loginUrl
+    const existingStatus = await getCodexLoginStatus()
+    if (existingStatus.state === 'complete') {
+      finishCodexLogin(existingStatus.accounts)
+      return
+    }
+    const login = await startCodexLogin()
+    codexLoginUrl.value = login.verificationUrl
+    codexDeviceCode.value = login.userCode
+    codexLoginIsWaiting.value = true
     isCodexLoginModalOpen.value = true
-    window.open(loginUrl, '_blank', 'noopener,noreferrer')
-    await nextTick()
-    codexLoginCallbackInputRef.value?.focus()
+    scheduleCodexLoginPoll(0)
   } catch (error) {
     accountActionError.value = error instanceof Error ? error.message : t('Failed to start Codex login')
   } finally {
@@ -2668,38 +2691,78 @@ async function onStartCodexLogin(): Promise<void> {
   }
 }
 
-function onCancelCodexLoginModal(): void {
-  if (isCompletingCodexLogin.value) return
+function finishCodexLogin(nextAccounts: UiAccountEntry[]): void {
+  accounts.value = nextAccounts
+  codexLoginIsWaiting.value = false
+  codexLoginUrl.value = ''
+  codexDeviceCode.value = ''
   isCodexLoginModalOpen.value = false
-  codexLoginCallbackUrl.value = ''
+  stopPolling()
+  startPolling()
+  void refreshAll({ includeSelectedThreadMessages: true })
 }
 
-async function onSubmitCodexLoginCallback(): Promise<void> {
-  const callbackUrl = codexLoginCallbackUrl.value.trim()
-  if (!callbackUrl) return
-  await completeCodexLoginFromCallback(callbackUrl)
+function clearCodexLoginPoll(): void {
+  if (codexLoginPollTimer === null) return
+  window.clearTimeout(codexLoginPollTimer)
+  codexLoginPollTimer = null
 }
 
-async function completeCodexLoginFromCallback(callbackUrl: string): Promise<void> {
-  if (isCompletingCodexLogin.value || callbackUrl.length === 0) return
-  accountActionError.value = ''
-  isCompletingCodexLogin.value = true
+function scheduleCodexLoginPoll(delayMs = 1000): void {
+  clearCodexLoginPoll()
+  codexLoginPollTimer = window.setTimeout(() => {
+    codexLoginPollTimer = null
+    void pollCodexLoginStatus()
+  }, delayMs)
+}
+
+async function pollCodexLoginStatus(): Promise<void> {
+  if (!isCodexLoginModalOpen.value || !codexLoginIsWaiting.value) return
   try {
-    const result = await completeCodexLogin(callbackUrl)
-    accounts.value = result.accounts
-    codexLoginUrl.value = ''
-    codexLoginCallbackUrl.value = ''
-    isCodexLoginModalOpen.value = false
-    stopPolling()
-    startPolling()
-    void refreshAll({
-      includeSelectedThreadMessages: true,
-    })
+    const status = await getCodexLoginStatus()
+    if (status.state === 'pending') {
+      scheduleCodexLoginPoll()
+      return
+    }
+    if (status.state === 'complete') {
+      isCompletingCodexLogin.value = true
+      finishCodexLogin(status.accounts)
+      return
+    }
+    codexLoginIsWaiting.value = false
+    accountActionError.value = status.state === 'error'
+      ? status.message
+      : t('Codex login stopped. Start again to continue.')
   } catch (error) {
+    codexLoginIsWaiting.value = false
     accountActionError.value = error instanceof Error ? error.message : t('Failed to complete Codex login')
   } finally {
     isCompletingCodexLogin.value = false
   }
+}
+
+async function onCopyCodexDeviceCode(): Promise<void> {
+  if (!codexDeviceCode.value) return
+  try {
+    await copyTextToClipboard(codexDeviceCode.value)
+    hasCopiedCodexDeviceCode.value = true
+  } catch {
+    hasCopiedCodexDeviceCode.value = false
+  }
+}
+
+function onOpenCodexDeviceLogin(): void {
+  void onCopyCodexDeviceCode()
+}
+
+function onCancelCodexLoginModal(): void {
+  if (isCompletingCodexLogin.value) return
+  clearCodexLoginPoll()
+  codexLoginIsWaiting.value = false
+  isCodexLoginModalOpen.value = false
+  codexLoginUrl.value = ''
+  codexDeviceCode.value = ''
+  void cancelCodexLogin().catch(() => undefined)
 }
 
 async function onRemoveAccount(storageId: string): Promise<void> {
@@ -3078,6 +3141,8 @@ async function onForkThreadFromMessage(payload: { threadId: string; turnIndex: n
 function setSidebarCollapsed(nextValue: boolean): void {
   if (isSidebarCollapsed.value === nextValue) return
   if (nextValue) {
+    isSettingsOpen.value = false
+    isAccountMenuOpen.value = false
     const currentScrollTop = getSidebarScrollableElement()?.scrollTop
     if (typeof currentScrollTop === 'number' && (currentScrollTop > 0 || sidebarScrollTop === 0)) {
       sidebarScrollTop = currentScrollTop
@@ -3092,8 +3157,9 @@ function setSidebarCollapsed(nextValue: boolean): void {
 
 function onWindowKeyDown(event: KeyboardEvent): void {
   if (event.defaultPrevented) return
-  if (event.key === 'Escape' && isSettingsOpen.value) {
+  if (event.key === 'Escape' && (isSettingsOpen.value || isAccountMenuOpen.value)) {
     isSettingsOpen.value = false
+    isAccountMenuOpen.value = false
     return
   }
   if (!event.ctrlKey && !event.metaKey) return
@@ -3341,19 +3407,37 @@ function onDocumentPointerDown(event: PointerEvent): void {
       resetTerminalKeyboardFocusState()
     }
   }
-  if (!isSettingsOpen.value) return
-  if (settingsPanelRef.value?.contains(target)) return
-  if (settingsButtonRef.value?.contains(target)) return
-  isSettingsOpen.value = false
+  if (isSettingsOpen.value) {
+    if (settingsPanelRef.value?.contains(target)) return
+    if (settingsButtonRef.value?.contains(target)) return
+    isSettingsOpen.value = false
+  }
+  if (isAccountMenuOpen.value) {
+    if (accountPanelRef.value?.contains(target)) return
+    if (accountButtonRef.value?.contains(target)) return
+    isAccountMenuOpen.value = false
+  }
 }
 
 function onSettingsAreaClick(event: MouseEvent): void {
-  if (!isSettingsOpen.value) return
   const target = event.target
   if (!(target instanceof Node)) return
-  if (settingsPanelRef.value?.contains(target)) return
-  if (settingsButtonRef.value?.contains(target)) return
-  isSettingsOpen.value = false
+  if (isSettingsOpen.value && !settingsPanelRef.value?.contains(target) && !settingsButtonRef.value?.contains(target)) {
+    isSettingsOpen.value = false
+  }
+  if (isAccountMenuOpen.value && !accountPanelRef.value?.contains(target) && !accountButtonRef.value?.contains(target)) {
+    isAccountMenuOpen.value = false
+  }
+}
+
+function toggleAccountMenu(): void {
+  isAccountMenuOpen.value = !isAccountMenuOpen.value
+  if (isAccountMenuOpen.value) isSettingsOpen.value = false
+}
+
+function toggleSettingsMenu(): void {
+  isSettingsOpen.value = !isSettingsOpen.value
+  if (isSettingsOpen.value) isAccountMenuOpen.value = false
 }
 
 function onDocumentVisibilityChange(): void {
@@ -4597,22 +4681,6 @@ function saveSidebarCollapsed(value: boolean): void {
   window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, value ? '1' : '0')
 }
 
-function loadAccountsSectionCollapsed(): boolean {
-  if (typeof window === 'undefined') return true
-  const value = window.localStorage.getItem(ACCOUNTS_SECTION_COLLAPSED_STORAGE_KEY)
-  if (value === null) return true
-  return value === '1'
-}
-
-function toggleAccountsSectionCollapsed(): void {
-  isAccountsSectionCollapsed.value = !isAccountsSectionCollapsed.value
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(
-    ACCOUNTS_SECTION_COLLAPSED_STORAGE_KEY,
-    isAccountsSectionCollapsed.value ? '1' : '0',
-  )
-}
-
 function normalizeMessageType(rawType: string | undefined, role: string): string {
   const normalized = (rawType ?? '').trim()
   if (normalized.length > 0) {
@@ -5580,8 +5648,12 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply shrink-0 bg-slate-100 pt-2 px-2 pb-2 border-t border-zinc-200;
 }
 
+.sidebar-footer-buttons {
+  @apply flex items-stretch gap-1.5;
+}
+
 .sidebar-settings-button {
-  @apply flex items-center gap-2 w-full rounded-lg border-0 bg-transparent px-2 py-2 text-sm text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-900 cursor-pointer;
+  @apply flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-0 bg-transparent text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 cursor-pointer;
 }
 
 .sidebar-settings-button-version {
@@ -5590,6 +5662,100 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-icon {
   @apply w-4.5 h-4.5;
+}
+
+.sidebar-account-button {
+  @apply flex min-w-0 flex-1 items-center gap-2.5 rounded-xl border border-transparent bg-transparent px-2 py-1.5 text-left transition hover:border-zinc-200 hover:bg-white;
+}
+
+.sidebar-account-button-avatar,
+.sidebar-account-card-avatar {
+  @apply inline-flex shrink-0 items-center justify-center rounded-full bg-zinc-900 font-semibold text-white;
+}
+
+.sidebar-account-button-avatar {
+  @apply h-8 w-8 text-xs;
+}
+
+.sidebar-account-button-copy {
+  @apply flex min-w-0 flex-1 flex-col;
+}
+
+.sidebar-account-button-label {
+  @apply truncate text-sm font-medium text-zinc-800;
+}
+
+.sidebar-account-button-meta {
+  @apply truncate text-[11px] text-zinc-500;
+}
+
+.sidebar-account-button-chevron {
+  @apply shrink-0 text-[10px] text-zinc-400;
+}
+
+.sidebar-account-panel {
+  @apply mb-2 max-h-[min(72vh,38rem)] overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-3 shadow-xl;
+}
+
+.sidebar-account-panel-header {
+  @apply flex items-start justify-between gap-3;
+}
+
+.sidebar-account-panel-identity {
+  @apply min-w-0 flex-1;
+}
+
+.sidebar-account-panel-eyebrow {
+  @apply text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400;
+}
+
+.sidebar-account-panel-title {
+  @apply mt-0.5 max-w-full truncate text-base font-semibold text-zinc-900;
+}
+
+.sidebar-account-panel-subtitle {
+  @apply mt-0.5 text-xs text-zinc-500;
+}
+
+.sidebar-account-panel-refresh {
+  @apply shrink-0 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-50;
+}
+
+.sidebar-account-rate-limits {
+  @apply mt-3;
+}
+
+.sidebar-account-rate-limits :deep(.rate-limit-status) {
+  @apply items-stretch;
+}
+
+.sidebar-account-rate-limits :deep(.rate-limit-card) {
+  @apply max-w-none bg-zinc-50 text-left shadow-none;
+}
+
+.sidebar-account-rate-limits :deep(.rate-limit-card-header),
+.sidebar-account-rate-limits :deep(.rate-limit-card-metrics) {
+  @apply justify-start;
+}
+
+.sidebar-account-panel-error {
+  @apply mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700;
+}
+
+.sidebar-account-panel-actions {
+  @apply mt-3 flex;
+}
+
+.sidebar-account-panel-actions .sidebar-settings-account-login-button {
+  @apply min-h-10 w-full rounded-xl border-zinc-900 bg-zinc-900 text-sm text-white hover:bg-zinc-800;
+}
+
+.sidebar-account-panel-empty {
+  @apply px-2 py-5 text-center text-sm leading-5 text-zinc-500;
+}
+
+.sidebar-account-list {
+  @apply mt-3;
 }
 
 .sidebar-settings-panel {
@@ -5737,12 +5903,24 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply text-sm leading-5 text-zinc-600;
 }
 
-.codex-login-modal-link {
-  @apply min-w-0 truncate text-sm text-blue-600 hover:text-blue-700 hover:underline;
+.codex-login-modal-code {
+  @apply flex min-h-20 w-full flex-col items-center justify-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-950 transition active:scale-[0.99];
 }
 
-.codex-login-modal-input {
-  @apply w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 disabled:cursor-default disabled:opacity-60;
+.codex-login-modal-code span {
+  @apply font-mono text-2xl font-semibold tracking-[0.14em];
+}
+
+.codex-login-modal-code small {
+  @apply text-xs font-medium text-blue-600;
+}
+
+.codex-login-modal-status {
+  @apply flex items-center justify-center gap-2 text-sm text-zinc-500;
+}
+
+.codex-login-modal-spinner {
+  @apply h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700;
 }
 
 .codex-login-modal-error {
@@ -5755,44 +5933,11 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .codex-login-modal-cancel,
 .codex-login-modal-submit {
-  @apply rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60;
+  @apply inline-flex min-h-11 items-center justify-center rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60;
 }
 
 .codex-login-modal-submit {
   @apply border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800;
-}
-
-:global(:root.dark) .codex-login-modal {
-  @apply border-zinc-700 bg-zinc-900;
-}
-
-:global(:root.dark) .codex-login-modal-title {
-  @apply text-zinc-100;
-}
-
-:global(:root.dark) .codex-login-modal-close,
-:global(:root.dark) .codex-login-modal-cancel {
-  @apply border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700;
-}
-
-:global(:root.dark) .codex-login-modal-copy {
-  @apply text-zinc-300;
-}
-
-:global(:root.dark) .codex-login-modal-link {
-  @apply text-sky-300 hover:text-sky-200;
-}
-
-:global(:root.dark) .codex-login-modal-input {
-  @apply border-zinc-600 bg-zinc-950 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-400;
-}
-
-:global(:root.dark) .codex-login-modal-error {
-  @apply bg-rose-950/40 text-rose-200;
-}
-
-:global(:root.dark) .codex-login-modal-submit {
-  @apply border-zinc-200 bg-zinc-100 text-zinc-900 hover:bg-white;
 }
 
 .sidebar-settings-account-list {
@@ -5800,11 +5945,15 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .sidebar-settings-account-item {
-  @apply flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-2;
+  @apply flex items-start gap-2.5 rounded-xl border border-zinc-200 bg-white px-3 py-3;
+}
+
+.sidebar-account-card-avatar {
+  @apply h-8 w-8 bg-zinc-100 text-xs text-zinc-700;
 }
 
 .sidebar-settings-account-item.is-active {
-  @apply border-emerald-200 bg-emerald-50;
+  @apply border-emerald-300 bg-white;
 }
 
 .sidebar-settings-account-item.is-unavailable {
@@ -5820,7 +5969,15 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .sidebar-settings-account-email {
-  @apply truncate text-sm text-zinc-800;
+  @apply truncate text-sm font-medium text-zinc-800;
+}
+
+.sidebar-account-card-heading {
+  @apply flex min-w-0 items-center gap-2;
+}
+
+.sidebar-account-active-badge {
+  @apply shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700;
 }
 
 .sidebar-settings-account-meta {
@@ -5847,8 +6004,12 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply min-w-[4.75rem] shrink-0 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-center text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60;
 }
 
+.sidebar-account-card-actions {
+  @apply mt-2 flex items-center gap-2;
+}
+
 .sidebar-settings-account-remove {
-  @apply invisible shrink-0 rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[10px] leading-4 text-zinc-500 opacity-0 pointer-events-none transition-colors hover:bg-amber-50 disabled:cursor-default disabled:opacity-60;
+  @apply invisible shrink-0 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs leading-4 text-zinc-500 opacity-0 pointer-events-none transition-colors hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60;
 }
 
 .sidebar-settings-account-remove.is-visible {

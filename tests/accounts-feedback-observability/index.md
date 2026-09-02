@@ -19,6 +19,6 @@ Return to the [manual test index](../../tests.md).
 | [Feature: Sentry error tracking and encrypted auth context](sentry-error-tracking-and-encrypted-auth-context.md) |
 | [API perf log bodyMB uses one decimal place](api-perf-log-bodymb-uses-one-decimal-place.md) |
 | [Browser runtime profiling with Playwright](browser-runtime-profiling-with-playwright.md) |
-| [Accounts panel Codex login callback modal](accounts-panel-codex-login-callback-modal.md) |
+| [Accounts panel Codex device login](accounts-panel-codex-login-callback-modal.md) |
 | [Startup profiler request dedupe](startup-profiler-request-dedupe.md) |
 | [Qodo free-mode state write fixes](qodo-free-mode-state-write-fixes.md) |

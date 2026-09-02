@@ -49,6 +49,57 @@
   @apply text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200;
 }
 
+:root.dark .sidebar-account-button {
+  @apply text-zinc-200 hover:border-zinc-700 hover:bg-zinc-800;
+}
+
+:root.dark .sidebar-account-button-avatar {
+  @apply bg-zinc-100 text-zinc-900;
+}
+
+:root.dark .sidebar-account-button-label,
+:root.dark .sidebar-account-panel-title {
+  @apply text-zinc-100;
+}
+
+:root.dark .sidebar-account-button-meta,
+:root.dark .sidebar-account-panel-subtitle {
+  @apply text-zinc-400;
+}
+
+:root.dark .sidebar-account-button-chevron,
+:root.dark .sidebar-account-panel-eyebrow {
+  @apply text-zinc-500;
+}
+
+:root.dark .sidebar-account-panel {
+  @apply border-zinc-700 bg-zinc-900;
+}
+
+:root.dark .sidebar-account-panel-refresh {
+  @apply border-zinc-600 bg-zinc-800 text-zinc-300 hover:bg-zinc-700;
+}
+
+:root.dark .sidebar-account-panel-error {
+  @apply bg-rose-950/40 text-rose-200;
+}
+
+:root.dark .sidebar-account-panel-actions .sidebar-settings-account-login-button {
+  @apply border-zinc-100 bg-zinc-100 text-zinc-900 hover:bg-white;
+}
+
+:root.dark .sidebar-account-panel-empty {
+  @apply text-zinc-400;
+}
+
+:root.dark .sidebar-account-card-avatar {
+  @apply bg-zinc-800 text-zinc-200;
+}
+
+:root.dark .sidebar-account-active-badge {
+  @apply bg-emerald-500/15 text-emerald-200;
+}
+
 :root.dark .sidebar-settings-panel {
   @apply border-zinc-700 bg-zinc-800;
 }
@@ -111,6 +162,47 @@
   @apply text-sky-300 hover:text-sky-200;
 }
 
+:root.dark .codex-login-modal-code {
+  @apply border-sky-700 bg-sky-950/60 text-sky-100;
+}
+
+:root.dark .codex-login-modal {
+  @apply border-zinc-700 bg-zinc-900;
+}
+
+:root.dark .codex-login-modal-title {
+  @apply text-zinc-100;
+}
+
+:root.dark .codex-login-modal-close,
+:root.dark .codex-login-modal-cancel {
+  @apply border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700;
+}
+
+:root.dark .codex-login-modal-copy {
+  @apply text-zinc-300;
+}
+
+:root.dark .codex-login-modal-code small {
+  @apply text-sky-300;
+}
+
+:root.dark .codex-login-modal-status {
+  @apply text-zinc-300;
+}
+
+:root.dark .codex-login-modal-spinner {
+  @apply border-zinc-600 border-t-zinc-100;
+}
+
+:root.dark .codex-login-modal-error {
+  @apply bg-rose-950/40 text-rose-200;
+}
+
+:root.dark .codex-login-modal-submit {
+  @apply border-zinc-200 bg-zinc-100 text-zinc-900 hover:bg-white;
+}
+
 :root.dark .sidebar-settings-account-empty {
   @apply text-zinc-400;
 }
@@ -120,7 +212,7 @@
 }
 
 :root.dark .sidebar-settings-account-item.is-active {
-  @apply border-emerald-500/35 bg-emerald-500/10;
+  @apply border-emerald-500/45 bg-zinc-900;
 }
 
 :root.dark .sidebar-settings-account-item.is-unavailable {
