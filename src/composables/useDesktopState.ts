@@ -60,6 +60,7 @@ import type {
   UiThread,
 } from '../types/codex'
 import { getPathParent, isProjectlessChatPath, normalizePathForUi, toProjectName } from '../pathUtils.js'
+import { appPath, stripAppBasePath } from '../basePath'
 
 function flattenThreads(groups: UiProjectGroup[]): UiThread[] {
   return groups.flatMap((group) => group.threads)
@@ -1483,7 +1484,7 @@ export function useDesktopState() {
   function extractLocalImagePathFromUrl(value: string): string {
     try {
       const parsed = new URL(value, 'http://localhost')
-      if (parsed.pathname !== '/codex-local-image') return ''
+      if (stripAppBasePath(parsed.pathname) !== '/codex-local-image') return ''
       return parsed.searchParams.get('path')?.trim() ?? ''
     } catch {
       return ''
@@ -3524,7 +3525,7 @@ export function useDesktopState() {
   }
 
   function toLocalImageUrl(path: string): string {
-    return `/codex-local-image?path=${encodeURIComponent(path)}`
+    return appPath(`/codex-local-image?path=${encodeURIComponent(path)}`)
   }
 
   function toImageGenerationUrl(value: string): string {
@@ -3534,7 +3535,7 @@ export function useDesktopState() {
       trimmed.startsWith('data:') ||
       trimmed.startsWith('http://') ||
       trimmed.startsWith('https://') ||
-      trimmed.startsWith('/codex-local-image?')
+      stripAppBasePath(trimmed).startsWith('/codex-local-image?')
     ) {
       return trimmed
     }

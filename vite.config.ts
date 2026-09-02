@@ -9,6 +9,7 @@ import { stat, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import pkg from "./package.json";
+import { normalizeBasePath } from "./src/basePath";
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
   ".avif": "image/avif",
@@ -101,12 +102,15 @@ function resolveViteRollbackDebugFallback(): string {
 }
 
 const viteRollbackDebugFallback = resolveViteRollbackDebugFallback();
+const configuredBasePath = normalizeBasePath(process.env.VITE_CODEXUI_BASE_PATH);
 
 export default defineConfig({
+  base: configuredBasePath ? `${configuredBasePath}/` : "./",
   define: {
     "import.meta.env.VITE_WORKTREE_NAME": JSON.stringify(worktreeName),
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
     "import.meta.env.VITE_ROLLBACK_DEBUG_FALLBACK": JSON.stringify(viteRollbackDebugFallback),
+    "import.meta.env.VITE_CODEXUI_BASE_PATH": JSON.stringify(configuredBasePath),
   },
   server: {
     host: "0.0.0.0",
@@ -147,7 +151,7 @@ export default defineConfig({
 
             httpServer.on("upgrade", (req, socket, head) => {
               const requestUrl = new URL(req.url ?? "", "http://localhost");
-              if (requestUrl.pathname !== "/codex-api/ws") return;
+              if (requestUrl.pathname !== `${configuredBasePath}/codex-api/ws`) return;
               wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
                 wss.emit("connection", ws, req);
               });
@@ -174,6 +178,17 @@ export default defineConfig({
               wss.close();
             });
           }
+        }
+        if (configuredBasePath) {
+          server.middlewares.use((req, _res, next) => {
+            if (req.url?.startsWith(`${configuredBasePath}/`)) {
+              const unprefixedUrl = req.url.slice(configuredBasePath.length);
+              if (unprefixedUrl.startsWith('/codex-api/') || unprefixedUrl.startsWith('/codex-local-')) {
+                req.url = unprefixedUrl;
+              }
+            }
+            next();
+          });
         }
         server.middlewares.use((req, res, next) => {
           if (!req.url || (req.method !== "GET" && req.method !== "HEAD")) return next();
@@ -285,7 +300,7 @@ export default defineConfig({
             const fileStat = await stat(localPath);
             res.setHeader("Cache-Control", "private, no-store");
             if (fileStat.isDirectory()) {
-              const html = await createDirectoryListingHtml(localPath, { newProjectName });
+              const html = await createDirectoryListingHtml(localPath, { newProjectName, basePath: configuredBasePath });
               res.statusCode = 200;
               res.setHeader("Content-Type", "text/html; charset=utf-8");
               res.end(html);
@@ -326,7 +341,7 @@ export default defineConfig({
               res.end(JSON.stringify({ error: "Expected file path." }));
               return;
             }
-            const html = await createTextEditorHtml(localPath);
+            const html = await createTextEditorHtml(localPath, { basePath: configuredBasePath });
             res.statusCode = 200;
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.end(html);

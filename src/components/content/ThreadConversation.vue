@@ -923,6 +923,7 @@ import { updateThreadFileChanges } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { copyTextToClipboard, copyTextWithSelectionFallback } from '../../utils/clipboard'
+import { appPath, stripAppBasePath } from '../../basePath'
 
 import IconTablerArrowBackUp from '../icons/IconTablerArrowBackUp.vue'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -2846,19 +2847,19 @@ function toRenderableImageUrl(value: string): string {
     normalized.startsWith('blob:') ||
     normalized.startsWith('http://') ||
     normalized.startsWith('https://') ||
-    normalized.startsWith('/codex-local-image?')
+    stripAppBasePath(normalized).startsWith('/codex-local-image?')
   ) {
     return normalized
   }
 
   if (normalized.startsWith('file://')) {
-    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
+    return appPath(`/codex-local-image?path=${encodeURIComponent(normalized)}`)
   }
 
   const looksLikeUnixAbsolute = normalized.startsWith('/')
   const looksLikeWindowsAbsolute = /^[A-Za-z]:[\\/]/u.test(normalized)
   if (looksLikeUnixAbsolute || looksLikeWindowsAbsolute) {
-    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
+    return appPath(`/codex-local-image?path=${encodeURIComponent(normalized)}`)
   }
 
   return normalized
@@ -2877,7 +2878,7 @@ function toBrowseUrl(pathValue: string): string {
 
   if (looksLikeAbsolutePath(resolved)) {
     const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
-    return `/codex-local-browse${encodeURI(normalizedResolved)}`
+    return appPath(`/codex-local-browse${encodeURI(normalizedResolved)}`)
   }
 
   return '#'
@@ -2893,9 +2894,10 @@ function toEditUrlFromBrowseHref(href: string): string {
   if (!normalizedHref) return ''
   try {
     const resolved = new URL(normalizedHref, window.location.href)
-    if (!resolved.pathname.startsWith('/codex-local-browse')) return ''
-    const editPath = `/codex-local-edit${resolved.pathname.slice('/codex-local-browse'.length)}`
-    return `${editPath}${resolved.search}${resolved.hash}`
+    const appRelativePath = stripAppBasePath(resolved.pathname)
+    if (!appRelativePath.startsWith('/codex-local-browse')) return ''
+    const editPath = `/codex-local-edit${appRelativePath.slice('/codex-local-browse'.length)}`
+    return `${appPath(editPath)}${resolved.search}${resolved.hash}`
   } catch {
     return ''
   }

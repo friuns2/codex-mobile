@@ -30,6 +30,30 @@ function run(command, args, options = {}) {
   process.exit(result.status ?? 1)
 }
 
+function extractBasePath(args) {
+  let basePath = ''
+  const passthrough = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--base-path') {
+      const value = args[index + 1]
+      if (!value || value.startsWith('-')) {
+        throw new Error('Missing value for --base-path')
+      }
+      basePath = value
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--base-path=')) {
+      basePath = arg.slice('--base-path='.length)
+      if (!basePath) throw new Error('Missing value for --base-path')
+      continue
+    }
+    passthrough.push(arg)
+  }
+  return { basePath, passthrough }
+}
+
 const passthroughArgs = process.argv.slice(2)
 const viteBinPath = join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
 const vueTscBinPath = join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vue-tsc.cmd' : 'vue-tsc')
@@ -59,4 +83,10 @@ if (!existsSync(viteBinPath) || !existsSync(vueTscBinPath)) {
   }
 }
 
-run(viteBinPath, passthroughArgs)
+const { basePath, passthrough } = extractBasePath(passthroughArgs)
+run(viteBinPath, passthrough, {
+  env: {
+    ...process.env,
+    VITE_CODEXUI_BASE_PATH: basePath,
+  },
+})

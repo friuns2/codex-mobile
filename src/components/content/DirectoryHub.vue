@@ -690,6 +690,7 @@ import {
 } from '../../api/codexGateway'
 import { sortComposioConnectors, type DirectorySortMode } from './directoryHubUtils'
 import SkillsHub from './SkillsHub.vue'
+import { appPath } from '../../basePath'
 
 type DirectoryTab = 'plugins' | 'apps' | 'composio' | 'skills'
 const COMPOSIO_SKILL_PATH = '/Users/igor/.codex/skills/shared_skills/composio-cli/SKILL.md'
@@ -1169,10 +1170,10 @@ function showToast(text: string, type: 'success' | 'error' = 'success'): void {
 
 function localAssetSrc(path: string): string {
   if (!path) return ''
-  if (path.startsWith('connectors://')) return `/codex-api/connector-logo?src=${encodeURIComponent(path)}`
+  if (path.startsWith('connectors://')) return appPath(`/codex-api/connector-logo?src=${encodeURIComponent(path)}`)
   if (/^https?:\/\//i.test(path) || path.startsWith('data:')) return path
   if (!path.startsWith('/')) return ''
-  return `/codex-local-image?path=${encodeURIComponent(path)}`
+  return appPath(`/codex-local-image?path=${encodeURIComponent(path)}`)
 }
 
 function pluginIconSrc(plugin: DirectoryPluginSummary | null): string {

@@ -122,6 +122,16 @@ Notes:
 - depending on proxying details, authentication behavior may differ from direct remote access
 - if conversations created in the web UI do not immediately appear in the Windows app, restarting the Windows app may refresh them
 
+### Reverse proxy path prefix
+
+Pass `--base-path` when a reverse proxy exposes each Codex UI instance below a workspace-specific path:
+
+```bash
+npx codexapp --base-path /codex/<workspace-id> --no-tunnel --port 5900
+```
+
+The browser then uses URLs such as `/codex/<workspace-id>/codex-api/rpc` and `/codex/<workspace-id>/codex-api/ws` for HTTP and WebSocket traffic. Assets, the web manifest, service worker, local-file routes, and login requests use the same prefix. The server accepts both prefixed requests and unprefixed requests, so an ingress may use the prefix to select a workspace and strip it before forwarding upstream.
+
 ---
 
 ## ✨ Features

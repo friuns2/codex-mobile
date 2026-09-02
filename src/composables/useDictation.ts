@@ -1,4 +1,5 @@
 import { onBeforeUnmount, ref } from 'vue'
+import { appFetch } from '../basePath'
 
 export type DictationState = 'idle' | 'recording' | 'transcribing'
 const DICTATION_SILENCE_THRESHOLD = 0.0025
@@ -224,7 +225,7 @@ export function useDictation(options: {
       requestAbortController = new AbortController()
       transcribeAbortController = requestAbortController
 
-      const response = await fetch('/codex-api/transcribe', {
+      const response = await appFetch('/codex-api/transcribe', {
         method: 'POST',
         body: formData,
         signal: requestAbortController.signal,

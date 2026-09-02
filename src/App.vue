@@ -1231,6 +1231,7 @@ import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, Telegra
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
+import { appPath } from './basePath'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -2787,7 +2788,7 @@ function onBrowseThreadFiles(threadId: string): void {
     }
   }
   if (!targetCwd || typeof window === 'undefined') return
-  window.open(`/codex-local-browse${encodeURI(targetCwd)}`, '_blank', 'noopener,noreferrer')
+  window.open(appPath(`/codex-local-browse${encodeURI(targetCwd)}`), '_blank', 'noopener,noreferrer')
 }
 
 function getProjectCwd(projectName: string): string {
@@ -2819,7 +2820,7 @@ function toWorktreeFolderNameDraft(projectName: string): string {
 function onBrowseProjectFiles(projectName: string): void {
   const targetCwd = getProjectCwd(projectName)
   if (!targetCwd || typeof window === 'undefined') return
-  window.open(`/codex-local-browse${encodeURI(targetCwd)}`, '_blank', 'noopener,noreferrer')
+  window.open(appPath(`/codex-local-browse${encodeURI(targetCwd)}`), '_blank', 'noopener,noreferrer')
 }
 
 async function onSaveProject(projectName: string): Promise<void> {

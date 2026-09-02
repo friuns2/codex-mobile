@@ -1,5 +1,6 @@
 import { dirname, extname, join } from 'node:path'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
+import { appPath } from '../basePath.js'
 
 type DirectoryItem = {
   name: string
@@ -131,16 +132,16 @@ function normalizeNewProjectName(value: string): string {
   return value.trim().replace(/[\\/]+/gu, '').trim()
 }
 
-function toBrowseHref(pathValue: string, newProjectName = ''): string {
+function toBrowseHref(pathValue: string, newProjectName = '', basePath = ''): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
-  return `/codex-local-browse${encodeURI(pathValue)}${query}`
+  return appPath(`/codex-local-browse${encodeURI(pathValue)}${query}`, basePath)
 }
 
-function toEditHref(pathValue: string, newProjectName = ''): string {
+function toEditHref(pathValue: string, newProjectName = '', basePath = ''): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
-  return `/codex-local-edit${encodeURI(pathValue)}${query}`
+  return appPath(`/codex-local-edit${encodeURI(pathValue)}${query}`, basePath)
 }
 
 function escapeForInlineScriptString(value: string): string {
@@ -240,22 +241,23 @@ export async function getLocalDirectoryListing(
   }
 }
 
-export async function createDirectoryListingHtml(localPath: string, options?: { newProjectName?: string }): Promise<string> {
+export async function createDirectoryListingHtml(localPath: string, options?: { newProjectName?: string; basePath?: string }): Promise<string> {
   const newProjectName = normalizeNewProjectName(options?.newProjectName ?? '')
+  const basePath = options?.basePath ?? ''
   const items = await getDirectoryItems(localPath)
   const parentPath = dirname(localPath)
   const rows = items
     .map((item) => {
       const suffix = item.isDirectory ? '/' : ''
       const editAction = item.editable
-        ? ` <a class="icon-btn" aria-label="Edit ${escapeHtml(item.name)}" href="${escapeHtml(toEditHref(item.path, newProjectName))}" title="Edit">✏️</a>`
+        ? ` <a class="icon-btn" aria-label="Edit ${escapeHtml(item.name)}" href="${escapeHtml(toEditHref(item.path, newProjectName, basePath))}" title="Edit">✏️</a>`
         : ''
-      return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${editAction}</span></li>`
+      return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName, basePath))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${editAction}</span></li>`
     })
     .join('\n')
 
   const parentLink = localPath !== parentPath
-    ? `<a class="header-parent-link" href="${escapeHtml(toBrowseHref(parentPath, newProjectName))}">..</a>`
+    ? `<a class="header-parent-link" href="${escapeHtml(toBrowseHref(parentPath, newProjectName, basePath))}">..</a>`
     : ''
   const pickerSummary = newProjectName
     ? `<p class="picker-summary">Browse to the parent folder where you want to create <strong>${escapeHtml(newProjectName)}</strong>, or open the current folder directly.</p>`
@@ -331,7 +333,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       button.disabled = true;
       status.textContent = statusText;
       try {
-        const response = await fetch('/codex-api/project-root', {
+        const response = await fetch(${escapeForInlineScriptString(appPath('/codex-api/project-root', basePath))}, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -346,7 +348,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
           return;
         }
         status.textContent = 'Folder opened. Returning to Codex...';
-        const nextUrl = '/?openProjectPath=' + encodeURIComponent(path) + '#/';
+        const nextUrl = ${escapeForInlineScriptString(appPath('/', basePath))} + '?openProjectPath=' + encodeURIComponent(path) + '#/';
         window.location.assign(nextUrl);
       } catch {
         status.textContent = errorText;
@@ -358,7 +360,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
 </html>`
 }
 
-export async function createTextEditorHtml(localPath: string): Promise<string> {
+export async function createTextEditorHtml(localPath: string, options?: { basePath?: string }): Promise<string> {
   const content = await readFile(localPath, 'utf8')
   const parentPath = dirname(localPath)
   const language = languageForPath(localPath)
@@ -388,7 +390,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 <body>
   <div class="toolbar">
     <div class="row">
-      <a href="${escapeHtml(toBrowseHref(parentPath))}">Back</a>
+      <a href="${escapeHtml(toBrowseHref(parentPath, '', options?.basePath))}">Back</a>
       <button id="saveBtn" type="button">Save</button>
       <span id="status"></span>
     </div>

@@ -421,6 +421,7 @@ import IconTablerMaximize from '../icons/IconTablerMaximize.vue'
 import IconTablerMicrophone from '../icons/IconTablerMicrophone.vue'
 import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
+import { appPath } from '../../basePath'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
 
@@ -1214,7 +1215,7 @@ function skillMarkdownPath(path: string): string {
 function openSkillMarkdown(skill: SkillItem): void {
   const markdownPath = skillMarkdownPath(skill.path)
   if (!markdownPath || typeof window === 'undefined') return
-  window.open(`/codex-local-browse${encodeURI(markdownPath)}`, '_blank', 'noopener,noreferrer')
+  window.open(appPath(`/codex-local-browse${encodeURI(markdownPath)}`), '_blank', 'noopener,noreferrer')
 }
 
 function removeFileAttachment(fsPath: string): void {
@@ -1347,7 +1348,7 @@ async function attachImageFile(file: File, sessionToken: number): Promise<void> 
       {
         id: createAttachmentId(),
         name: normalizedFile.name,
-        url: `/codex-local-image?path=${encodeURIComponent(serverPath)}`,
+        url: appPath(`/codex-local-image?path=${encodeURIComponent(serverPath)}`),
       },
     ]
     recordAttachmentBatchResult('success')

@@ -135,11 +135,11 @@ function pruneExpiredSessions(validTokens: Map<string, number>): boolean {
   return changed
 }
 
-function buildSessionCookie(token: string, expiresAt: number): string {
+function buildSessionCookie(token: string, expiresAt: number, cookiePath: string): string {
   const maxAgeSeconds = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
   return [
     `${TOKEN_COOKIE}=${token}`,
-    'Path=/',
+    `Path=${cookiePath}`,
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${String(maxAgeSeconds)}`,
@@ -205,7 +205,7 @@ const errEl=document.getElementById('err');
 form.addEventListener('submit',async e=>{
   e.preventDefault();
   errEl.style.display='none';
-  const res=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('pw').value})});
+  const res=await fetch('auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('pw').value})});
   if(res.ok){window.location.reload()}else{errEl.style.display='block';document.getElementById('pw').value='';document.getElementById('pw').focus()}
 });
 </script>
@@ -221,7 +221,8 @@ export type AuthSession = {
   isRequestAuthorized: (req: IncomingMessage) => boolean
 }
 
-export function createAuthSession(password: string): AuthSession {
+export function createAuthSession(password: string, options?: { cookiePath?: string }): AuthSession {
+  const cookiePath = options?.cookiePath || '/'
   const validTokens = readPersistedSessions()
   if (pruneExpiredSessions(validTokens)) {
     tryPersistSessions(validTokens)
@@ -262,7 +263,7 @@ export function createAuthSession(password: string): AuthSession {
           const expiresAt = Date.now() + SESSION_TTL_MS
           validTokens.set(token, expiresAt)
           tryPersistSessions(validTokens)
-          res.setHeader('Set-Cookie', buildSessionCookie(token, expiresAt))
+          res.setHeader('Set-Cookie', buildSessionCookie(token, expiresAt, cookiePath))
           res.json({ ok: true })
         } catch {
           res.status(500).json({ error: 'Failed to create login session' })
@@ -279,8 +280,8 @@ export function createAuthSession(password: string): AuthSession {
         const expiresAt = Date.now() + SESSION_TTL_MS
         validTokens.set(token, expiresAt)
         tryPersistSessions(validTokens)
-        res.setHeader('Set-Cookie', buildSessionCookie(token, expiresAt))
-        res.redirect(302, '/')
+        res.setHeader('Set-Cookie', buildSessionCookie(token, expiresAt, cookiePath))
+        res.redirect(302, cookiePath === '/' ? '/' : `${cookiePath}/`)
         return
       }
     }

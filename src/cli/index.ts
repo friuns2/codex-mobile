@@ -25,6 +25,7 @@ import {
 import { createServer as createApp } from '../server/httpServer.js'
 import { generatePassword } from '../server/password.js'
 import { spawnSyncCommand } from '../utils/commandInvocation.js'
+import { normalizeBasePath } from '../basePath.js'
 
 const program = new Command().name('codexui').description('Web interface for Codex app-server')
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -315,8 +316,8 @@ function parseCloudflaredUrl(chunk: string): string | null {
   return urlMatch[urlMatch.length - 1] ?? null
 }
 
-function getAccessibleUrls(port: number): string[] {
-  const urls = new Set<string>([`http://localhost:${String(port)}`])
+function getAccessibleUrls(port: number, basePath = ''): string[] {
+  const urls = new Set<string>([`http://localhost:${String(port)}${basePath}`])
   try {
     const interfaces = networkInterfaces()
     for (const entries of Object.values(interfaces)) {
@@ -328,7 +329,7 @@ function getAccessibleUrls(port: number): string[] {
           continue
         }
         if (entry.family === 'IPv4') {
-          urls.add(`http://${entry.address}:${String(port)}`)
+          urls.add(`http://${entry.address}:${String(port)}${basePath}`)
         }
       }
     }
@@ -495,6 +496,7 @@ async function addProjectOnly(projectPath: string): Promise<void> {
 
 async function startServer(options: {
   port: string
+  basePath: string
   password: string | boolean
   tunnel: boolean
   open: boolean
@@ -529,12 +531,13 @@ async function startServer(options: {
     console.log('\nCodex is not logged in. You can log in later via settings or run `codexui login`.\n')
   }
   const requestedPort = parseInt(options.port, 10)
+  const basePath = normalizeBasePath(options.basePath)
   const passwordResolution = resolvePassword(options.password)
   const password = passwordResolution.password
   const generatedPasswordPath = password && passwordResolution.generated
     ? await persistGeneratedPassword(password)
     : null
-  const { app, dispose, attachWebSocket } = createApp({ password })
+  const { app, dispose, attachWebSocket } = createApp({ password, basePath })
   const server = createServer(app)
   attachWebSocket(server)
   const port = await listenWithFallback(server, requestedPort)
@@ -567,7 +570,7 @@ async function startServer(options: {
     `  Codex sandbox: ${runtimeConfig.sandboxMode}`,
     `  Approval policy: ${runtimeConfig.approvalPolicy}`,
   ]
-  const accessUrls = getAccessibleUrls(port)
+  const accessUrls = getAccessibleUrls(port, basePath)
   if (accessUrls.length > 0) {
     lines.push(`  Local:    ${accessUrls[0]}`)
     for (const accessUrl of accessUrls.slice(1)) {
@@ -584,7 +587,7 @@ async function startServer(options: {
     lines.push('  Use that file to retrieve the password for untrusted origins.')
   }
 
-  const tunnelQrUrl = tunnelUrl ? buildTunnelAutologinUrl(tunnelUrl, password) : null
+  const tunnelQrUrl = tunnelUrl ? buildTunnelAutologinUrl(`${tunnelUrl}${basePath}`, password) : null
   if (tunnelUrl) {
     lines.push(`  Tunnel:   ${tunnelQrUrl ?? tunnelUrl}`)
     lines.push('  Tunnel QR code below')
@@ -597,7 +600,7 @@ async function startServer(options: {
     qrcode.generate(tunnelQrUrl, { small: true })
     console.log('')
   }
-  if (options.open) openBrowser(`http://localhost:${String(port)}`)
+  if (options.open) openBrowser(`http://localhost:${String(port)}${basePath || '/'}`)
 
   function shutdown() {
     console.log('\nShutting down...')
@@ -630,6 +633,7 @@ program
   .argument('[projectPath]', 'project directory to open on launch')
   .option('--open-project <path>', 'open project directory on launch (Codex desktop parity)')
   .option('-p, --port <port>', 'port to listen on', '5900')
+  .option('--base-path <path>', 'URL path prefix used when serving behind a reverse proxy', '')
   .option('--password <pass>', 'set a specific password')
   .option('--no-password', 'disable password protection')
   .option('--tunnel', 'start cloudflared tunnel (default is auto by Tailscale detection)', true)
@@ -646,6 +650,7 @@ program
     projectPath: string | undefined,
     opts: {
       port: string
+      basePath: string
       password: string | boolean
       tunnel: boolean
       open: boolean

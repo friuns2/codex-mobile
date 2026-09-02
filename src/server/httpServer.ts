@@ -1,13 +1,14 @@
 import { fileURLToPath } from 'node:url'
 import { dirname, extname, isAbsolute, join } from 'node:path'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
 import { createDirectoryListingHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from './localBrowseUi.js'
 import { WebSocketServer, type WebSocket } from 'ws'
+import { normalizeBasePath } from '../basePath.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const distDir = join(__dirname, '..', 'dist')
@@ -15,6 +16,7 @@ const spaEntryFile = join(distDir, 'index.html')
 
 export type ServerOptions = {
   password?: string
+  basePath?: string
 }
 
 export type ServerInstance = {
@@ -74,8 +76,9 @@ function readWildcardPathParam(value: unknown): string {
 
 export function createServer(options: ServerOptions = {}): ServerInstance {
   const app = express()
+  const basePath = normalizeBasePath(options.basePath)
   const bridge = createCodexBridgeMiddleware()
-  const authSession = options.password ? createAuthSession(options.password) : null
+  const authSession = options.password ? createAuthSession(options.password, { cookiePath: basePath || '/' }) : null
 
   // 1. Auth middleware (if password is set)
   if (authSession) {
@@ -163,7 +166,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       const fileStat = await stat(localPath)
       res.setHeader('Cache-Control', 'private, no-store')
       if (fileStat.isDirectory()) {
-        const html = await createDirectoryListingHtml(localPath, { newProjectName })
+        const html = await createDirectoryListingHtml(localPath, { newProjectName, basePath })
         res.status(200).type('text/html; charset=utf-8').send(html)
         return
       }
@@ -191,7 +194,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
         res.status(400).json({ error: 'Expected file path.' })
         return
       }
-      const html = await createTextEditorHtml(localPath)
+      const html = await createTextEditorHtml(localPath, { basePath })
       res.status(200).type('text/html; charset=utf-8').send(html)
     } catch {
       res.status(404).json({ error: 'File not found.' })
@@ -219,10 +222,13 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
   })
 
   const hasFrontendAssets = existsSync(spaEntryFile)
+  const renderedSpaHtml = hasFrontendAssets
+    ? readFileSync(spaEntryFile, 'utf8').replace('__CODEXUI_BASE_PATH__', basePath)
+    : ''
 
   // 8. Static files from Vue build
   if (hasFrontendAssets) {
-    app.use(express.static(distDir))
+    app.use(express.static(distDir, { index: false }))
   }
 
   // 9. SPA fallback
@@ -241,23 +247,33 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       return
     }
 
-    res.sendFile(spaEntryFile, (error) => {
-      if (!error) return
-      if (!res.headersSent) {
-        res.status(404).type('text/html; charset=utf-8').send(renderFrontendMissingHtml('Frontend entry file not found.'))
-      }
-    })
+    res.status(200).type('text/html; charset=utf-8').send(renderedSpaHtml)
   })
 
+  const hostApp = express()
+  if (basePath) {
+    hostApp.use((req, res, next) => {
+      const pathname = new URL(req.originalUrl, 'http://localhost').pathname
+      if ((req.method === 'GET' || req.method === 'HEAD') && pathname === basePath) {
+        res.redirect(308, `${basePath}/`)
+        return
+      }
+      next()
+    })
+    hostApp.use(basePath, app)
+  }
+  // Keep root routes available for ingress controllers that strip the workspace prefix.
+  hostApp.use(app)
+
   return {
-    app,
+    app: hostApp,
     dispose: () => bridge.dispose(),
     attachWebSocket: (server: HttpServer) => {
       const wss = new WebSocketServer({ noServer: true })
 
       server.on('upgrade', (req: IncomingMessage, socket, head) => {
         const url = new URL(req.url ?? '', 'http://localhost')
-        if (url.pathname !== '/codex-api/ws') {
+        if (url.pathname !== '/codex-api/ws' && url.pathname !== `${basePath}/codex-api/ws`) {
           return
         }
 

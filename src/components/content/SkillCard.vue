@@ -46,6 +46,7 @@
 import { computed } from 'vue'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
+import { appPath } from '../../basePath'
 
 const props = withDefaults(defineProps<{
   skill: {
@@ -86,7 +87,7 @@ const skillDirPath = computed(() => {
 function onBrowse(): void {
   const dir = skillDirPath.value
   if (!dir) return
-  window.open(`/codex-local-browse${encodeURI(dir)}`, '_blank', 'noopener,noreferrer')
+  window.open(appPath(`/codex-local-browse${encodeURI(dir)}`), '_blank', 'noopener,noreferrer')
 }
 
 const publishedLabel = computed(() => {

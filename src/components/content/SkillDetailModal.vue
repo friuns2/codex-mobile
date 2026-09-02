@@ -92,6 +92,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useUiLanguage } from '../../composables/useUiLanguage'
+import { appFetch, appPath } from '../../basePath'
 import IconTablerX from '../icons/IconTablerX.vue'
 
 export type HubSkill = {
@@ -173,7 +174,7 @@ async function fetchReadme(): Promise<void> {
     const params = new URLSearchParams({ owner: props.skill.owner, name: props.skill.name })
     if (props.skill.installed) params.set('installed', 'true')
     if (props.skill.path) params.set('path', props.skill.path)
-    const resp = await fetch(`/codex-api/skills-hub/readme?${params}`)
+    const resp = await appFetch(`/codex-api/skills-hub/readme?${params}`)
     if (!resp.ok) return
     const data = (await resp.json()) as { content?: string; description?: string }
     readmeContent.value = data.content ?? ''
@@ -216,7 +217,7 @@ function onTry(): void {
 function onBrowseFiles(): void {
   const dir = skillDirPath.value
   if (!dir) return
-  window.open(`/codex-local-browse${encodeURI(dir)}`, '_blank', 'noopener,noreferrer')
+  window.open(appPath(`/codex-local-browse${encodeURI(dir)}`), '_blank', 'noopener,noreferrer')
 }
 </script>
 

@@ -6,6 +6,7 @@ import type {
   Turn,
   UserInput,
 } from '../appServerDtos'
+import { appPath, stripAppBasePath } from '../../basePath'
 import type {
   CommandExecutionData,
   UiFileAttachment,
@@ -74,7 +75,7 @@ function extractCodexUserRequestText(value: string): string {
 }
 
 function toLocalImageUrl(path: string): string {
-  return `/codex-local-image?path=${encodeURIComponent(path)}`
+  return appPath(`/codex-local-image?path=${encodeURIComponent(path)}`)
 }
 
 function toImageGenerationUrl(value: string): string {
@@ -84,7 +85,7 @@ function toImageGenerationUrl(value: string): string {
     trimmed.startsWith('data:') ||
     trimmed.startsWith('http://') ||
     trimmed.startsWith('https://') ||
-    trimmed.startsWith('/codex-local-image?')
+    stripAppBasePath(trimmed).startsWith('/codex-local-image?')
   ) {
     return trimmed
   }
