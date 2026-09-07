@@ -500,6 +500,8 @@ async function startServer(options: {
   open: boolean
   login: boolean
   memories: boolean
+  sharedAppServer: boolean
+  appServerSocket?: string
   sandboxMode?: string
   approvalPolicy?: string
   projectPath?: string
@@ -523,6 +525,12 @@ async function startServer(options: {
   }
   if (options.approvalPolicy) {
     process.env.CODEXUI_APPROVAL_POLICY = options.approvalPolicy
+  }
+  if (options.sharedAppServer || options.appServerSocket) {
+    process.env.CODEXUI_APP_SERVER_MODE = 'shared'
+  }
+  if (options.appServerSocket) {
+    process.env.CODEXUI_APP_SERVER_SOCKET = resolve(options.appServerSocket)
   }
   const runtimeConfig = resolveAppServerRuntimeConfig()
   if (options.login && !hasCodexAuth()) {
@@ -564,8 +572,9 @@ async function startServer(options: {
     '  GitHub:   https://github.com/friuns2/codexui',
     '',
     `  Bind:     http://0.0.0.0:${String(port)}`,
-    `  Codex sandbox: ${runtimeConfig.sandboxMode}`,
-    `  Approval policy: ${runtimeConfig.approvalPolicy}`,
+    `  Codex sandbox: ${runtimeConfig.transportMode === 'shared' ? 'controlled by shared app-server' : runtimeConfig.sandboxMode}`,
+    `  Approval policy: ${runtimeConfig.transportMode === 'shared' ? 'controlled by shared app-server' : runtimeConfig.approvalPolicy}`,
+    `  App server: ${runtimeConfig.transportMode === 'shared' ? `shared (${runtimeConfig.socketPath})` : 'spawned'}`,
   ]
   const accessUrls = getAccessibleUrls(port)
   if (accessUrls.length > 0) {
@@ -640,6 +649,8 @@ program
   .option('--no-login', 'skip automatic Codex login bootstrap')
   .option('--memories', 'enable Codex memories for spawned app-server processes', true)
   .option('--no-memories', 'disable Codex memories for spawned app-server processes')
+  .option('--shared-app-server', 'connect to the running Codex app-server control socket instead of spawning one', false)
+  .option('--app-server-socket <path>', 'path to a running Codex app-server control socket (implies --shared-app-server)')
   .option('--sandbox-mode <mode>', 'Codex sandbox mode: read-only, workspace-write, danger-full-access')
   .option('--approval-policy <policy>', 'Codex approval policy: untrusted, on-failure, on-request, never')
   .action(async (
@@ -651,6 +662,8 @@ program
       open: boolean
       login: boolean
       memories: boolean
+      sharedAppServer: boolean
+      appServerSocket?: string
       sandboxMode?: string
       approvalPolicy?: string
       openProject?: string

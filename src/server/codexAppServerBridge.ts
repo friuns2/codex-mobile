@@ -11,8 +11,9 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { createInterface } from 'node:readline'
 import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
+import WebSocket, { type RawData } from 'ws'
 import { handleAccountRoutes } from './accountRoutes.js'
-import { buildAppServerArgs } from './appServerRuntimeConfig.js'
+import { buildAppServerArgs, resolveAppServerRuntimeConfig } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
 import { handleReviewRoutes } from './reviewGit.js'
 import { handleSkillsRoutes, initializeSkillsSyncOnStartup } from './skillsRoutes.js'
@@ -6372,6 +6373,8 @@ const MERGEABLE_ITEM_TYPES = new Set([
 
 class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
+  private webSocket: WebSocket | null = null
+  private startPromise: Promise<void> | null = null
   private initialized = false
   private initializePromise: Promise<void> | null = null
   private readBuffer = ''
@@ -6398,7 +6401,21 @@ class AppServerProcess {
     return codexCommand
   }
 
-  private buildAppServerConfig(): { args: string[]; env: Record<string, string> } {
+  private buildAppServerConfig(): {
+    args: string[]
+    env: Record<string, string>
+    transportMode: 'spawn' | 'shared'
+    socketPath: string
+  } {
+    const runtimeConfig = resolveAppServerRuntimeConfig()
+    if (runtimeConfig.transportMode === 'shared') {
+      return {
+        args: [],
+        env: {},
+        transportMode: runtimeConfig.transportMode,
+        socketPath: runtimeConfig.socketPath,
+      }
+    }
     const args = buildAppServerArgs()
     let extraEnv: Record<string, string> = {}
     const serverPort = parseInt(process.env.CODEXUI_SERVER_PORT ?? '', 10) || undefined
@@ -6413,32 +6430,92 @@ class AppServerProcess {
     } catch {
       // No free-mode state or invalid — use defaults
     }
-    return { args, env: extraEnv }
+    return {
+      args,
+      env: extraEnv,
+      transportMode: runtimeConfig.transportMode,
+      socketPath: runtimeConfig.socketPath,
+    }
   }
 
-  private getAppServerConfigSignature(config: { args: string[]; env: Record<string, string> }): string {
+  private getAppServerConfigSignature(config: {
+    args: string[]
+    env: Record<string, string>
+    transportMode: 'spawn' | 'shared'
+    socketPath: string
+  }): string {
     return JSON.stringify({
       args: config.args,
       env: Object.keys(config.env)
         .sort()
         .map((key) => [key, config.env[key]]),
+      transportMode: config.transportMode,
+      socketPath: config.transportMode === 'shared' ? config.socketPath : '',
     })
   }
 
   private disposeIfConfigChanged(): void {
-    if (!this.process) return
+    if (!this.process && !this.webSocket) return
     const config = this.buildAppServerConfig()
     const nextSignature = this.getAppServerConfigSignature(config)
     if (this.activeConfigSignature === nextSignature) return
     this.dispose()
   }
 
-  private start(): void {
-    if (this.process) return
+  private async start(): Promise<void> {
+    if (this.process || this.webSocket?.readyState === WebSocket.OPEN) return
+    if (this.startPromise) return this.startPromise
 
     this.stopping = false
     const config = this.buildAppServerConfig()
     this.activeConfigSignature = this.getAppServerConfigSignature(config)
+    if (config.transportMode === 'shared') {
+      const socketUrl = `ws+unix://${config.socketPath}:/`
+      const webSocket = new WebSocket(socketUrl, {
+        handshakeTimeout: 5_000,
+        // The Codex control socket uses tungstenite without extension negotiation.
+        perMessageDeflate: false,
+      })
+      this.webSocket = webSocket
+      webSocket.on('message', (data: RawData) => {
+        this.handleLine(data.toString())
+      })
+      webSocket.on('close', () => {
+        if (this.webSocket !== webSocket) return
+        this.handleTransportExit()
+      })
+      webSocket.on('error', () => {
+        // Connection failures reject startPromise; established sockets are handled by close.
+      })
+
+      const startPromise = new Promise<void>((resolveStart, rejectStart) => {
+        const handleOpen = () => {
+          cleanup()
+          resolveStart()
+        }
+        const handleError = (error: Error) => {
+          cleanup()
+          rejectStart(new Error(`Failed to connect shared Codex app-server socket ${config.socketPath}: ${error.message}`))
+        }
+        const handleClose = () => {
+          cleanup()
+          rejectStart(new Error(`Shared Codex app-server socket closed before initialization: ${config.socketPath}`))
+        }
+        const cleanup = () => {
+          webSocket.off('open', handleOpen)
+          webSocket.off('error', handleError)
+          webSocket.off('close', handleClose)
+        }
+        webSocket.once('open', handleOpen)
+        webSocket.once('error', handleError)
+        webSocket.once('close', handleClose)
+      }).finally(() => {
+        if (this.startPromise === startPromise) this.startPromise = null
+      })
+      this.startPromise = startPromise
+      return startPromise
+    }
+
     const invocation = getSpawnInvocation(this.getCodexCommand(), config.args)
     const spawnEnv = Object.keys(config.env).length > 0
       ? { ...process.env, ...config.env }
@@ -6472,27 +6549,36 @@ class AppServerProcess {
       if (this.process !== proc) {
         return
       }
-
-      const failure = new Error(this.stopping ? 'codex app-server stopped' : 'codex app-server exited unexpectedly')
-      for (const request of this.pending.values()) {
-        request.reject(failure)
-      }
-
-      this.pending.clear()
-      this.pendingServerRequests.clear()
-      this.process = null
-      this.initialized = false
-      this.initializePromise = null
-      this.readBuffer = ''
+      this.handleTransportExit()
     })
   }
 
-  private sendLine(payload: Record<string, unknown>): void {
-    if (!this.process) {
-      throw new Error('codex app-server is not running')
+  private handleTransportExit(): void {
+    const failure = new Error(this.stopping ? 'codex app-server stopped' : 'codex app-server connection closed unexpectedly')
+    for (const request of this.pending.values()) {
+      request.reject(failure)
     }
 
-    this.process.stdin.write(`${JSON.stringify(payload)}\n`)
+    this.pending.clear()
+    this.pendingServerRequests.clear()
+    this.process = null
+    this.webSocket = null
+    this.startPromise = null
+    this.initialized = false
+    this.initializePromise = null
+    this.readBuffer = ''
+  }
+
+  private sendLine(payload: Record<string, unknown>): void {
+    if (this.webSocket?.readyState === WebSocket.OPEN) {
+      this.webSocket.send(JSON.stringify(payload))
+      return
+    }
+    if (this.process) {
+      this.process.stdin.write(`${JSON.stringify(payload)}\n`)
+      return
+    }
+    throw new Error('codex app-server is not running')
   }
 
   private handleLine(line: string): void {
@@ -6820,7 +6906,7 @@ class AppServerProcess {
   }
 
   private async call(method: string, params: unknown): Promise<unknown> {
-    this.start()
+    await this.start()
     const id = this.nextId++
 
     return new Promise((resolve, reject) => {
@@ -6913,11 +6999,14 @@ class AppServerProcess {
   }
 
   dispose(): void {
-    if (!this.process) return
+    if (!this.process && !this.webSocket) return
 
     const proc = this.process
+    const webSocket = this.webSocket
     this.stopping = true
     this.process = null
+    this.webSocket = null
+    this.startPromise = null
     this.initialized = false
     this.initializePromise = null
     this.activeConfigSignature = ''
@@ -6930,28 +7019,38 @@ class AppServerProcess {
     this.pending.clear()
     this.pendingServerRequests.clear()
 
-    try {
-      proc.stdin.end()
-    } catch {
-      // ignore close errors on shutdown
-    }
-
-    try {
-      proc.kill('SIGTERM')
-    } catch {
-      // ignore kill errors on shutdown
-    }
-
-    const forceKillTimer = setTimeout(() => {
-      if (!proc.killed) {
-        try {
-          proc.kill('SIGKILL')
-        } catch {
-          // ignore kill errors on shutdown
-        }
+    if (webSocket) {
+      try {
+        webSocket.close(1000, 'Codex Mobile shutdown')
+      } catch {
+        // ignore close errors on shutdown
       }
-    }, 1500)
-    forceKillTimer.unref()
+    }
+
+    if (proc) {
+      try {
+        proc.stdin.end()
+      } catch {
+        // ignore close errors on shutdown
+      }
+
+      try {
+        proc.kill('SIGTERM')
+      } catch {
+        // ignore kill errors on shutdown
+      }
+
+      const forceKillTimer = setTimeout(() => {
+        if (!proc.killed) {
+          try {
+            proc.kill('SIGKILL')
+          } catch {
+            // ignore kill errors on shutdown
+          }
+        }
+      }, 1500)
+      forceKillTimer.unref()
+    }
   }
 }
 
