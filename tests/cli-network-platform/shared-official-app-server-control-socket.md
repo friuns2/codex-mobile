@@ -6,6 +6,11 @@
 - The Codex Mobile build under test is available locally.
 
 #### Steps
+0. Run `pnpm run build` followed by `node scripts/test-shared-app-server.cjs`.
+   The harness uses temporary Codex homes and a mock Unix WebSocket daemon. It
+   checks concurrent RPC calls share one connection and initialization, pending
+   calls fail on disconnect, subsequent calls reconnect, missing sockets can
+   recover, and stopping the UI leaves the daemon listening. No model calls are made.
 1. Start Codex Mobile with `--shared-app-server`, or pass `--app-server-socket <absolute-socket-path>` for a non-default socket.
 2. Confirm the startup summary reports `App server: shared` and the expected socket path.
 3. Open the same existing thread in Codex Mobile and in the official client.
@@ -25,3 +30,4 @@
 - Stop the Codex Mobile process started for this test.
 - Remove `CODEXUI_APP_SERVER_MODE` and `CODEXUI_APP_SERVER_SOCKET` overrides, if set.
 - No official Codex process or thread data should be removed.
+- The automated harness removes its temporary homes, sockets and child processes.
