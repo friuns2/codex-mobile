@@ -18,6 +18,7 @@ Return to the [manual test index](../../tests.md).
 | [Feature: Reverse tunnel login is required unless request is trusted local or Tailscale](reverse-tunnel-login-is-required-unless-request-is-trusted-local-or-tailscale.md) |
 | [Feature: Cloudflare tunnel QR omits password auto-login path](cloudflare-tunnel-qr-omits-password-auto-login-path.md) |
 | [Feature: Default runtime uses workspace-write sandbox with on-request approvals](default-runtime-uses-workspace-write-sandbox-with-on-request-approvals.md) |
+| [Feature: Share the running official Codex app-server control socket](shared-official-app-server-control-socket.md) |
 | [Feature: Windows npx install no longer depends on legacy PTY package](windows-npx-install-no-longer-depends-on-legacy-pty-package.md) |
 | [Feature: Default runtime uses unrestricted sandbox and no approvals](default-runtime-uses-unrestricted-sandbox-and-no-approvals.md) |
 | [Feature: npm run dev exports unrestricted runtime defaults](npm-run-dev-exports-unrestricted-runtime-defaults.md) |
@@ -26,3 +27,4 @@ Return to the [manual test index](../../tests.md).
 | [Feature: CLI auto-stars friuns2/codexui on startup (best-effort)](cli-auto-stars-friuns2-codexui-on-startup-best-effort.md) |
 | [Startup welcome log uses repository GitHub URL](startup-welcome-log-uses-repository-github-url.md) |
 | [Home route no longer crashes on dev startup](home-route-no-longer-crashes-on-dev-startup.md) |
+| [CLI host binding can be restricted to loopback](cli-host-binding-can-be-restricted-to-loopback.md) |

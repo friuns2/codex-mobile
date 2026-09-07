@@ -58,6 +58,32 @@ If you are using a provider or AI gateway that is already authenticated and do n
 npx codexapp --no-login
 ```
 
+### Reuse a running Codex app-server
+
+By default, codexapp starts its own Codex app-server. On hosts with a running
+Codex control socket, use `--shared-app-server` to connect to that server instead:
+
+```sh
+codexapp --host 127.0.0.1 --shared-app-server --no-tunnel --no-open --no-login
+```
+
+The default socket is `$CODEX_HOME/app-server-control/app-server-control.sock`
+(`~/.codex` when `CODEX_HOME` is unset). Use `--app-server-socket /path/to/control.sock`
+to select another socket; this option also enables shared mode. Environment
+configuration is available through `CODEXUI_APP_SERVER_MODE=shared` and
+`CODEXUI_APP_SERVER_SOCKET`.
+
+Shared mode uses JSON-RPC over a local Unix WebSocket, does not spawn a Codex
+process, and leaves the daemon running when the web UI stops. A missing socket
+returns a connection error; it does not silently start a separate server. The
+running daemon controls sandbox, approval and memory settings. This requires a
+compatible control socket and is not a portable replacement for the default
+stdio transport on all Codex versions or platforms.
+
+`--host` selects the HTTP listen address and defaults to `0.0.0.0`. Use
+`--host 127.0.0.1` when placing the UI behind a local reverse proxy or Tailscale
+Serve. Authentication and tunnel options remain independent of the bind address.
+
 ### Linux 🐧
 ```bash
 node -v   # should be 18+
