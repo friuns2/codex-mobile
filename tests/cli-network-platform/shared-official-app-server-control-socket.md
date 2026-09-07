@@ -11,6 +11,9 @@
    checks concurrent RPC calls share one connection and initialization, pending
    calls fail on disconnect, subsequent calls reconnect, missing sockets can
    recover, and stopping the UI leaves the daemon listening. No model calls are made.
+   Also run `pnpm exec vitest run src/server/appServerSharedTransport.test.ts`
+   to exercise a request arriving before the old socket's close event. The new
+   connection must initialize before it receives an application RPC.
 1. Start Codex Mobile with `--shared-app-server`, or pass `--app-server-socket <absolute-socket-path>` for a non-default socket.
 2. Confirm the startup summary reports `App server: shared` and the expected socket path.
 3. Open the same existing thread in Codex Mobile and in the official client.

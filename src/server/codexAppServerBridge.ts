@@ -6371,7 +6371,7 @@ const MERGEABLE_ITEM_TYPES = new Set([
   'fileChange',
 ])
 
-class AppServerProcess {
+export class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
   private webSocket: WebSocket | null = null
   private startPromise: Promise<void> | null = null
@@ -6465,6 +6465,9 @@ class AppServerProcess {
   private async start(): Promise<void> {
     if (this.process || this.webSocket?.readyState === WebSocket.OPEN) return
     if (this.startPromise) return this.startPromise
+    // A request can arrive after close starts but before the close event resets state.
+    // Retire that transport (including its initialization and pending calls) first.
+    if (this.webSocket) this.dispose()
 
     this.stopping = false
     const config = this.buildAppServerConfig()
@@ -6478,6 +6481,7 @@ class AppServerProcess {
       })
       this.webSocket = webSocket
       webSocket.on('message', (data: RawData) => {
+        if (this.webSocket !== webSocket) return
         this.handleLine(data.toString())
       })
       webSocket.on('close', () => {
@@ -6906,29 +6910,37 @@ class AppServerProcess {
   }
 
   private async call(method: string, params: unknown): Promise<unknown> {
-    await this.start()
+    if (method === 'initialize') await this.start()
+    else await this.ensureInitialized()
     const id = this.nextId++
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
 
-      this.sendLine({
-        jsonrpc: '2.0',
-        id,
-        method,
-        params,
-      } satisfies JsonRpcCall)
+      try {
+        this.sendLine({
+          jsonrpc: '2.0',
+          id,
+          method,
+          params,
+        } satisfies JsonRpcCall)
+      } catch (error) {
+        this.pending.delete(id)
+        reject(error)
+      }
     })
   }
 
   private async ensureInitialized(): Promise<void> {
+    await this.start()
     if (this.initialized) return
     if (this.initializePromise) {
       await this.initializePromise
       return
     }
 
-    this.initializePromise = this.call('initialize', {
+    const transport = this.webSocket ?? this.process
+    const initializePromise = this.call('initialize', {
       clientInfo: {
         name: 'codex-web-local',
         version: '0.1.0',
@@ -6937,21 +6949,24 @@ class AppServerProcess {
         experimentalApi: true,
       },
     }).then(() => {
+      if ((this.webSocket ?? this.process) !== transport) {
+        throw new Error('codex app-server transport changed during initialization')
+      }
       this.sendLine({
         jsonrpc: '2.0',
         method: 'initialized',
       })
       this.initialized = true
     }).finally(() => {
-      this.initializePromise = null
+      if (this.initializePromise === initializePromise) this.initializePromise = null
     })
 
-    await this.initializePromise
+    this.initializePromise = initializePromise
+    await initializePromise
   }
 
   async rpc(method: string, params: unknown): Promise<unknown> {
     this.disposeIfConfigChanged()
-    await this.ensureInitialized()
     return this.call(method, params)
   }
 
