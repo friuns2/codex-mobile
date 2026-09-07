@@ -25,6 +25,7 @@ import {
 import { createServer as createApp } from '../server/httpServer.js'
 import { generatePassword } from '../server/password.js'
 import { spawnSyncCommand } from '../utils/commandInvocation.js'
+import { formatHttpUrl, getLocalServerUrl } from './listenHost.js'
 
 const program = new Command().name('codexui').description('Web interface for Codex app-server')
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -317,7 +318,7 @@ function parseCloudflaredUrl(chunk: string): string | null {
 
 function getAccessibleUrls(port: number, host: string): string[] {
   if (host !== '0.0.0.0') {
-    return [`http://${host}:${String(port)}`]
+    return [getLocalServerUrl(host, port)]
   }
   const urls = new Set<string>([`http://localhost:${String(port)}`])
   try {
@@ -367,12 +368,12 @@ function hasDetectedTailscaleIp(): boolean {
   return false
 }
 
-async function startCloudflaredTunnel(command: string, localPort: number): Promise<{
+async function startCloudflaredTunnel(command: string, localUrl: string): Promise<{
   process: ReturnType<typeof spawn>
   url: string
 }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, ['tunnel', '--url', `http://localhost:${String(localPort)}`], {
+    const child = spawn(command, ['tunnel', '--url', localUrl], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -550,6 +551,7 @@ async function startServer(options: {
   const server = createServer(app)
   attachWebSocket(server)
   const port = await listenWithFallback(server, requestedPort, options.host)
+  const localUrl = getLocalServerUrl(options.host, port)
   process.env.CODEXUI_SERVER_PORT = String(port)
   let tunnelChild: ReturnType<typeof spawn> | null = null
   let tunnelUrl: string | null = null
@@ -560,7 +562,7 @@ async function startServer(options: {
       if (!cloudflaredCommand) {
         throw new Error('cloudflared is not installed')
       }
-      const tunnel = await startCloudflaredTunnel(cloudflaredCommand, port)
+      const tunnel = await startCloudflaredTunnel(cloudflaredCommand, localUrl)
       tunnelChild = tunnel.process
       tunnelUrl = tunnel.url
     } catch (error) {
@@ -575,7 +577,7 @@ async function startServer(options: {
     `  Version:  ${version}`,
     '  GitHub:   https://github.com/friuns2/codexui',
     '',
-    `  Bind:     http://${options.host}:${String(port)}`,
+    `  Bind:     ${formatHttpUrl(options.host, port)}`,
     `  Codex sandbox: ${runtimeConfig.transportMode === 'shared' ? 'controlled by shared app-server' : runtimeConfig.sandboxMode}`,
     `  Approval policy: ${runtimeConfig.transportMode === 'shared' ? 'controlled by shared app-server' : runtimeConfig.approvalPolicy}`,
     `  App server: ${runtimeConfig.transportMode === 'shared' ? `shared (${runtimeConfig.socketPath})` : 'spawned'}`,
@@ -610,7 +612,7 @@ async function startServer(options: {
     qrcode.generate(tunnelQrUrl, { small: true })
     console.log('')
   }
-  if (options.open) openBrowser(`http://localhost:${String(port)}`)
+  if (options.open) openBrowser(localUrl)
 
   function shutdown() {
     console.log('\nShutting down...')

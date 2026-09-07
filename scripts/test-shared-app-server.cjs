@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const { spawn } = require('node:child_process')
 const { once } = require('node:events')
 const { mkdtemp, rm } = require('node:fs/promises')
-const { createServer } = require('node:http')
+const { createServer, request } = require('node:http')
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
@@ -46,7 +46,7 @@ async function mockServer(socketPath) {
   return state
 }
 
-async function launch(args, name) {
+async function launch(args, name, probeHost = '127.0.0.1') {
   const reservation = createServer()
   reservation.listen(0, '127.0.0.1')
   await once(reservation, 'listening')
@@ -60,12 +60,13 @@ async function launch(args, name) {
     '--no-password', '--no-open', '--no-tunnel', '--no-login', ...args],
   { env, stdio: ['ignore', 'pipe', 'pipe'], cwd: root })
   children.add(child)
+  child.once('exit', () => children.delete(child))
   let output = ''
   child.stdout.on('data', (data) => { output += data })
   child.stderr.on('data', (data) => { output += data })
-  const base = `http://127.0.0.1:${port}`
+  const base = `http://${probeHost}:${port}`
   await until(async () => {
-    if (child.exitCode !== null) throw new Error(output)
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error(output)
     try { return (await fetch(base, { signal: AbortSignal.timeout(500) })).ok } catch { return false }
   }, `CLI startup: ${name}`)
   return { child, base, output: () => output }
@@ -80,9 +81,16 @@ async function rpc(app, method, params = {}) {
 }
 
 async function stop(app) {
+  if (app.child.exitCode !== null || app.child.signalCode !== null) return
   const exited = once(app.child, 'exit')
   app.child.kill('SIGTERM')
-  await Promise.race([exited, delay(5000).then(() => { throw new Error('CLI failed to stop') })])
+  let timer
+  try {
+    await Promise.race([exited, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('CLI failed to stop')), 5000)
+      timer.unref()
+    })])
+  } finally { clearTimeout(timer) }
   children.delete(app.child)
 }
 
@@ -127,11 +135,29 @@ async function main() {
   assert.match(defaultApp.output(), /Bind: +http:\/\/0\.0\.0\.0:/)
   assert.match(defaultApp.output(), /App server: spawned/)
   await stop(defaultApp)
-  console.log('PASS: public CLI startup, bind host, custom socket, concurrent RPC, one initialization, disconnect rejection, reconnect, missing-socket retry, daemon preservation, default spawn mode')
+  const ipv6App = await launch(['--host', '::1', '--password', 'test-only-password'], 'ipv6', '[::1]')
+  assert.match(ipv6App.output(), /Bind: +http:\/\/\[::1\]:/)
+  assert.ok((await (await fetch(ipv6App.base)).text()).includes('id="app"'), 'IPv6 loopback bypasses login')
+  // Node fetch rewrites Host; use the HTTP client for the reverse-proxy case.
+  const forwardedPage = await new Promise((resolvePage, reject) => {
+    const req = request(`${ipv6App.base}/codex-api/rpc`, {
+      method: 'POST', headers: { Host: 'public.example', 'Content-Type': 'application/json' },
+    }, (response) => {
+      let body = ''
+      response.on('data', (chunk) => { body += chunk })
+      response.on('end', () => resolvePage(body))
+    })
+    req.on('error', reject)
+    req.end(JSON.stringify({ method: 'test/echo', params: {} }))
+  })
+  assert.ok(forwardedPage.includes('type="password"'), 'loopback proxy with a public Host still requires authentication')
+  await stop(ipv6App)
+  console.log('PASS: public CLI startup, bind host, custom socket, concurrent RPC, one initialization, disconnect rejection, reconnect, missing-socket retry, daemon preservation, default spawn mode, IPv6 URL and local authentication')
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1 }).finally(async () => {
   for (const child of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue
     const exited = once(child, 'exit')
     child.kill('SIGKILL')
     await exited
