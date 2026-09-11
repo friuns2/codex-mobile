@@ -1500,6 +1500,7 @@ export async function removeAccount(storageId: string): Promise<AccountsListResu
 export type ResumedThread = {
   model: string
   modelProvider: string
+  reasoningEffort?: ReasoningEffort
   messages: UiMessage[]
   inProgress: boolean
   activeTurnId: string
@@ -1521,6 +1522,7 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
     return {
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
+      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort) || undefined,
       messages,
       inProgress: readThreadInProgressFromResponse(payload),
       activeTurnId: readActiveTurnIdFromResponse(payload),

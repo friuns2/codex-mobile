@@ -207,6 +207,15 @@ describe('getThreadDetail', () => {
 })
 
 describe('resumeThread', () => {
+  it.each(['medium', 'high', 'none', null, undefined, 'unsupported'])('preserves known resumed effort %s', async (effort) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ result: {
+      model: 'gpt-6-astra', modelProvider: 'openai', reasoningEffort: effort,
+      thread: { id: `effort-${String(effort)}`, turns: [] },
+    } }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    const result = await resumeThread(`effort-${String(effort)}`)
+    expect(result.reasoningEffort).toBe(['medium', 'high', 'none'].includes(String(effort)) ? effort : undefined)
+  })
+
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()

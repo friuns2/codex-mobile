@@ -1195,3 +1195,99 @@ describe('findAdjacentThreadId', () => {
     expect(findAdjacentThreadId([thread('selected-thread', '/tmp/project')], 'selected-thread')).toBe('')
   })
 })
+
+describe('per-thread reasoning effort', () => {
+  function detail(effort?: string) {
+    return { model: 'gpt-6-astra', modelProvider: 'openai', reasoningEffort: effort,
+      messages: [], inProgress: false, activeTurnId: '', hasMoreOlder: false, turnIndexByTurnId: {} }
+  }
+  function setup() {
+    installTestWindow()
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({ model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: 'low', speedMode: 'standard' })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-6-astra'])
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockImplementation(async (id: string) => detail(id === 'thread-a' ? 'medium' : id === 'thread-b' ? 'high' : undefined))
+    gatewayMocks.getThreadDetail.mockResolvedValue(detail())
+    gatewayMocks.startThreadTurn.mockResolvedValue('test-turn')
+    return useDesktopState()
+  }
+
+  it('restores the saved medium effort over global low and sends medium', async () => {
+    const state = setup()
+    expect(await state.selectThread('thread-a')).toBe('ok')
+    expect(state.selectedModelId.value).toBe('gpt-6-astra')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('medium')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(1)
+  })
+
+  it('isolates threads and preserves manual choices through switching and metadata refresh', async () => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the global default for an unknown thread instead of leaking the previous thread effort', async () => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    await state.selectThread('thread-without-effort')
+    expect(state.selectedReasoningEffort.value).toBe('low')
+  })
+
+  it('does not overwrite the current thread when a previous resume finishes late', async () => {
+    const state = setup()
+    let resolveA!: (value: ReturnType<typeof detail>) => void
+    gatewayMocks.resumeThread.mockImplementation((id: string) => id === 'thread-a'
+      ? new Promise((resolve) => { resolveA = resolve }) : Promise.resolve(detail('high')))
+    const openingA = state.selectThread('thread-a')
+    await state.selectThread('thread-b')
+    resolveA(detail('medium'))
+    await openingA
+    expect(state.selectedThreadId.value).toBe('thread-b')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+  })
+
+  it.each(['high', ''] as const)('preserves a manual %s selection while resume is pending', async (choice) => {
+    const state = setup()
+    let resolveResume!: (value: ReturnType<typeof detail>) => void
+    gatewayMocks.resumeThread.mockReturnValue(new Promise((resolve) => { resolveResume = resolve }))
+    const opening = state.selectThread('thread-a')
+    state.setSelectedReasoningEffort(choice)
+    resolveResume(detail('medium'))
+    await opening
+    expect(state.selectedReasoningEffort.value).toBe(choice)
+  })
+
+  it('recovers server effort again in a fresh page state', async () => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    const reloaded = useDesktopState()
+    await reloaded.selectThread('thread-a')
+    expect(reloaded.selectedReasoningEffort.value).toBe('medium')
+  })
+
+  it('inherits the new-thread composer effort despite switching context before creation completes', async () => {
+    const state = setup()
+    state.setSelectedReasoningEffort('medium')
+    let resolveStart!: (value: { threadId: string, model: string, modelProvider: string }) => void
+    gatewayMocks.startThread.mockReturnValue(new Promise((resolve) => { resolveStart = resolve }))
+    const creating = state.sendMessageToNewThread('test only', '/tmp/project')
+    await state.selectThread('thread-b')
+    resolveStart({ threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai' })
+    await creating
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('medium')
+  })
+})
