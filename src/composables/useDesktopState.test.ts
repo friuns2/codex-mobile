@@ -1246,6 +1246,17 @@ describe('per-thread reasoning effort', () => {
     expect(state.selectedReasoningEffort.value).toBe('low')
   })
 
+  it('keeps automatic global effort empty for a thread without a saved effort', async () => {
+    const state = setup()
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: '', speedMode: 'standard',
+    })
+    await state.selectThread('thread-without-effort')
+    expect(state.selectedReasoningEffort.value).toBe('')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBeUndefined()
+  })
+
   it('does not overwrite the current thread when a previous resume finishes late', async () => {
     const state = setup()
     let resolveA!: (value: ReturnType<typeof detail>) => void
@@ -1289,5 +1300,58 @@ describe('per-thread reasoning effort', () => {
     await creating
     await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
     expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('medium')
+  })
+
+  it.each(['whole thread', 'from turn'])('inherits server effort when forking a %s', async (kind) => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    gatewayMocks.forkThread.mockResolvedValue({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      reasoningEffort: 'high',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+    const forkedThreadId = kind === 'whole thread'
+      ? await state.forkThreadById('thread-a')
+      : await state.forkThreadFromTurn('thread-a', 0)
+    expect(forkedThreadId).toBe('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it('restores server effort during fallback retry for later turns', async () => {
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    const state = setup()
+    await state.selectThread('thread-a')
+    await state.sendMessageToSelectedThread('first attempt')
+    await state.selectThread('thread-b')
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    state.startPolling()
+
+    notificationHandler!({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-a',
+        turnId: 'failed-turn',
+        turn: {
+          id: 'failed-turn',
+          status: 'failed',
+          error: { message: 'model is not supported' },
+        },
+      },
+    })
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalledTimes(2))
+
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+    await state.sendMessageToSelectedThread('later turn')
+    expect(gatewayMocks.startThreadTurn.mock.calls.at(-1)?.[4]).toBe('medium')
   })
 })

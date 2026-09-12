@@ -1661,12 +1661,14 @@ export type StartedThread = {
   threadId: string
   model: string
   modelProvider: string
+  reasoningEffort?: ReasoningEffort
 }
 
 export type ForkedThread = {
   threadId: string
   cwd: string
   model: string
+  reasoningEffort?: ReasoningEffort
   messages: UiMessage[]
 }
 
@@ -1688,6 +1690,7 @@ export async function startThread(cwd?: string, model?: string): Promise<Started
       threadId,
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
+      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort) || undefined,
     }
   } catch (error) {
     throw normalizeCodexApiError(error, 'Failed to start a new thread', 'thread/start')
@@ -1715,6 +1718,7 @@ export async function forkThread(
         threadId: forkedThreadId,
         cwd: normalizeThreadCwdFromPayload(payload),
         model: normalizeThreadModelFromPayload(payload),
+        reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort) || undefined,
         messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
       }
     } catch (error) {
@@ -1745,6 +1749,7 @@ export async function forkThread(
       threadId: nextThreadId,
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
+      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort) || undefined,
     }
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to fork thread ${threadId}`, 'thread/fork')

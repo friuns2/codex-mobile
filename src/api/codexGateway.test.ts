@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import {
+  forkThread,
+  getAvailableModelIds,
+  getThreadDetail,
+  listDirectoryComposioConnectors,
+  resumeThread,
+  startThread,
+  startThreadTurn,
+} from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -268,5 +276,30 @@ describe('resumeThread', () => {
       { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
       { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
     ])
+  })
+})
+
+describe('thread creation reasoning effort', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it.each([
+    ['thread/start', () => startThread('/tmp/project', 'gpt-6-astra')],
+    ['thread/fork with overrides', () => forkThread('source', '/tmp/project', 'gpt-6-astra')],
+    ['thread/fork with history', () => forkThread('source')],
+  ])('preserves reasoning effort from %s', async (_label, call) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ result: {
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      reasoningEffort: 'high',
+      cwd: '/tmp/project',
+      thread: { id: 'created-thread', turns: [] },
+    } }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(call()).resolves.toMatchObject({
+      threadId: 'created-thread',
+      reasoningEffort: 'high',
+    })
   })
 })

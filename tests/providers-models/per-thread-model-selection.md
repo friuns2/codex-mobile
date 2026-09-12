@@ -47,6 +47,10 @@
 6. In a fresh page state, delay A's resume response and manually choose High or the automatic/empty option before releasing the response.
 7. Open a thread whose resume response has no recognized effort.
 8. Select Medium in the new-thread composer; delay thread creation, switch to B, then release creation and inspect the new thread's first `turn/start` request.
+9. Set the global reasoning option to Automatic, open a thread without a saved effort, and send a message.
+10. Fork thread A both from its sidebar action and from one of its turns, then send a message in each fork.
+11. Archive a visited thread, refresh the list, and confirm its page-scoped effort entry is discarded when it is opened again.
+12. Exercise an unsupported-model fallback after the thread has been pruned from the visible list, then send another turn.
 
 #### Expected Results
 - A restores Medium across reopening and page reload, and sends `effort: "medium"` despite global Low.
@@ -54,6 +58,8 @@
 - Manual choices survive thread switching and metadata refresh, including choices made during resume. Reload restores server-persisted effort; unsent choices are only retained within the current page.
 - Missing/unrecognized server effort falls back to the global default without inheriting another thread's selection.
 - The new thread sends its captured composer effort even if selection changes while creation is pending.
+- Automatic sends no explicit effort, and each fork inherits the effort returned by `thread/fork`.
+- Archived thread state is pruned, and fallback retry restoration supplies the effort for later turns.
 - Selecting A and sending needs one resume, with no additional API call to fetch reasoning effort. Cached switching does not add resumes.
 
 #### Rollback/Cleanup

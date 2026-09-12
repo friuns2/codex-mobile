@@ -1435,9 +1435,11 @@ export function useDesktopState() {
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
   )
   const selectedModelId = ref(readSelectedModel(selectedModelIdByContext.value, selectedThreadId.value))
-  const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
-  const defaultReasoningEffort = ref<ReasoningEffort | ''>('medium')
-  const reasoningEffortByContext = ref<Record<string, ReasoningEffort | ''>>({})
+  const selectedReasoningEffort = ref<ReasoningEffort | ''>('')
+  const defaultReasoningEffort = ref<ReasoningEffort | ''>('')
+  // This lookup never renders directly. Keep only the selected scalar reactive
+  // to avoid proxying and copying every visited thread on each update.
+  const reasoningEffortByContext = new Map<string, ReasoningEffort | ''>()
   const selectedSpeedMode = ref<SpeedMode>('standard')
   const activeProviderId = ref('')
   const codexCliMissingError = ref('')
@@ -1891,6 +1893,7 @@ export function useDesktopState() {
 
       if (resumedThreadById.value[threadId] !== true) {
         const resumedThread = await resumeThread(threadId)
+        restoreThreadReasoningEffort(threadId, resumedThread.reasoningEffort)
         if (resumedThread.model) {
           setThreadModelId(threadId, resolveThreadModelForProvider(threadId, resumedThread.model, resumedThread.modelProvider))
         }
@@ -1929,15 +1932,15 @@ export function useDesktopState() {
   }
 
   function readReasoningEffortForThread(threadId: string): ReasoningEffort | '' {
-    return reasoningEffortByContext.value[toThreadContextId(threadId)] ?? defaultReasoningEffort.value
+    return reasoningEffortByContext.get(toThreadContextId(threadId)) ?? defaultReasoningEffort.value
   }
 
   function restoreThreadReasoningEffort(threadId: string, effort: ReasoningEffort | undefined): void {
     const contextId = toThreadContextId(threadId)
     // A user's selection made while resume was in flight takes precedence.
     if (!effort || !REASONING_EFFORT_OPTIONS.includes(effort)
-      || Object.prototype.hasOwnProperty.call(reasoningEffortByContext.value, contextId)) return
-    reasoningEffortByContext.value = { ...reasoningEffortByContext.value, [contextId]: effort }
+      || reasoningEffortByContext.has(contextId)) return
+    reasoningEffortByContext.set(contextId, effort)
     if (selectedThreadId.value === threadId) selectedReasoningEffort.value = effort
   }
 
@@ -1946,10 +1949,7 @@ export function useDesktopState() {
       return
     }
     selectedReasoningEffort.value = effort
-    reasoningEffortByContext.value = {
-      ...reasoningEffortByContext.value,
-      [toThreadContextId(selectedThreadId.value)]: effort,
-    }
+    reasoningEffortByContext.set(toThreadContextId(selectedThreadId.value), effort)
   }
 
   async function updateSelectedSpeedMode(mode: SpeedMode): Promise<void> {
@@ -2063,10 +2063,7 @@ export function useDesktopState() {
         saveSelectedModelMap(selectedModelIdByContext.value)
       }
 
-      if (
-        currentConfig.reasoningEffort &&
-        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)
-      ) {
+      if (!currentConfig.reasoningEffort || REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)) {
         defaultReasoningEffort.value = currentConfig.reasoningEffort
       }
       selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
@@ -2263,6 +2260,11 @@ export function useDesktopState() {
         selectedThreadId.value,
       )
       saveSelectedCollaborationModeMap(nextSelectedCollaborationModeMap)
+    }
+    for (const contextId of reasoningEffortByContext.keys()) {
+      if (contextId !== NEW_THREAD_COLLABORATION_MODE_CONTEXT && !activeThreadIds.has(contextId)) {
+        reasoningEffortByContext.delete(contextId)
+      }
     }
     const nextReadState = pruneThreadStateMap(readStateByThreadId.value, activeThreadIds)
     if (nextReadState !== readStateByThreadId.value) {
@@ -4739,6 +4741,10 @@ export function useDesktopState() {
 
       insertOptimisticThread(nextThreadId, sourceCwd, sourceTitle)
       setThreadModelId(nextThreadId, forkedThread.model)
+      restoreThreadReasoningEffort(
+        nextThreadId,
+        (forkedThread.reasoningEffort ?? readReasoningEffortForThread(sourceThreadId)) || undefined,
+      )
       resumedThreadById.value = {
         ...resumedThreadById.value,
         [nextThreadId]: true,
@@ -4793,6 +4799,10 @@ export function useDesktopState() {
       const forkedThreadTitle = toForkedThreadTitle(sourceThread?.title || sourceThread?.preview || 'Untitled thread')
       insertOptimisticThread(forkedThreadId, forkedCwd, forkedThreadTitle)
       setThreadModelId(forkedThreadId, forked.model)
+      restoreThreadReasoningEffort(
+        forkedThreadId,
+        (forked.reasoningEffort ?? readReasoningEffortForThread(normalizedThreadId)) || undefined,
+      )
       setPersistedMessagesForThread(forkedThreadId, forked.messages)
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
@@ -5006,7 +5016,7 @@ export function useDesktopState() {
       }
       if (!threadId) return ''
 
-      reasoningEffortByContext.value = { ...reasoningEffortByContext.value, [toThreadContextId(threadId)]: selectedEffort }
+      reasoningEffortByContext.set(toThreadContextId(threadId), selectedEffort)
       insertOptimisticThread(threadId, targetCwd, nextText || '[Image]')
       appendOptimisticUserMessage(threadId, nextText, imageUrls, skills, fileAttachments)
       blockInterruptUntilThreadIsPersisted(threadId)
