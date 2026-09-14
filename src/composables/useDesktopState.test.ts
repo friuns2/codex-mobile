@@ -1581,6 +1581,29 @@ describe('per-thread reasoning effort', () => {
     expect(state.selectedReasoningEffort.value).toBe('high')
   })
 
+  it('resumes an unopened whole-thread fork when neither fork nor source has a known effort', async () => {
+    const state = setup()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockImplementation(async (id: string) => detail(id === 'forked-thread' ? 'high' : undefined))
+    gatewayMocks.forkThread.mockResolvedValue({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(await state.forkThreadById('thread-a')).toBe('forked-thread')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
   it('restores server effort during fallback retry for later turns', async () => {
     let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
     gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {

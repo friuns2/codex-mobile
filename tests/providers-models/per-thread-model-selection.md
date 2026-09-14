@@ -59,6 +59,7 @@
 18. Delay the initial global model configuration response with configured High and submit both an existing-thread and new-thread message before it resolves.
 19. Fail the initial global configuration request, create a new thread, and observe configuration calls through its first turn.
 20. Delay configured global High, start both fork paths from a source without saved effort, and omit effort from the fork response.
+21. From the sidebar, fork a thread that has not been opened on this page, omit effort from the fork response, and make the fork resume with High while global effort is Low.
 
 #### Expected Results
 - A restores Medium across reopening and page reload, and sends `effort: "medium"` despite global Low.
@@ -73,6 +74,7 @@
 - Early sends wait for the initial global configuration and use its explicit High effort; a loaded Automatic configuration still omits effort.
 - A failed initial configuration attempt falls back without retrying between new-thread creation and its first turn; later explicit preference refreshes remain able to retry.
 - Early forks wait for the same initial configuration attempt and inherit configured High when neither source nor fork response supplies an effort.
+- An unopened sidebar source does not donate the global fallback as its own effort; the fork resumes and restores its server High effort before the first turn.
 - Selecting A and sending needs one resume, with no additional API call to fetch reasoning effort. Cached switching does not add resumes.
 
 #### Rollback/Cleanup

@@ -1937,6 +1937,10 @@ export function useDesktopState() {
     return reasoningEffortByContext.get(toThreadContextId(threadId)) ?? defaultReasoningEffort.value
   }
 
+  function readStoredReasoningEffortForThread(threadId: string): ReasoningEffort | '' | undefined {
+    return reasoningEffortByContext.get(toThreadContextId(threadId))
+  }
+
   function restoreThreadReasoningEffort(threadId: string, effort: ReasoningEffort | '' | undefined): void {
     const contextId = toThreadContextId(threadId)
     // A user's selection made while resume was in flight takes precedence.
@@ -4788,7 +4792,7 @@ export function useDesktopState() {
       await ensureInitialModelConfigLoaded()
     }
     const selectedModel = readModelIdForThread(sourceThreadId)
-    const sourceReasoningEffort = readReasoningEffortForThread(sourceThreadId)
+    const sourceReasoningEffort = readStoredReasoningEffortForThread(sourceThreadId)
 
     try {
       const forkedThread = await forkThread(sourceThreadId, sourceCwd || undefined, selectedModel || undefined)
@@ -4797,13 +4801,13 @@ export function useDesktopState() {
 
       insertOptimisticThread(nextThreadId, sourceCwd, sourceTitle)
       setThreadModelId(nextThreadId, forkedThread.model)
-      restoreThreadReasoningEffort(
-        nextThreadId,
-        forkedThread.reasoningEffort ?? sourceReasoningEffort,
-      )
-      resumedThreadById.value = {
-        ...resumedThreadById.value,
-        [nextThreadId]: true,
+      const forkedReasoningEffort = forkedThread.reasoningEffort ?? sourceReasoningEffort
+      restoreThreadReasoningEffort(nextThreadId, forkedReasoningEffort)
+      if (forkedReasoningEffort !== undefined) {
+        resumedThreadById.value = {
+          ...resumedThreadById.value,
+          [nextThreadId]: true,
+        }
       }
       setSelectedThreadId(nextThreadId)
       await loadThreads()
@@ -4847,7 +4851,7 @@ export function useDesktopState() {
     if (!hasCompletedInitialModelConfigAttempt) {
       await ensureInitialModelConfigLoaded()
     }
-    const sourceReasoningEffort = readReasoningEffortForThread(normalizedThreadId)
+    const sourceReasoningEffort = readStoredReasoningEffortForThread(normalizedThreadId)
 
     try {
       error.value = ''
@@ -4859,18 +4863,18 @@ export function useDesktopState() {
       const forkedThreadTitle = toForkedThreadTitle(sourceThread?.title || sourceThread?.preview || 'Untitled thread')
       insertOptimisticThread(forkedThreadId, forkedCwd, forkedThreadTitle)
       setThreadModelId(forkedThreadId, forked.model)
-      restoreThreadReasoningEffort(
-        forkedThreadId,
-        forked.reasoningEffort ?? sourceReasoningEffort,
-      )
+      const forkedReasoningEffort = forked.reasoningEffort ?? sourceReasoningEffort
+      restoreThreadReasoningEffort(forkedThreadId, forkedReasoningEffort)
       setPersistedMessagesForThread(forkedThreadId, forked.messages)
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
         [forkedThreadId]: true,
       }
-      resumedThreadById.value = {
-        ...resumedThreadById.value,
-        [forkedThreadId]: true,
+      if (forkedReasoningEffort !== undefined) {
+        resumedThreadById.value = {
+          ...resumedThreadById.value,
+          [forkedThreadId]: true,
+        }
       }
       clearLivePlansForThread(forkedThreadId)
       setLiveAgentMessagesForThread(forkedThreadId, [])
