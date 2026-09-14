@@ -2237,11 +2237,16 @@ export function useDesktopState() {
     applyThreadFlags()
   }
 
-  function pruneThreadScopedState(flatThreads: UiThread[]): void {
+  function pruneThreadScopedState(
+    flatThreads: UiThread[],
+    reasoningEffortThreads: UiThread[],
+  ): void {
     const activeThreadIds = new Set(flatThreads.map((thread) => thread.id))
+    const reasoningEffortThreadIds = new Set(reasoningEffortThreads.map((thread) => thread.id))
     const currentThreadId = selectedThreadId.value.trim()
     if (currentThreadId) {
       activeThreadIds.add(currentThreadId)
+      reasoningEffortThreadIds.add(currentThreadId)
     }
     const nextSelectedModelMap = pruneThreadContextStateMap(selectedModelIdByContext.value, activeThreadIds)
     if (nextSelectedModelMap !== selectedModelIdByContext.value) {
@@ -2262,7 +2267,7 @@ export function useDesktopState() {
       saveSelectedCollaborationModeMap(nextSelectedCollaborationModeMap)
     }
     for (const contextId of reasoningEffortByContext.keys()) {
-      if (contextId !== NEW_THREAD_COLLABORATION_MODE_CONTEXT && !activeThreadIds.has(contextId)) {
+      if (contextId !== NEW_THREAD_COLLABORATION_MODE_CONTEXT && !reasoningEffortThreadIds.has(contextId)) {
         reasoningEffortByContext.delete(contextId)
       }
     }
@@ -4240,6 +4245,7 @@ export function useDesktopState() {
     loadedThreadListGroups = removeThreadFromGroups(loadedThreadListGroups, threadId)
     sourceGroups.value = removeThreadFromGroups(sourceGroups.value, threadId)
     inProgressById.value = omitKey(inProgressById.value, threadId)
+    reasoningEffortByContext.delete(toThreadContextId(threadId))
     applyThreadFlags()
   }
 
@@ -4365,7 +4371,7 @@ export function useDesktopState() {
       }
 
       const flatThreads = flattenThreads(projectGroups.value)
-      pruneThreadScopedState(flatThreads)
+      pruneThreadScopedState(flatThreads, flattenThreads(loadedThreadListGroups))
 
       const currentExists = flatThreads.some((thread) => thread.id === selectedThreadId.value)
 
@@ -4987,6 +4993,7 @@ export function useDesktopState() {
     const nextText = text.trim()
     const targetCwd = cwd.trim()
     const selectedModel = readModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT).trim()
+    const hasComposerEffortOverride = reasoningEffortByContext.has(NEW_THREAD_COLLABORATION_MODE_CONTEXT)
     const selectedEffort = readReasoningEffortForThread('')
     const selectedMode = selectedCollaborationMode.value
     if (!nextText && imageUrls.length === 0 && fileAttachments.length === 0) return ''
@@ -4994,11 +5001,13 @@ export function useDesktopState() {
     isSendingMessage.value = true
     error.value = ''
     let threadId = ''
+    let startedReasoningEffort: ReasoningEffort | undefined
 
     try {
       try {
         const startedThread = await startThread(targetCwd || undefined, selectedModel || undefined)
         threadId = startedThread.threadId
+        startedReasoningEffort = startedThread.reasoningEffort
         setThreadModelId(threadId, startedThread.model)
         setThreadModelProviderId(threadId, startedThread.modelProvider || activeProviderId.value)
         setSelectedCollaborationModeForThread(threadId, selectedMode)
@@ -5007,6 +5016,7 @@ export function useDesktopState() {
           await applyFallbackModelSelection()
           const fallbackThread = await startThread(targetCwd || undefined, MODEL_FALLBACK_ID)
           threadId = fallbackThread.threadId
+          startedReasoningEffort = fallbackThread.reasoningEffort
           setThreadModelId(threadId, fallbackThread.model)
           setThreadModelProviderId(threadId, fallbackThread.modelProvider || activeProviderId.value)
           setSelectedCollaborationModeForThread(threadId, selectedMode)
@@ -5016,7 +5026,10 @@ export function useDesktopState() {
       }
       if (!threadId) return ''
 
-      reasoningEffortByContext.set(toThreadContextId(threadId), selectedEffort)
+      reasoningEffortByContext.set(
+        toThreadContextId(threadId),
+        hasComposerEffortOverride ? selectedEffort : (startedReasoningEffort ?? selectedEffort),
+      )
       insertOptimisticThread(threadId, targetCwd, nextText || '[Image]')
       appendOptimisticUserMessage(threadId, nextText, imageUrls, skills, fileAttachments)
       blockInterruptUntilThreadIsPersisted(threadId)
@@ -5360,7 +5373,7 @@ export function useDesktopState() {
     applyThreadFlags()
 
     const flatThreads = flattenThreads(projectGroups.value)
-    pruneThreadScopedState(flatThreads)
+    pruneThreadScopedState(flatThreads, flattenThreads(loadedThreadListGroups))
 
     const currentExists = flatThreads.some((thread) => thread.id === selectedThreadId.value)
     if (!currentExists) {

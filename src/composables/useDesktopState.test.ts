@@ -1289,17 +1289,101 @@ describe('per-thread reasoning effort', () => {
     expect(reloaded.selectedReasoningEffort.value).toBe('medium')
   })
 
-  it('inherits the new-thread composer effort despite switching context before creation completes', async () => {
+  it.each([
+    ['medium', 'medium'],
+    ['', undefined],
+  ] as const)('preserves a manual %s new-thread effort over the start response', async (choice, expected) => {
     const state = setup()
-    state.setSelectedReasoningEffort('medium')
-    let resolveStart!: (value: { threadId: string, model: string, modelProvider: string }) => void
+    state.setSelectedReasoningEffort(choice)
+    let resolveStart!: (value: {
+      threadId: string, model: string, modelProvider: string, reasoningEffort: 'high'
+    }) => void
     gatewayMocks.startThread.mockReturnValue(new Promise((resolve) => { resolveStart = resolve }))
     const creating = state.sendMessageToNewThread('test only', '/tmp/project')
     await state.selectThread('thread-b')
-    resolveStart({ threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai' })
+    resolveStart({
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai', reasoningEffort: 'high',
+    })
     await creating
     await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
-    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('medium')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe(expected)
+  })
+
+  it.each(['normal', 'fallback'] as const)('uses the %s start response effort without a composer override', async (path) => {
+    const state = setup()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    const startedThread = {
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai', reasoningEffort: 'high' as const,
+    }
+    if (path === 'fallback') {
+      gatewayMocks.startThread
+        .mockRejectedValueOnce(new Error('model is not supported'))
+        .mockResolvedValueOnce(startedThread)
+    } else {
+      gatewayMocks.startThread.mockResolvedValue(startedThread)
+    }
+
+    await state.sendMessageToNewThread('test only', '/tmp/project')
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it('retains a manual effort when workspace filtering temporarily hides its thread', async () => {
+    const state = setup()
+    const groups = [
+      { projectName: 'project-a', threads: [thread('thread-a', '/tmp/project-a')] },
+      { projectName: 'project-b', threads: [thread('thread-b', '/tmp/project-b')] },
+    ]
+    let roots: WorkspaceRootsState = {
+      order: ['/tmp/project-a', '/tmp/project-b'],
+      labels: {},
+      active: ['/tmp/project-a', '/tmp/project-b'],
+      projectOrder: [],
+    }
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups, nextCursor: null })
+    gatewayMocks.getWorkspaceRootsState.mockImplementation(async () => roots)
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+
+    roots = {
+      order: ['/tmp/project-b'], labels: {}, active: ['/tmp/project-b'], projectOrder: [],
+    }
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    roots = {
+      order: ['/tmp/project-a', '/tmp/project-b'],
+      labels: {},
+      active: ['/tmp/project-a', '/tmp/project-b'],
+      projectOrder: [],
+    }
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+  })
+
+  it('discards a manual effort after the thread is archived', async () => {
+    const state = setup()
+    const groups = [
+      { projectName: 'project', threads: [
+        thread('thread-a', '/tmp/project'),
+        thread('thread-b', '/tmp/project'),
+      ] },
+    ]
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups, nextCursor: null })
+    gatewayMocks.archiveThread.mockResolvedValue(undefined)
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+
+    await state.archiveThreadById('thread-a')
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+
+    expect(state.selectedReasoningEffort.value).toBe('low')
   })
 
   it.each(['whole thread', 'from turn'])('inherits server effort when forking a %s', async (kind) => {
