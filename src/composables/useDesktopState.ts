@@ -1520,6 +1520,8 @@ export function useDesktopState() {
   let loadThreadsPromise: Promise<void> | null = null
   const loadMessagePromiseByThreadId = new Map<string, Promise<void>>()
   let refreshSkillsPromise: Promise<void> | null = null
+  let currentModelConfigPromise: ReturnType<typeof getCurrentModelConfig> | null = null
+  let hasLoadedInitialModelConfig = false
   let lastThreadListLoadAt = 0
   let hasLoadedSkills = false
   let lastSkillsLoadAt = 0
@@ -1997,10 +1999,40 @@ export function useDesktopState() {
     return [`Mode: ${modeLabel}`, `Model: ${modelLabel}`, `Thinking: ${effortLabel}`, `Speed: ${speedLabel}`]
   }
 
+  async function loadCurrentModelConfig() {
+    if (currentModelConfigPromise) return currentModelConfigPromise
+
+    const loadPromise = getCurrentModelConfig()
+    currentModelConfigPromise = loadPromise
+    try {
+      const currentConfig = await loadPromise
+      if (!currentConfig.reasoningEffort || REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)) {
+        defaultReasoningEffort.value = currentConfig.reasoningEffort
+      }
+      selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
+      selectedSpeedMode.value = currentConfig.speedMode
+      hasLoadedInitialModelConfig = true
+      return currentConfig
+    } finally {
+      if (currentModelConfigPromise === loadPromise) {
+        currentModelConfigPromise = null
+      }
+    }
+  }
+
+  async function ensureInitialModelConfigLoaded(): Promise<void> {
+    if (hasLoadedInitialModelConfig) return
+    try {
+      await loadCurrentModelConfig()
+    } catch {
+      // Keep sending available when global model configuration cannot be loaded.
+    }
+  }
+
   async function refreshModelPreferences(options?: { providerChanged?: boolean; includeProviderModels?: boolean }): Promise<void> {
     codexCliMissingError.value = ''
     try {
-      const currentConfig = await getCurrentModelConfig()
+      const currentConfig = await loadCurrentModelConfig()
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
       activeProviderId.value = normalizedProviderId
@@ -2063,11 +2095,6 @@ export function useDesktopState() {
         saveSelectedModelMap(selectedModelIdByContext.value)
       }
 
-      if (!currentConfig.reasoningEffort || REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)) {
-        defaultReasoningEffort.value = currentConfig.reasoningEffort
-      }
-      selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
-      selectedSpeedMode.value = currentConfig.speedMode
     } catch (unknownError) {
       if (isCodexCliMissingError(unknownError)) {
         codexCliMissingError.value = CODEX_CLI_MISSING_MESSAGE
@@ -5014,14 +5041,18 @@ export function useDesktopState() {
 
     const nextText = text.trim()
     const targetCwd = cwd.trim()
-    const selectedModel = readModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT).trim()
-    const hasComposerEffortOverride = reasoningEffortByContext.has(NEW_THREAD_COLLABORATION_MODE_CONTEXT)
-    const selectedEffort = readReasoningEffortForThread('')
-    const selectedMode = selectedCollaborationMode.value
     if (!nextText && imageUrls.length === 0 && fileAttachments.length === 0) return ''
 
     isSendingMessage.value = true
     error.value = ''
+    if (!hasLoadedInitialModelConfig) {
+      await ensureInitialModelConfigLoaded()
+    }
+    const selectedModel = readModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT).trim()
+    const hasComposerEffortOverride = reasoningEffortByContext.has(NEW_THREAD_COLLABORATION_MODE_CONTEXT)
+    const selectedEffort = readReasoningEffortForThread('')
+    const selectedMode = selectedCollaborationMode.value
+
     let threadId = ''
     let startedReasoningEffort: ReasoningEffort | undefined
 
@@ -5117,6 +5148,9 @@ export function useDesktopState() {
     collaborationModeOverride?: CollaborationModeKind,
     syncPendingActivity = false,
   ): Promise<void> {
+    if (!hasLoadedInitialModelConfig) {
+      await ensureInitialModelConfigLoaded()
+    }
     let reasoningEffort = readReasoningEffortForThread(threadId)
     const collaborationMode = collaborationModeOverride === 'plan' ? 'plan' : collaborationModeOverride === 'default'
       ? 'default'

@@ -1273,6 +1273,47 @@ describe('per-thread reasoning effort', () => {
     expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBeUndefined()
   })
 
+  it('waits for the configured global effort before an early existing-thread send', async () => {
+    const state = setup()
+    state.primeSelectedThread('thread-without-effort')
+    let resolveConfig!: (value: {
+      model: string, providerId: string, reasoningEffort: 'high', speedMode: 'standard'
+    }) => void
+    gatewayMocks.getCurrentModelConfig.mockReturnValue(new Promise((resolve) => { resolveConfig = resolve }))
+
+    const sending = state.sendMessageToSelectedThread('test only')
+    await vi.waitFor(() => expect(gatewayMocks.getCurrentModelConfig).toHaveBeenCalled())
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+    resolveConfig({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: 'high', speedMode: 'standard',
+    })
+    await sending
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it('waits for the configured global effort before an early new-thread send', async () => {
+    const state = setup()
+    gatewayMocks.startThread.mockResolvedValue({
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai',
+    })
+    let resolveConfig!: (value: {
+      model: string, providerId: string, reasoningEffort: 'high', speedMode: 'standard'
+    }) => void
+    gatewayMocks.getCurrentModelConfig.mockReturnValue(new Promise((resolve) => { resolveConfig = resolve }))
+
+    const sending = state.sendMessageToNewThread('test only', '/tmp/project')
+    await vi.waitFor(() => expect(gatewayMocks.getCurrentModelConfig).toHaveBeenCalled())
+    expect(gatewayMocks.startThread).not.toHaveBeenCalled()
+    resolveConfig({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: 'high', speedMode: 'standard',
+    })
+    await sending
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
   it('does not overwrite the current thread when a previous resume finishes late', async () => {
     const state = setup()
     let resolveA!: (value: ReturnType<typeof detail>) => void
