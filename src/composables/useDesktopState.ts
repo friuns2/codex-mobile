@@ -4783,9 +4783,12 @@ export function useDesktopState() {
     const sourceThread = flattenThreads(sourceGroups.value).find((row) => row.id === sourceThreadId)
     const sourceCwd = sourceThread?.cwd?.trim() ?? ''
     const sourceTitle = sourceThread?.title?.trim() ?? 'Forked chat'
+    error.value = ''
+    if (!hasCompletedInitialModelConfigAttempt) {
+      await ensureInitialModelConfigLoaded()
+    }
     const selectedModel = readModelIdForThread(sourceThreadId)
     const sourceReasoningEffort = readReasoningEffortForThread(sourceThreadId)
-    error.value = ''
 
     try {
       const forkedThread = await forkThread(sourceThreadId, sourceCwd || undefined, selectedModel || undefined)
@@ -4841,6 +4844,9 @@ export function useDesktopState() {
     if (lastTurnIndex >= 0 && turnIndex > lastTurnIndex) return ''
 
     const sourceThread = flattenThreads(sourceGroups.value).find((row) => row.id === normalizedThreadId) ?? null
+    if (!hasCompletedInitialModelConfigAttempt) {
+      await ensureInitialModelConfigLoaded()
+    }
     const sourceReasoningEffort = readReasoningEffortForThread(normalizedThreadId)
 
     try {

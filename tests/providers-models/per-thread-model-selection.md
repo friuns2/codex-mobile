@@ -58,6 +58,7 @@
 17. Start each fork path from a Medium source with an omitted fork-response effort, change the source to XHigh while the request is pending, then finish the fork.
 18. Delay the initial global model configuration response with configured High and submit both an existing-thread and new-thread message before it resolves.
 19. Fail the initial global configuration request, create a new thread, and observe configuration calls through its first turn.
+20. Delay configured global High, start both fork paths from a source without saved effort, and omit effort from the fork response.
 
 #### Expected Results
 - A restores Medium across reopening and page reload, and sends `effort: "medium"` despite global Low.
@@ -71,6 +72,7 @@
 - Partial pagination does not prune older or optimistic thread choices; a complete server list can prune an absent entry. Forks inherit the source effort captured when the fork request starts, while an explicit server response still takes priority.
 - Early sends wait for the initial global configuration and use its explicit High effort; a loaded Automatic configuration still omits effort.
 - A failed initial configuration attempt falls back without retrying between new-thread creation and its first turn; later explicit preference refreshes remain able to retry.
+- Early forks wait for the same initial configuration attempt and inherit configured High when neither source nor fork response supplies an effort.
 - Selecting A and sending needs one resume, with no additional API call to fetch reasoning effort. Cached switching does not add resumes.
 
 #### Rollback/Cleanup
