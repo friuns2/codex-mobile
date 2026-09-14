@@ -1195,3 +1195,445 @@ describe('findAdjacentThreadId', () => {
     expect(findAdjacentThreadId([thread('selected-thread', '/tmp/project')], 'selected-thread')).toBe('')
   })
 })
+
+describe('per-thread reasoning effort', () => {
+  function detail(effort?: string) {
+    return { model: 'gpt-6-astra', modelProvider: 'openai', reasoningEffort: effort,
+      messages: [], inProgress: false, activeTurnId: '', hasMoreOlder: false, turnIndexByTurnId: {} }
+  }
+  function setup() {
+    installTestWindow()
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({ model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: 'low', speedMode: 'standard' })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-6-astra'])
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockImplementation(async (id: string) => detail(id === 'thread-a' ? 'medium' : id === 'thread-b' ? 'high' : undefined))
+    gatewayMocks.getThreadDetail.mockResolvedValue(detail())
+    gatewayMocks.startThreadTurn.mockResolvedValue('test-turn')
+    return useDesktopState()
+  }
+
+  it('restores the saved medium effort over global low and sends medium', async () => {
+    const state = setup()
+    expect(await state.selectThread('thread-a')).toBe('ok')
+    expect(state.selectedModelId.value).toBe('gpt-6-astra')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('medium')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(1)
+  })
+
+  it('updates pending Thinking details to the effort restored before sending', async () => {
+    const state = setup()
+    state.primeSelectedThread('thread-a')
+    let resolveTurn!: (turnId: string) => void
+    gatewayMocks.startThreadTurn.mockReturnValue(new Promise((resolve) => { resolveTurn = resolve }))
+
+    const sending = state.sendMessageToSelectedThread('test only')
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('medium')
+    expect(state.selectedLiveOverlay.value?.activityDetails).toContain('Thinking: medium')
+    expect(state.selectedLiveOverlay.value?.activityDetails).not.toContain('Thinking: low')
+    resolveTurn('test-turn')
+    await sending
+  })
+
+  it('isolates threads and preserves manual choices through switching and metadata refresh', async () => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the global default for an unknown thread instead of leaking the previous thread effort', async () => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    await state.selectThread('thread-without-effort')
+    expect(state.selectedReasoningEffort.value).toBe('low')
+  })
+
+  it('keeps automatic global effort empty for a thread without a saved effort', async () => {
+    const state = setup()
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: '', speedMode: 'standard',
+    })
+    await state.selectThread('thread-without-effort')
+    expect(state.selectedReasoningEffort.value).toBe('')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBeUndefined()
+  })
+
+  it('waits for the configured global effort before an early existing-thread send', async () => {
+    const state = setup()
+    state.primeSelectedThread('thread-without-effort')
+    let resolveConfig!: (value: {
+      model: string, providerId: string, reasoningEffort: 'high', speedMode: 'standard'
+    }) => void
+    gatewayMocks.getCurrentModelConfig.mockReturnValue(new Promise((resolve) => { resolveConfig = resolve }))
+
+    const sending = state.sendMessageToSelectedThread('test only')
+    await vi.waitFor(() => expect(gatewayMocks.getCurrentModelConfig).toHaveBeenCalled())
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+    resolveConfig({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: 'high', speedMode: 'standard',
+    })
+    await sending
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it('waits for the configured global effort before an early new-thread send', async () => {
+    const state = setup()
+    gatewayMocks.startThread.mockResolvedValue({
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai',
+    })
+    let resolveConfig!: (value: {
+      model: string, providerId: string, reasoningEffort: 'high', speedMode: 'standard'
+    }) => void
+    gatewayMocks.getCurrentModelConfig.mockReturnValue(new Promise((resolve) => { resolveConfig = resolve }))
+
+    const sending = state.sendMessageToNewThread('test only', '/tmp/project')
+    await vi.waitFor(() => expect(gatewayMocks.getCurrentModelConfig).toHaveBeenCalled())
+    expect(gatewayMocks.startThread).not.toHaveBeenCalled()
+    resolveConfig({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: 'high', speedMode: 'standard',
+    })
+    await sending
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it('does not retry a failed initial config read between new-thread creation and its first turn', async () => {
+    const state = setup()
+    gatewayMocks.getCurrentModelConfig.mockRejectedValue(new Error('config unavailable'))
+    gatewayMocks.startThread.mockResolvedValue({
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai',
+    })
+
+    await state.sendMessageToNewThread('test only', '/tmp/project')
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.getCurrentModelConfig).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBeUndefined()
+  })
+
+  it('does not overwrite the current thread when a previous resume finishes late', async () => {
+    const state = setup()
+    let resolveA!: (value: ReturnType<typeof detail>) => void
+    gatewayMocks.resumeThread.mockImplementation((id: string) => id === 'thread-a'
+      ? new Promise((resolve) => { resolveA = resolve }) : Promise.resolve(detail('high')))
+    const openingA = state.selectThread('thread-a')
+    await state.selectThread('thread-b')
+    resolveA(detail('medium'))
+    await openingA
+    expect(state.selectedThreadId.value).toBe('thread-b')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+  })
+
+  it.each(['high', ''] as const)('preserves a manual %s selection while resume is pending', async (choice) => {
+    const state = setup()
+    let resolveResume!: (value: ReturnType<typeof detail>) => void
+    gatewayMocks.resumeThread.mockReturnValue(new Promise((resolve) => { resolveResume = resolve }))
+    const opening = state.selectThread('thread-a')
+    state.setSelectedReasoningEffort(choice)
+    resolveResume(detail('medium'))
+    await opening
+    expect(state.selectedReasoningEffort.value).toBe(choice)
+  })
+
+  it('recovers server effort again in a fresh page state', async () => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    const reloaded = useDesktopState()
+    await reloaded.selectThread('thread-a')
+    expect(reloaded.selectedReasoningEffort.value).toBe('medium')
+  })
+
+  it.each([
+    ['medium', 'medium'],
+    ['', undefined],
+  ] as const)('preserves a manual %s new-thread effort over the start response', async (choice, expected) => {
+    const state = setup()
+    state.setSelectedReasoningEffort(choice)
+    let resolveStart!: (value: {
+      threadId: string, model: string, modelProvider: string, reasoningEffort: 'high'
+    }) => void
+    gatewayMocks.startThread.mockReturnValue(new Promise((resolve) => { resolveStart = resolve }))
+    const creating = state.sendMessageToNewThread('test only', '/tmp/project')
+    await state.selectThread('thread-b')
+    resolveStart({
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai', reasoningEffort: 'high',
+    })
+    await creating
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe(expected)
+  })
+
+  it.each(['normal', 'fallback'] as const)('uses the %s start response effort without a composer override', async (path) => {
+    const state = setup()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    const startedThread = {
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai', reasoningEffort: 'high' as const,
+    }
+    if (path === 'fallback') {
+      gatewayMocks.startThread
+        .mockRejectedValueOnce(new Error('model is not supported'))
+        .mockResolvedValueOnce(startedThread)
+    } else {
+      gatewayMocks.startThread.mockResolvedValue(startedThread)
+    }
+
+    await state.sendMessageToNewThread('test only', '/tmp/project')
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it('retains a manual effort when workspace filtering temporarily hides its thread', async () => {
+    const state = setup()
+    const groups = [
+      { projectName: 'project-a', threads: [thread('thread-a', '/tmp/project-a')] },
+      { projectName: 'project-b', threads: [thread('thread-b', '/tmp/project-b')] },
+    ]
+    let roots: WorkspaceRootsState = {
+      order: ['/tmp/project-a', '/tmp/project-b'],
+      labels: {},
+      active: ['/tmp/project-a', '/tmp/project-b'],
+      projectOrder: [],
+    }
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups, nextCursor: null })
+    gatewayMocks.getWorkspaceRootsState.mockImplementation(async () => roots)
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+
+    roots = {
+      order: ['/tmp/project-b'], labels: {}, active: ['/tmp/project-b'], projectOrder: [],
+    }
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    roots = {
+      order: ['/tmp/project-a', '/tmp/project-b'],
+      labels: {},
+      active: ['/tmp/project-a', '/tmp/project-b'],
+      projectOrder: [],
+    }
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+  })
+
+  it('defers effort pruning while the server thread list is incomplete', async () => {
+    const state = setup()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-b', '/tmp/project')] }],
+      nextCursor: 'older-page',
+    })
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+
+    await state.selectThread('thread-b')
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-b', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+  })
+
+  it('discards a manual effort after the thread is archived', async () => {
+    const state = setup()
+    const groups = [
+      { projectName: 'project', threads: [
+        thread('thread-a', '/tmp/project'),
+        thread('thread-b', '/tmp/project'),
+      ] },
+    ]
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups, nextCursor: null })
+    gatewayMocks.archiveThread.mockResolvedValue(undefined)
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+
+    await state.archiveThreadById('thread-a')
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+
+    expect(state.selectedReasoningEffort.value).toBe('low')
+  })
+
+  it.each(['whole thread', 'from turn'])('inherits server effort when forking a %s', async (kind) => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    gatewayMocks.forkThread.mockResolvedValue({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      reasoningEffort: 'high',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+    const forkedThreadId = kind === 'whole thread'
+      ? await state.forkThreadById('thread-a')
+      : await state.forkThreadFromTurn('thread-a', 0)
+    expect(forkedThreadId).toBe('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it.each(['whole thread', 'from turn'])('inherits effective Automatic when forking a %s without server effort', async (kind) => {
+    const state = setup()
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: '', speedMode: 'standard',
+    })
+    gatewayMocks.resumeThread.mockResolvedValue(detail())
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('')
+    gatewayMocks.forkThread.mockResolvedValue({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+
+    const forkedThreadId = kind === 'whole thread'
+      ? await state.forkThreadById('thread-a')
+      : await state.forkThreadFromTurn('thread-a', 0)
+    expect(forkedThreadId).toBe('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBeUndefined()
+  })
+
+  it.each(['whole thread', 'from turn'])('snapshots source effort before forking a %s', async (kind) => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    let resolveFork!: (value: {
+      threadId: string, model: string, modelProvider: string, cwd: string, messages: never[]
+    }) => void
+    gatewayMocks.forkThread.mockReturnValue(new Promise((resolve) => { resolveFork = resolve }))
+
+    const forking = kind === 'whole thread'
+      ? state.forkThreadById('thread-a')
+      : state.forkThreadFromTurn('thread-a', 0)
+    await vi.waitFor(() => expect(gatewayMocks.forkThread).toHaveBeenCalled())
+    state.setSelectedReasoningEffort('xhigh')
+    resolveFork({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+
+    expect(await forking).toBe('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+  })
+
+  it.each(['whole thread', 'from turn'])('waits for global effort before an early %s fork', async (kind) => {
+    const state = setup()
+    state.primeSelectedThread('thread-a')
+    gatewayMocks.resumeThread.mockResolvedValue(detail())
+    let resolveConfig!: (value: {
+      model: string, providerId: string, reasoningEffort: 'high', speedMode: 'standard'
+    }) => void
+    gatewayMocks.getCurrentModelConfig.mockReturnValue(new Promise((resolve) => { resolveConfig = resolve }))
+    gatewayMocks.forkThread.mockResolvedValue({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+
+    const forking = kind === 'whole thread'
+      ? state.forkThreadById('thread-a')
+      : state.forkThreadFromTurn('thread-a', 0)
+    await vi.waitFor(() => expect(gatewayMocks.getCurrentModelConfig).toHaveBeenCalled())
+    expect(gatewayMocks.forkThread).not.toHaveBeenCalled()
+    resolveConfig({
+      model: 'gpt-6-astra', providerId: 'openai', reasoningEffort: 'high', speedMode: 'standard',
+    })
+
+    expect(await forking).toBe('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+  })
+
+  it('resumes an unopened whole-thread fork when neither fork nor source has a known effort', async () => {
+    const state = setup()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockImplementation(async (id: string) => detail(id === 'forked-thread' ? 'high' : undefined))
+    gatewayMocks.forkThread.mockResolvedValue({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(await state.forkThreadById('thread-a')).toBe('forked-thread')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+    await state.sendMessageToSelectedThread('test only')
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
+  })
+
+  it('restores server effort during fallback retry for later turns', async () => {
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    const state = setup()
+    await state.selectThread('thread-a')
+    await state.sendMessageToSelectedThread('first attempt')
+    await state.selectThread('thread-b')
+    await state.refreshAll({ includeSelectedThreadMessages: false })
+    state.startPolling()
+
+    notificationHandler!({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-a',
+        turnId: 'failed-turn',
+        turn: {
+          id: 'failed-turn',
+          status: 'failed',
+          error: { message: 'model is not supported' },
+        },
+      },
+    })
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalledTimes(2))
+
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+    await state.sendMessageToSelectedThread('later turn')
+    expect(gatewayMocks.startThreadTurn.mock.calls.at(-1)?.[4]).toBe('medium')
+  })
+})

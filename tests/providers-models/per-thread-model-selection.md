@@ -30,3 +30,52 @@
 
 #### Rollback/Cleanup
 - Reset each tested thread back to its original model selection if you changed an existing conversation for the test.
+
+### Feature: Per-thread reasoning effort
+
+#### Prerequisites
+- Global reasoning effort is `low`; thread A resumes with `reasoningEffort: "medium"`, and thread B with `"high"`.
+- Use isolated test threads or intercept app-server responses and outgoing `turn/start` requests to avoid changing real conversations.
+- For browser coverage, use light/dark themes at 375x812 and 768x1024.
+
+#### Steps
+1. Open thread A. Verify the composer shows Medium, then reload and verify Medium again.
+2. Open thread B and verify High; return to A and verify Medium.
+3. Send a test message in A and inspect `turn/start.params.effort`.
+4. Manually choose XHigh in A, switch to B and back, and refresh thread metadata without reloading the page.
+5. Delay A's resume response, switch to B, then release A's response.
+6. In a fresh page state, delay A's resume response and manually choose High or the automatic/empty option before releasing the response.
+7. Open a thread whose resume response has no recognized effort.
+8. Without a manual new-thread effort override, make normal and unsupported-model fallback `thread/start` responses return High while the global default is Low; inspect the new thread's first `turn/start` request.
+9. Select Medium and Automatic in the new-thread composer; delay thread creation, switch to B, then release a High start response and inspect the new thread's first `turn/start` request.
+10. Set the global reasoning option to Automatic, open a thread without a saved effort, and send a message.
+11. Fork thread A both from its sidebar action and from one of its turns, then send a message in each fork. Repeat with global Automatic, no saved source-thread effort, and a fork response that omits reasoning effort.
+12. Manually choose XHigh in A, switch to B, temporarily hide A with the workspace-root filter, restore that root, and reopen A.
+13. Archive a visited thread, refresh the list, and confirm its page-scoped effort entry is discarded when it is opened again.
+14. Exercise an unsupported-model fallback after the thread has been pruned from the visible list, then send another turn.
+15. Select an unresumed thread while global effort is Low, send immediately, and let its resume response restore Medium.
+16. Keep an older thread's manual XHigh choice while the thread list has another pagination cursor, then complete pagination without that thread.
+17. Start each fork path from a Medium source with an omitted fork-response effort, change the source to XHigh while the request is pending, then finish the fork.
+18. Delay the initial global model configuration response with configured High and submit both an existing-thread and new-thread message before it resolves.
+19. Fail the initial global configuration request, create a new thread, and observe configuration calls through its first turn.
+20. Delay configured global High, start both fork paths from a source without saved effort, and omit effort from the fork response.
+21. From the sidebar, fork a thread that has not been opened on this page, omit effort from the fork response, and make the fork resume with High while global effort is Low.
+
+#### Expected Results
+- A restores Medium across reopening and page reload, and sends `effort: "medium"` despite global Low.
+- B keeps High; late A responses do not change B's composer.
+- Manual choices survive thread switching and metadata refresh, including choices made during resume. Reload restores server-persisted effort; unsent choices are only retained within the current page.
+- Missing/unrecognized server effort falls back to the global default without inheriting another thread's selection.
+- Without a manual override, new threads use the normalized effort returned by normal or fallback `thread/start`; manual Medium and Automatic choices take priority even if selection changes while creation is pending.
+- Automatic sends no explicit effort. Each fork inherits the effort returned by `thread/fork`, or the source thread's effective effort (including Automatic) when the response omits it.
+- Workspace filtering preserves a temporarily hidden thread's manual page-scoped effort. Archived thread state is pruned, and fallback retry restoration supplies the effort for later turns.
+- The pending `Thinking` details update to Medium before `turn/start`, matching the effort sent for an immediately submitted unresumed thread.
+- Partial pagination does not prune older or optimistic thread choices; a complete server list can prune an absent entry. Forks inherit the source effort captured when the fork request starts, while an explicit server response still takes priority.
+- Early sends wait for the initial global configuration and use its explicit High effort; a loaded Automatic configuration still omits effort.
+- A failed initial configuration attempt falls back without retrying between new-thread creation and its first turn; later explicit preference refreshes remain able to retry.
+- Early forks wait for the same initial configuration attempt and inherit configured High when neither source nor fork response supplies an effort.
+- An unopened sidebar source does not donate the global fallback as its own effort; the fork resumes and restores its server High effort before the first turn.
+- Selecting A and sending needs one resume, with no additional API call to fetch reasoning effort. Cached switching does not add resumes.
+
+#### Rollback/Cleanup
+- Remove isolated test threads or close the intercepted browser context. Restore any test-only global config changes.
