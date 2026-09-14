@@ -1935,10 +1935,10 @@ export function useDesktopState() {
     return reasoningEffortByContext.get(toThreadContextId(threadId)) ?? defaultReasoningEffort.value
   }
 
-  function restoreThreadReasoningEffort(threadId: string, effort: ReasoningEffort | undefined): void {
+  function restoreThreadReasoningEffort(threadId: string, effort: ReasoningEffort | '' | undefined): void {
     const contextId = toThreadContextId(threadId)
     // A user's selection made while resume was in flight takes precedence.
-    if (!effort || !REASONING_EFFORT_OPTIONS.includes(effort)
+    if (effort === undefined || (effort !== '' && !REASONING_EFFORT_OPTIONS.includes(effort))
       || reasoningEffortByContext.has(contextId)) return
     reasoningEffortByContext.set(contextId, effort)
     if (selectedThreadId.value === threadId) selectedReasoningEffort.value = effort
@@ -4749,7 +4749,7 @@ export function useDesktopState() {
       setThreadModelId(nextThreadId, forkedThread.model)
       restoreThreadReasoningEffort(
         nextThreadId,
-        (forkedThread.reasoningEffort ?? readReasoningEffortForThread(sourceThreadId)) || undefined,
+        forkedThread.reasoningEffort ?? readReasoningEffortForThread(sourceThreadId),
       )
       resumedThreadById.value = {
         ...resumedThreadById.value,
@@ -4807,7 +4807,7 @@ export function useDesktopState() {
       setThreadModelId(forkedThreadId, forked.model)
       restoreThreadReasoningEffort(
         forkedThreadId,
-        (forked.reasoningEffort ?? readReasoningEffortForThread(normalizedThreadId)) || undefined,
+        forked.reasoningEffort ?? readReasoningEffortForThread(normalizedThreadId),
       )
       setPersistedMessagesForThread(forkedThreadId, forked.messages)
       loadedMessagesByThreadId.value = {
