@@ -1226,6 +1226,22 @@ describe('per-thread reasoning effort', () => {
     expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(1)
   })
 
+  it('updates pending Thinking details to the effort restored before sending', async () => {
+    const state = setup()
+    state.primeSelectedThread('thread-a')
+    let resolveTurn!: (turnId: string) => void
+    gatewayMocks.startThreadTurn.mockReturnValue(new Promise((resolve) => { resolveTurn = resolve }))
+
+    const sending = state.sendMessageToSelectedThread('test only')
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('medium')
+    expect(state.selectedLiveOverlay.value?.activityDetails).toContain('Thinking: medium')
+    expect(state.selectedLiveOverlay.value?.activityDetails).not.toContain('Thinking: low')
+    resolveTurn('test-turn')
+    await sending
+  })
+
   it('isolates threads and preserves manual choices through switching and metadata refresh', async () => {
     const state = setup()
     await state.selectThread('thread-a')

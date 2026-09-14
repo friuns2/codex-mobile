@@ -2452,7 +2452,11 @@ export function useDesktopState() {
     applyThreadFlags()
   }
 
-  function setTurnActivityForThread(threadId: string, activity: TurnActivityState | null): void {
+  function setTurnActivityForThread(
+    threadId: string,
+    activity: TurnActivityState | null,
+    options: { replaceDetails?: boolean } = {},
+  ): void {
     if (!threadId) return
 
     const previous = turnActivityByThreadId.value[threadId]
@@ -2467,7 +2471,9 @@ export function useDesktopState() {
     const incomingDetails = activity.details
       .map((line) => sanitizeDisplayText(line))
       .filter((line) => line.length > 0 && line !== normalizedLabel)
-    const mergedDetails = Array.from(new Set([...(previous?.details ?? []), ...incomingDetails])).slice(-3)
+    const mergedDetails = options.replaceDetails
+      ? incomingDetails.slice(-3)
+      : Array.from(new Set([...(previous?.details ?? []), ...incomingDetails])).slice(-3)
     const nextActivity: TurnActivityState = {
       label: normalizedLabel,
       details: mergedDetails,
@@ -4949,7 +4955,7 @@ export function useDesktopState() {
         label: 'Thinking',
         details: buildPendingTurnDetails(
           readModelIdForThread(threadId),
-          selectedReasoningEffort.value,
+          readReasoningEffortForThread(threadId),
           collaborationModeOverride === 'plan'
             ? 'plan'
             : collaborationModeOverride === 'default'
@@ -4969,6 +4975,7 @@ export function useDesktopState() {
         skills,
         fileAttachments,
         collaborationModeOverride,
+        true,
       )
     } catch (unknownError) {
       shouldAutoScrollOnNextAgentEvent = false
@@ -5093,6 +5100,7 @@ export function useDesktopState() {
     skills: Array<{ name: string; path: string }> = [],
     fileAttachments: FileAttachment[] = [],
     collaborationModeOverride?: CollaborationModeKind,
+    syncPendingActivity = false,
   ): Promise<void> {
     let reasoningEffort = readReasoningEffortForThread(threadId)
     const collaborationMode = collaborationModeOverride === 'plan' ? 'plan' : collaborationModeOverride === 'default'
@@ -5138,6 +5146,16 @@ export function useDesktopState() {
         fallbackRetried: false,
       })
       const modelId = readModelIdForThread(threadId)
+      if (syncPendingActivity) {
+        setTurnActivityForThread(
+          threadId,
+          {
+            label: 'Thinking',
+            details: buildPendingTurnDetails(modelId, reasoningEffort, collaborationMode),
+          },
+          { replaceDetails: true },
+        )
+      }
 
       let startedTurnId = ''
       try {

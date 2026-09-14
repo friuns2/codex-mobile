@@ -53,6 +53,7 @@
 12. Manually choose XHigh in A, switch to B, temporarily hide A with the workspace-root filter, restore that root, and reopen A.
 13. Archive a visited thread, refresh the list, and confirm its page-scoped effort entry is discarded when it is opened again.
 14. Exercise an unsupported-model fallback after the thread has been pruned from the visible list, then send another turn.
+15. Select an unresumed thread while global effort is Low, send immediately, and let its resume response restore Medium.
 
 #### Expected Results
 - A restores Medium across reopening and page reload, and sends `effort: "medium"` despite global Low.
@@ -62,6 +63,7 @@
 - Without a manual override, new threads use the normalized effort returned by normal or fallback `thread/start`; manual Medium and Automatic choices take priority even if selection changes while creation is pending.
 - Automatic sends no explicit effort. Each fork inherits the effort returned by `thread/fork`, or the source thread's effective effort (including Automatic) when the response omits it.
 - Workspace filtering preserves a temporarily hidden thread's manual page-scoped effort. Archived thread state is pruned, and fallback retry restoration supplies the effort for later turns.
+- The pending `Thinking` details update to Medium before `turn/start`, matching the effort sent for an immediately submitted unresumed thread.
 - Selecting A and sending needs one resume, with no additional API call to fetch reasoning effort. Cached switching does not add resumes.
 
 #### Rollback/Cleanup
