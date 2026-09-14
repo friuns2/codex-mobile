@@ -1521,7 +1521,7 @@ export function useDesktopState() {
   const loadMessagePromiseByThreadId = new Map<string, Promise<void>>()
   let refreshSkillsPromise: Promise<void> | null = null
   let currentModelConfigPromise: ReturnType<typeof getCurrentModelConfig> | null = null
-  let hasLoadedInitialModelConfig = false
+  let hasCompletedInitialModelConfigAttempt = false
   let lastThreadListLoadAt = 0
   let hasLoadedSkills = false
   let lastSkillsLoadAt = 0
@@ -2011,9 +2011,9 @@ export function useDesktopState() {
       }
       selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
       selectedSpeedMode.value = currentConfig.speedMode
-      hasLoadedInitialModelConfig = true
       return currentConfig
     } finally {
+      hasCompletedInitialModelConfigAttempt = true
       if (currentModelConfigPromise === loadPromise) {
         currentModelConfigPromise = null
       }
@@ -2021,7 +2021,7 @@ export function useDesktopState() {
   }
 
   async function ensureInitialModelConfigLoaded(): Promise<void> {
-    if (hasLoadedInitialModelConfig) return
+    if (hasCompletedInitialModelConfigAttempt) return
     try {
       await loadCurrentModelConfig()
     } catch {
@@ -5045,7 +5045,7 @@ export function useDesktopState() {
 
     isSendingMessage.value = true
     error.value = ''
-    if (!hasLoadedInitialModelConfig) {
+    if (!hasCompletedInitialModelConfigAttempt) {
       await ensureInitialModelConfigLoaded()
     }
     const selectedModel = readModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT).trim()
@@ -5148,7 +5148,7 @@ export function useDesktopState() {
     collaborationModeOverride?: CollaborationModeKind,
     syncPendingActivity = false,
   ): Promise<void> {
-    if (!hasLoadedInitialModelConfig) {
+    if (!hasCompletedInitialModelConfigAttempt) {
       await ensureInitialModelConfigLoaded()
     }
     let reasoningEffort = readReasoningEffortForThread(threadId)

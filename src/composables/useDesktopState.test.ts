@@ -1314,6 +1314,20 @@ describe('per-thread reasoning effort', () => {
     expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBe('high')
   })
 
+  it('does not retry a failed initial config read between new-thread creation and its first turn', async () => {
+    const state = setup()
+    gatewayMocks.getCurrentModelConfig.mockRejectedValue(new Error('config unavailable'))
+    gatewayMocks.startThread.mockResolvedValue({
+      threadId: 'created-thread', model: 'gpt-6-astra', modelProvider: 'openai',
+    })
+
+    await state.sendMessageToNewThread('test only', '/tmp/project')
+    await vi.waitFor(() => expect(gatewayMocks.startThreadTurn).toHaveBeenCalled())
+
+    expect(gatewayMocks.getCurrentModelConfig).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBeUndefined()
+  })
+
   it('does not overwrite the current thread when a previous resume finishes late', async () => {
     const state = setup()
     let resolveA!: (value: ReturnType<typeof detail>) => void
