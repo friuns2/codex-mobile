@@ -1380,6 +1380,31 @@ describe('per-thread reasoning effort', () => {
     expect(state.selectedReasoningEffort.value).toBe('xhigh')
   })
 
+  it('defers effort pruning while the server thread list is incomplete', async () => {
+    const state = setup()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-b', '/tmp/project')] }],
+      nextCursor: 'older-page',
+    })
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.selectThread('thread-b')
+
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+
+    await state.selectThread('thread-b')
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-b', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    await state.refreshAll({ includeSelectedThreadMessages: false, forceThreadRefresh: true })
+    await state.selectThread('thread-a')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
+  })
+
   it('discards a manual effort after the thread is archived', async () => {
     const state = setup()
     const groups = [
@@ -1445,6 +1470,31 @@ describe('per-thread reasoning effort', () => {
     expect(state.selectedReasoningEffort.value).toBe('')
     await state.sendMessageToSelectedThread('test only')
     expect(gatewayMocks.startThreadTurn.mock.calls[0][4]).toBeUndefined()
+  })
+
+  it.each(['whole thread', 'from turn'])('snapshots source effort before forking a %s', async (kind) => {
+    const state = setup()
+    await state.selectThread('thread-a')
+    let resolveFork!: (value: {
+      threadId: string, model: string, modelProvider: string, cwd: string, messages: never[]
+    }) => void
+    gatewayMocks.forkThread.mockReturnValue(new Promise((resolve) => { resolveFork = resolve }))
+
+    const forking = kind === 'whole thread'
+      ? state.forkThreadById('thread-a')
+      : state.forkThreadFromTurn('thread-a', 0)
+    await vi.waitFor(() => expect(gatewayMocks.forkThread).toHaveBeenCalled())
+    state.setSelectedReasoningEffort('xhigh')
+    resolveFork({
+      threadId: 'forked-thread',
+      model: 'gpt-6-astra',
+      modelProvider: 'openai',
+      cwd: '/tmp/project',
+      messages: [],
+    })
+
+    expect(await forking).toBe('forked-thread')
+    expect(state.selectedReasoningEffort.value).toBe('medium')
   })
 
   it('restores server effort during fallback retry for later turns', async () => {

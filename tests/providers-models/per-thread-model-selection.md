@@ -54,6 +54,8 @@
 13. Archive a visited thread, refresh the list, and confirm its page-scoped effort entry is discarded when it is opened again.
 14. Exercise an unsupported-model fallback after the thread has been pruned from the visible list, then send another turn.
 15. Select an unresumed thread while global effort is Low, send immediately, and let its resume response restore Medium.
+16. Keep an older thread's manual XHigh choice while the thread list has another pagination cursor, then complete pagination without that thread.
+17. Start each fork path from a Medium source with an omitted fork-response effort, change the source to XHigh while the request is pending, then finish the fork.
 
 #### Expected Results
 - A restores Medium across reopening and page reload, and sends `effort: "medium"` despite global Low.
@@ -64,6 +66,7 @@
 - Automatic sends no explicit effort. Each fork inherits the effort returned by `thread/fork`, or the source thread's effective effort (including Automatic) when the response omits it.
 - Workspace filtering preserves a temporarily hidden thread's manual page-scoped effort. Archived thread state is pruned, and fallback retry restoration supplies the effort for later turns.
 - The pending `Thinking` details update to Medium before `turn/start`, matching the effort sent for an immediately submitted unresumed thread.
+- Partial pagination does not prune older or optimistic thread choices; a complete server list can prune an absent entry. Forks inherit the source effort captured when the fork request starts, while an explicit server response still takes priority.
 - Selecting A and sending needs one resume, with no additional API call to fetch reasoning effort. Cached switching does not add resumes.
 
 #### Rollback/Cleanup

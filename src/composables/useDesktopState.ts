@@ -2240,9 +2240,13 @@ export function useDesktopState() {
   function pruneThreadScopedState(
     flatThreads: UiThread[],
     reasoningEffortThreads: UiThread[],
+    hasCompleteReasoningEffortThreadList: boolean,
   ): void {
     const activeThreadIds = new Set(flatThreads.map((thread) => thread.id))
-    const reasoningEffortThreadIds = new Set(reasoningEffortThreads.map((thread) => thread.id))
+    const reasoningEffortThreadIds = new Set([
+      ...flatThreads.map((thread) => thread.id),
+      ...reasoningEffortThreads.map((thread) => thread.id),
+    ])
     const currentThreadId = selectedThreadId.value.trim()
     if (currentThreadId) {
       activeThreadIds.add(currentThreadId)
@@ -2266,9 +2270,11 @@ export function useDesktopState() {
       )
       saveSelectedCollaborationModeMap(nextSelectedCollaborationModeMap)
     }
-    for (const contextId of reasoningEffortByContext.keys()) {
-      if (contextId !== NEW_THREAD_COLLABORATION_MODE_CONTEXT && !reasoningEffortThreadIds.has(contextId)) {
-        reasoningEffortByContext.delete(contextId)
+    if (hasCompleteReasoningEffortThreadList) {
+      for (const contextId of reasoningEffortByContext.keys()) {
+        if (contextId !== NEW_THREAD_COLLABORATION_MODE_CONTEXT && !reasoningEffortThreadIds.has(contextId)) {
+          reasoningEffortByContext.delete(contextId)
+        }
       }
     }
     const nextReadState = pruneThreadStateMap(readStateByThreadId.value, activeThreadIds)
@@ -4323,6 +4329,13 @@ export function useDesktopState() {
       isThreadListFullyLoaded.value = hasLoadedAllThreadPages
       loadedThreadListGroups = mergeThreadGroupPages(loadedThreadListGroups, page.groups)
       applyThreadGroups(loadedThreadListGroups, rootsState)
+      if (hasLoadedAllThreadPages) {
+        pruneThreadScopedState(
+          flattenThreads(projectGroups.value),
+          flattenThreads(loadedThreadListGroups),
+          true,
+        )
+      }
     } catch {
       // Keep the first page usable; a later refresh can retry remaining pages.
     } finally {
@@ -4377,7 +4390,7 @@ export function useDesktopState() {
       }
 
       const flatThreads = flattenThreads(projectGroups.value)
-      pruneThreadScopedState(flatThreads, flattenThreads(loadedThreadListGroups))
+      pruneThreadScopedState(flatThreads, flattenThreads(loadedThreadListGroups), hasLoadedAllThreadPages)
 
       const currentExists = flatThreads.some((thread) => thread.id === selectedThreadId.value)
 
@@ -4744,6 +4757,7 @@ export function useDesktopState() {
     const sourceCwd = sourceThread?.cwd?.trim() ?? ''
     const sourceTitle = sourceThread?.title?.trim() ?? 'Forked chat'
     const selectedModel = readModelIdForThread(sourceThreadId)
+    const sourceReasoningEffort = readReasoningEffortForThread(sourceThreadId)
     error.value = ''
 
     try {
@@ -4755,7 +4769,7 @@ export function useDesktopState() {
       setThreadModelId(nextThreadId, forkedThread.model)
       restoreThreadReasoningEffort(
         nextThreadId,
-        forkedThread.reasoningEffort ?? readReasoningEffortForThread(sourceThreadId),
+        forkedThread.reasoningEffort ?? sourceReasoningEffort,
       )
       resumedThreadById.value = {
         ...resumedThreadById.value,
@@ -4800,6 +4814,7 @@ export function useDesktopState() {
     if (lastTurnIndex >= 0 && turnIndex > lastTurnIndex) return ''
 
     const sourceThread = flattenThreads(sourceGroups.value).find((row) => row.id === normalizedThreadId) ?? null
+    const sourceReasoningEffort = readReasoningEffortForThread(normalizedThreadId)
 
     try {
       error.value = ''
@@ -4813,7 +4828,7 @@ export function useDesktopState() {
       setThreadModelId(forkedThreadId, forked.model)
       restoreThreadReasoningEffort(
         forkedThreadId,
-        forked.reasoningEffort ?? readReasoningEffortForThread(normalizedThreadId),
+        forked.reasoningEffort ?? sourceReasoningEffort,
       )
       setPersistedMessagesForThread(forkedThreadId, forked.messages)
       loadedMessagesByThreadId.value = {
@@ -5391,7 +5406,7 @@ export function useDesktopState() {
     applyThreadFlags()
 
     const flatThreads = flattenThreads(projectGroups.value)
-    pruneThreadScopedState(flatThreads, flattenThreads(loadedThreadListGroups))
+    pruneThreadScopedState(flatThreads, flattenThreads(loadedThreadListGroups), hasLoadedAllThreadPages)
 
     const currentExists = flatThreads.some((thread) => thread.id === selectedThreadId.value)
     if (!currentExists) {
