@@ -2012,7 +2012,7 @@ export function useDesktopState() {
       availableModelIds.value = nextModelIds
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
-      if (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged) {
+      if (!normalizedSelectedModelId || !currentModelInNewList || (options?.providerChanged && !selectedThreadId.value)) {
         if (options?.providerChanged && nextModelIds.length > 0) {
           if (providerScopedModelId && modelIds.includes(providerScopedModelId)) {
             setSelectedModelId(providerScopedModelId)

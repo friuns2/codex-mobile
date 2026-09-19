@@ -753,6 +753,10 @@ describe('provider model selection', () => {
     reloaded.primeSelectedThread('zen-persist')
     await reloaded.loadMessages('zen-persist')
     expect(reloaded.selectedModelId.value).toBe('mimo-v2.5-free')
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({ model: 'muse-spark-1.3-contributor-free', providerId: 'opencode_zen', reasoningEffort: 'medium', speedMode: 'standard' })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['muse-spark-1.3-contributor-free', 'mimo-v2.5-free'])
+    await reloaded.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true, providerChanged: true })
+    expect(reloaded.selectedModelId.value).toBe('mimo-v2.5-free')
   })
 
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
