@@ -130,7 +130,7 @@ type ThreadSearchIndex = {
 type ProviderModelsResponse = {
   data: string[]
   providerId: string
-  source: 'provider'
+  source: 'provider' | 'custom'
 }
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
@@ -2178,6 +2178,16 @@ async function fetchCustomEndpointDefaultModel(baseUrl: string, apiKey: string):
   }
 }
 
+async function fetchCustomEndpointModelIds(baseUrl: string, apiKey: string): Promise<string[]> {
+  const normalizedBaseUrl = baseUrl.trim()
+  if (!normalizedBaseUrl) return []
+  const modelsUrl = buildProviderModelsUrl(normalizedBaseUrl, null)
+  const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+  const response = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS) })
+  if (!response.ok) return []
+  return normalizeProviderModelsData(await response.json() as unknown)
+}
+
 async function fetchOpenCodeZenModelIds(apiKey: string | null | undefined): Promise<string[]> {
   const headers: Record<string, string> = {}
   if (apiKey && apiKey !== 'dummy') {
@@ -2344,6 +2354,18 @@ async function readProviderModelIdsForProvider(
       data: await getFreeModels(),
       providerId: 'openrouter-free',
       source: 'provider',
+    }
+  }
+
+  if (normalizedProviderId === 'custom-endpoint' && fmState?.provider === 'custom' && fmState.customBaseUrl) {
+    try {
+      return {
+        data: await fetchCustomEndpointModelIds(fmState.customBaseUrl, fmState.apiKey ?? ''),
+        providerId: 'custom_endpoint',
+        source: 'custom',
+      }
+    } catch {
+      return { data: [], providerId: 'custom_endpoint', source: 'custom' }
     }
   }
 
