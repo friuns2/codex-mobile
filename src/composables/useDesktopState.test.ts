@@ -770,6 +770,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      onMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual([
@@ -929,6 +930,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenLastCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      onMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual([
@@ -986,6 +988,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenLastCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      onMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual(['big-pickle', 'ring-2.6-1t-free'])

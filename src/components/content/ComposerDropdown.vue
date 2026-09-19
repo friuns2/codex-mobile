@@ -40,10 +40,14 @@
             <button
               class="composer-dropdown-option"
               :class="{ 'is-selected': option.value === modelValue }"
+              :disabled="option.disabled"
+              :title="option.description"
               type="button"
               @click="onSelect(option.value)"
             >
               {{ option.label }}
+              <span v-if="option.badge" class="composer-dropdown-api-badge">{{ option.badge }}</span>
+              <small v-if="option.disabled" class="composer-dropdown-option-reason">{{ option.description }}</small>
             </button>
           </li>
           <li v-if="filteredOptions.length === 0" class="composer-dropdown-empty">
@@ -63,6 +67,9 @@ import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 type DropdownOption = {
   value: string
   label: string
+  badge?: string
+  description?: string
+  disabled?: boolean
 }
 
 const props = defineProps<{
@@ -173,6 +180,7 @@ function removeLayoutListeners(): void {
 }
 
 function onSelect(value: string): void {
+  if (props.options.find(option => option.value === value)?.disabled) return
   emit('update:modelValue', value)
   isOpen.value = false
   searchQuery.value = ''

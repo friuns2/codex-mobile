@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { handleUnifiedResponsesProxyRequest } from './unifiedResponsesProxy.js'
+import { getZenModelCatalog } from './zenModelCatalog.js'
+import { createZenToolAliasStream } from './zenToolAliases.js'
+import { handleUnifiedResponsesProxyRequest, type ResponsesApiRequest } from './unifiedResponsesProxy.js'
 
 const ZEN_RESPONSES_ENDPOINT = 'https://opencode.ai/zen/v1/responses'
 const ZEN_CHAT_COMPLETIONS_ENDPOINT = 'https://opencode.ai/zen/v1/chat/completions'
@@ -29,30 +31,42 @@ function createZenUpstreamHeaders(bearerToken: string): Record<string, string> {
 
 type ZenTool = Record<string, unknown> & { name?: unknown; type?: unknown }
 
-function createRequiredZenTool(name: 'bash' | 'read'): ZenTool {
-  return {
-    type: 'function',
-    name,
-    description: `OpenCode built-in ${name} tool`,
-    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
+export function normalizeZenResponsesRequest(payload: Record<string, unknown>, aliases = new Map<string, string>()): Record<string, unknown> {
+  const tools = Array.isArray(payload.tools)
+    ? payload.tools.filter((tool): tool is ZenTool => Boolean(tool) && typeof tool === 'object').map(tool => ({ ...tool }))
+    : []
+  const toolNames = new Set(tools.map(tool => tool.name))
+  // Admission tools must be executable. Alias an existing shell function with its real schema.
+  const executor = tools.find(tool => tool.type === 'function' && ['exec_command', 'shell_command', 'shell'].includes(String(tool.name)))
+  for (const name of ['bash', 'read'] as const) {
+    if (toolNames.has(name)) continue
+    if (!executor) throw new Error('Zen requires bash/read tools or an executable shell function (exec_command, shell_command, shell). No dummy tools are advertised.')
+    tools.push({ ...executor, name, description: name === 'read' ? 'Read files using the shell command schema.' : executor.description })
+    aliases.set(name, String(executor.name))
   }
+  return { ...payload, store: false, stream: true, tools, tool_choice: payload.tool_choice ?? 'auto' }
 }
 
-export function normalizeZenResponsesRequest(payload: Record<string, unknown>): Record<string, unknown> {
-  const tools = Array.isArray(payload.tools)
-    ? payload.tools.filter((tool): tool is ZenTool => Boolean(tool) && typeof tool === 'object')
-    : []
-  const toolNames = new Set(tools.map((tool) => typeof tool.name === 'string' ? tool.name : ''))
-  for (const name of ['bash', 'read'] as const) {
-    if (!toolNames.has(name)) tools.push(createRequiredZenTool(name))
+export async function resolveZenWireApi(payload: ResponsesApiRequest, bearerToken = ''): Promise<'responses' | 'chat'> {
+  const catalog = await getZenModelCatalog(bearerToken)
+  const model = catalog.find(row => row.id === payload.model)
+  if (!model || model.upstreamApi === 'unknown') throw new Error(`No supported Zen API route for model "${payload.model}". Refresh the model list or select another model.`)
+  if (model.supportsTools === false) throw new Error(`Zen model "${payload.model}" does not support agent tools. Select a tool-capable model.`)
+  if (payload.previous_response_id) throw new Error('Zen model routing requires full conversation history, not previous_response_id.')
+  for (const item of Array.isArray(payload.input) ? payload.input : []) {
+    if (item.type === 'reasoning' && (item as Record<string, unknown>).encrypted_content && !item.summary?.length && !item.content) throw new Error('Opaque reasoning history cannot be replayed across Zen models. Start a new conversation.')
+    for (const part of Array.isArray(item.content) ? item.content : []) {
+      if (part.type && !['input_text', 'output_text', 'text'].includes(part.type)) {
+        if (part.type !== 'input_image' || !model.inputModalities?.includes('image')) {
+          throw new Error(`Content type "${part.type}" is not supported by the ${model.upstreamApi} adapter for ${model.id}. Remove the attachment or select a compatible model.`)
+        }
+      }
+    }
   }
-  return {
-    ...payload,
-    store: false,
-    stream: true,
-    tools,
-    tool_choice: 'auto',
+  if (Array.isArray(payload.tools) && payload.tools.some(tool => !tool || typeof tool !== 'object' || (tool as ZenTool).type !== 'function')) {
+    throw new Error('Zen currently supports function tools only. Disable unsupported tools before sending.')
   }
+  return model.upstreamApi === 'responses' ? 'responses' : 'chat'
 }
 
 export function handleZenProxyRequest(
@@ -61,16 +75,21 @@ export function handleZenProxyRequest(
   bearerToken: string,
   wireApi: 'responses' | 'chat',
 ): void {
+  const aliases = new Map<string, string>()
   handleUnifiedResponsesProxyRequest(req, res, {
     bearerToken,
-    wireApi,
+    wireApi, // Retain the argument for caller compatibility; route each request by its model.
+    resolveWireApi: payload => resolveZenWireApi(payload, bearerToken),
+    prepareRequest: payload => normalizeZenResponsesRequest(payload, aliases) as ResponsesApiRequest,
+    streamToolCalls: true,
+    createResponseTransform: () => createZenToolAliasStream(aliases),
     responsesEndpoint: ZEN_RESPONSES_ENDPOINT,
     chatCompletionsEndpoint: ZEN_CHAT_COMPLETIONS_ENDPOINT,
     missingKeyMessage: 'Missing OpenCode Zen API key',
     requireBearerToken: false,
     allowToolFallbackToResponses: false,
     responsesPayloadFormat: 'raw',
-    sanitizeResponsesRequest: normalizeZenResponsesRequest,
+
     upstreamHeaders: () => createZenUpstreamHeaders(bearerToken),
   })
 }

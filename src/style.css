@@ -1908,3 +1908,17 @@
     font-size: 16px !important;
   }
 }
+
+/* Keep protocol badges legible in both composer themes. */
+.composer-dropdown-api-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #475569;
+}
+.composer-dropdown-option:disabled { opacity: .55; cursor: not-allowed; }
+.composer-dropdown-option-reason { display: block; font-size: 11px; }
+:root.dark .composer-dropdown-api-badge { color: #cbd5e1; }

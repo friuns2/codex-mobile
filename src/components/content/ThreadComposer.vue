@@ -438,6 +438,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ZenModelMetadata } from '../../types/zenModels'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
   CollaborationModeKind,
@@ -493,6 +494,7 @@ const props = defineProps<{
   collaborationModes?: CollaborationModeOption[]
   selectedCollaborationMode: CollaborationModeKind
   models: string[]
+  modelMetadata?: ZenModelMetadata[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
   selectedSpeedMode: SpeedMode
@@ -661,7 +663,15 @@ function formatModelLabel(modelId: string): string {
 }
 
 const modelOptions = computed(() =>
-  props.models.map((modelId) => ({ value: modelId, label: formatModelLabel(modelId) })),
+  props.models.map((modelId) => {
+    const metadata = props.modelMetadata?.find(model => model.id === modelId)
+    return {
+      value: modelId, label: formatModelLabel(modelId),
+      badge: metadata ? metadata.upstreamApi === 'responses' ? 'Responses' : metadata.upstreamApi === 'chat-completions' ? 'Chat' : 'Unknown API' : undefined,
+      disabled: metadata?.supportsTools === false || metadata?.upstreamApi === 'unknown',
+      description: metadata?.supportsTools === false ? 'Not compatible with agent tools' : metadata?.upstreamApi === 'unknown' ? 'No supported API route' : metadata ? 'Automatic routing · SDK-inferred, not access-tested' : undefined,
+    }
+  }),
 )
 const isPlanModeSelected = computed(() => props.selectedCollaborationMode === 'plan')
 

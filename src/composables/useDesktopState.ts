@@ -1,3 +1,4 @@
+import type { ZenModelMetadata } from '../types/zenModels'
 import { computed, ref } from 'vue'
 import {
 
@@ -1423,6 +1424,7 @@ export function useDesktopState() {
   let hasLoadedPersistedQueueState = false
   const eventUnreadByThreadId = ref<Record<string, boolean>>({})
   const availableModelIds = ref<string[]>([])
+  const availableModelMetadata = ref<ZenModelMetadata[]>([])
   const availableCollaborationModes = ref<CollaborationModeOption[]>([
     { value: 'default', label: 'Default' },
     { value: 'plan', label: 'Plan' },
@@ -1991,6 +1993,7 @@ export function useDesktopState() {
         includeProviderModels: isProviderBacked || options?.includeProviderModels !== false,
         requireProviderModels: isProviderBacked,
         providerId: isProviderBacked ? targetProviderId : undefined,
+        onMetadata: models => { availableModelMetadata.value = models },
       })
       const providerModelContextId = toProviderModelContextId(targetProviderId)
       const providerScopedModelId = providerModelContextId
@@ -5674,6 +5677,7 @@ export function useDesktopState() {
     selectedThreadId,
     availableCollaborationModes,
     availableModelIds,
+    availableModelMetadata,
     selectedCollaborationMode,
     selectedModelId,
     selectedReasoningEffort,
