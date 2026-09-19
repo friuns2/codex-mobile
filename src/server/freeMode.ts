@@ -155,7 +155,7 @@ export const OPENCODE_ZEN_PROVIDER_ID = 'opencode-zen'
 const CUSTOM_RUNTIME_PROVIDER_ID = 'custom_endpoint'
 const OPENCODE_ZEN_RUNTIME_PROVIDER_ID = 'opencode_zen'
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1'
-export const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
+export const OPENCODE_ZEN_DEFAULT_MODEL = 'muse-spark-1.3-contributor-free'
 
 export type WireApi = 'responses' | 'chat'
 

@@ -13,7 +13,7 @@ When the default Vite port (5173) is occupied, the zen-proxy URL must use the ac
 2. Run `pnpm run dev` — Vite auto-binds to 5174
 3. Open the app at `http://localhost:5174`
 4. Switch to "OpenCode Zen" provider, enter API key, save
-5. Send a message using big-pickle or any OpenCode Zen model
+5. Send a message using `muse-spark-1.3-contributor-free`
 
 #### Expected Results
 - The zen-proxy request goes to `http://127.0.0.1:5174/codex-api/zen-proxy/v1/responses` (actual port)

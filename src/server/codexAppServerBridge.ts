@@ -2343,7 +2343,7 @@ async function readProviderModelIdsForProvider(
       // Fall through to the offline Zen defaults.
     }
     return {
-      data: ['big-pickle', 'minimax-m2.5-free', 'nemotron-3-super-free', 'trinity-large-preview-free'],
+      data: ['muse-spark-1.3-contributor-free', 'muse-spark-1.2-contributor-free', 'mimo-v2.5-free', 'nemotron-3-ultra-free'],
       providerId: 'opencode-zen',
       source: 'provider',
     }
@@ -7907,7 +7907,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               } catch {
                 // OpenCode Zen model fetch failed
               }
-              setJson(res, 200, { data: ['big-pickle', 'minimax-m2.5-free', 'nemotron-3-super-free', 'trinity-large-preview-free'], exclusive: true, source: 'opencode-zen' })
+              setJson(res, 200, { data: ['muse-spark-1.3-contributor-free', 'muse-spark-1.2-contributor-free', 'mimo-v2.5-free', 'nemotron-3-ultra-free'], exclusive: true, source: 'opencode-zen' })
               return
             }
             if (fmState.provider === 'custom' && fmState.customBaseUrl) {
