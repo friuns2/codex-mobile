@@ -3,7 +3,8 @@
 ## Prerequisites
 
 - Build with `pnpm run build`.
-- Start isolated packaged servers with `scripts/run-zen-hybrid-docker.sh`.
+- Start isolated packaged servers with `scripts/run-zen-hybrid-docker.sh`. Select `/codex-home/zen-hybrid-e2e` so the test folder survives container replacement.
+- Create invalid-auth fixtures with complete fake ChatGPT token fields and a structurally valid fake JWT. Include access token, ID token, refresh token and account ID. Do not use real credentials or mistake malformed-auth fallback for an invalid-token failure.
 - Keep the persistent tmux server on port 5173 untouched.
 - Refresh the Zen model catalog. Treat zero prices and inferred API routes as metadata, not access proof.
 
