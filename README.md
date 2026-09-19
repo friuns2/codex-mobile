@@ -37,7 +37,7 @@ You run one command. It starts a local web server. You open it from your machine
 
 ```bash
 # 🔓 Run instantly (recommended)
-npx codexapp
+npx @brutalstrikedevs/codexapp
 
 # 🌐 Then open in browser
 # http://localhost:18923
@@ -55,13 +55,13 @@ Use `--no-tunnel` to disable this behavior.
 If you are using a provider or AI gateway that is already authenticated and do not want `codexapp` to force `codex login` during startup, use:
 
 ```bash
-npx codexapp --no-login
+npx @brutalstrikedevs/codexapp --no-login
 ```
 
 ### Linux 🐧
 ```bash
 node -v   # should be 18+
-npx codexapp
+npx @brutalstrikedevs/codexapp
 ```
 
 Maintainers: follow [the npm publishing procedure](docs/publishing.md) to release `@brutalstrikedevs/codexapp`.
@@ -69,14 +69,14 @@ Maintainers: follow [the npm publishing procedure](docs/publishing.md) to releas
 ### Windows 🪟 (PowerShell)
 ```powershell
 node -v   # 18+
-npx codexapp
+npx @brutalstrikedevs/codexapp
 ```
 
 ### Termux (Android) 🤖
 ```bash
 pkg update && pkg upgrade -y
 pkg install nodejs -y
-npx codexapp
+npx @brutalstrikedevs/codexapp
 ```
 
 Android background requirements:
@@ -88,7 +88,7 @@ Android background requirements:
 ```bash
 termux-wake-lock
 ```
-5. Open the shown URL in your Android browser. If the app is killed, return to Termux and run `npx codexapp` again.
+5. Open the shown URL in your Android browser. If the app is killed, return to Termux and run `npx @brutalstrikedevs/codexapp` again.
 
 ---
 
@@ -99,7 +99,7 @@ If you want to use codexUI from iPhone or iPad Safari, serving it over HTTPS is 
 A practical private setup is to run codexUI locally and publish it inside your tailnet with Tailscale Serve:
 
 ```powershell
-npx codexapp --no-tunnel --port 5900
+npx @brutalstrikedevs/codexapp --no-tunnel --port 5900
 tailscale serve --bg 5900
 ```
 
@@ -129,7 +129,7 @@ Notes:
 ## ✨ Features
 > **The payload.**
 
-- 🚀 One-command launch with `npx codexapp`
+- 🚀 One-command launch with `npx @brutalstrikedevs/codexapp`
 - 🌍 Cross-platform support for Linux, Windows, and Termux on Android
 - 🖥️ Browser-first Codex UI flow on `http://localhost:18923`
 - 🌐 LAN-friendly access from other devices on the same network
@@ -151,7 +151,7 @@ Set these environment variables before starting `codexapp`:
 export TELEGRAM_BOT_TOKEN="<your-telegram-bot-token>"
 export TELEGRAM_ALLOWED_USER_IDS="<your-telegram-user-id>,<optional-second-id>"
 export TELEGRAM_DEFAULT_CWD="$PWD" # optional, defaults to current working directory
-npx codexapp
+npx @brutalstrikedevs/codexapp
 ```
 
 `TELEGRAM_ALLOWED_USER_IDS` is required for safe access. Only allowlisted Telegram user IDs can use the bridge. If no allowed user IDs are configured, incoming Telegram messages are rejected.
