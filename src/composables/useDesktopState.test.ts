@@ -741,6 +741,20 @@ describe('live error overlay', () => {
 })
 
 describe('provider model selection', () => {
+  it('preserves an explicitly selected next-turn model across thread resume and reload', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockResolvedValue({ model: 'muse-spark-1.3-contributor-free', modelProvider: 'opencode_zen', messages: [], inProgress: false, activeTurnId: '', hasMoreOlder: false, turnIndexByTurnId: {} })
+    const state = useDesktopState()
+    state.primeSelectedThread('zen-persist')
+    state.setSelectedModelId('mimo-v2.5-free')
+    await state.loadMessages('zen-persist')
+    expect(state.selectedModelId.value).toBe('mimo-v2.5-free')
+    const reloaded = useDesktopState()
+    reloaded.primeSelectedThread('zen-persist')
+    await reloaded.loadMessages('zen-persist')
+    expect(reloaded.selectedModelId.value).toBe('mimo-v2.5-free')
+  })
+
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
     installTestWindow({
       'codex-web-local.selected-model-by-context.v1': JSON.stringify({

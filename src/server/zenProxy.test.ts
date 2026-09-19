@@ -17,6 +17,17 @@ describe('OpenCode Zen normalization', () => {
     expect(tools).toHaveLength(1)
     expect([...aliases]).toEqual([['bash', 'exec_command'], ['read', 'exec_command']])
   })
+  it('flattens executable namespace tools and maps portable history back to wire names', () => {
+    const aliases = new Map<string, string>()
+    const normalized = normalizeZenResponsesRequest({
+      tools: [shell, { type: 'namespace', name: 'agents', tools: [{ type: 'function', name: 'wait', parameters: { type: 'object' } }] }],
+      input: [{ type: 'function_call', name: 'agents.wait', call_id: 'call_1', arguments: '{}' }],
+    }, aliases)
+    expect(aliases.get('agents__wait')).toBe('agents.wait')
+    expect(normalized.tools).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'function', name: 'agents__wait' })]))
+    expect(normalized.input).toEqual([expect.objectContaining({ name: 'agents__wait' })])
+    expect(() => normalizeZenResponsesRequest({ tools: [shell, { type: 'web_search' }] })).toThrow('Disable hosted web search')
+  })
   it('does not duplicate supplied tools and rejects dummy tools', () => {
     expect((normalizeZenResponsesRequest({ tools: [{ type: 'function', name: 'bash' }, { type: 'function', name: 'read' }] }).tools as unknown[])).toHaveLength(2)
     expect(() => normalizeZenResponsesRequest({})).toThrow('No dummy tools')
@@ -28,11 +39,12 @@ describe('OpenCode Zen normalization', () => {
     for await (const chunk of stream) text += chunk
     expect(text.match(/exec_command/g)).toHaveLength(2)
   })
-  it('routes by model and rejects unknown routes, incompatible tools and opaque history', async () => {
+  it('routes by model and rejects unknown routes, incompatible tools and nonportable response IDs', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('models.dev') ? {
       opencode: { npm: '@ai-sdk/openai-compatible', models: { muse: { provider: { npm: '@ai-sdk/openai' }, tool_call: true }, pickle: { tool_call: true }, jev: { tool_call: false } } },
     } : { data: [{ id: 'muse' }, { id: 'pickle' }, { id: 'jev' }] }))))
     expect(await resolveZenWireApi({ model: 'muse', input: 'hi' })).toBe('responses')
+    expect(await resolveZenWireApi({ model: 'muse', input: [{ type: 'reasoning', encrypted_content: 'opaque' } as never] })).toBe('responses')
     expect(await resolveZenWireApi({ model: 'pickle', input: 'hi' })).toBe('chat')
     await expect(resolveZenWireApi({ model: 'missing', input: 'hi' })).rejects.toThrow('No supported')
     await expect(resolveZenWireApi({ model: 'jev', input: 'hi' })).rejects.toThrow('does not support')

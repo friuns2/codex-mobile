@@ -345,6 +345,7 @@
                 </div>
               </div>
               <div v-if="selectedProvider === 'opencode-zen'" class="sidebar-settings-row sidebar-settings-row--input">
+                <p class="sidebar-settings-label">Automatic API routing by model. Hosted web search is disabled for Zen. Switching API families replays messages and tool results, not private reasoning.</p>
                 <div class="sidebar-settings-provider-info">
                   <span class="sidebar-settings-label">{{ t('OpenCode Zen API key') }}</span>
                   <a

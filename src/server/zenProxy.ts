@@ -32,9 +32,23 @@ function createZenUpstreamHeaders(bearerToken: string): Record<string, string> {
 type ZenTool = Record<string, unknown> & { name?: unknown; type?: unknown }
 
 export function normalizeZenResponsesRequest(payload: Record<string, unknown>, aliases = new Map<string, string>()): Record<string, unknown> {
-  const tools = Array.isArray(payload.tools)
-    ? payload.tools.filter((tool): tool is ZenTool => Boolean(tool) && typeof tool === 'object').map(tool => ({ ...tool }))
-    : []
+  const tools: ZenTool[] = []
+  const flatten = (rows: unknown[], namespace = '') => {
+    for (const value of rows) {
+      if (!value || typeof value !== 'object') throw new Error('Invalid Zen tool declaration')
+      const tool = value as ZenTool
+      if (tool.type === 'namespace' && typeof tool.name === 'string' && Array.isArray(tool.tools)) {
+        flatten(tool.tools, namespace ? `${namespace}.${tool.name}` : tool.name)
+      } else if (tool.type === 'function' && typeof tool.name === 'string') {
+        const name = namespace ? `${namespace.split('.').join('__')}__${tool.name}` : tool.name
+        if (namespace) aliases.set(name, `${namespace}.${tool.name}`)
+        tools.push({ ...tool, name })
+      } else {
+        throw new Error(`Zen cannot execute tool type "${tool.type}". Disable hosted web search or unsupported tools for this provider.`)
+      }
+    }
+  }
+  flatten(Array.isArray(payload.tools) ? payload.tools : [])
   const toolNames = new Set(tools.map(tool => tool.name))
   // Admission tools must be executable. Alias an existing shell function with its real schema.
   const executor = tools.find(tool => tool.type === 'function' && ['exec_command', 'shell_command', 'shell'].includes(String(tool.name)))
@@ -44,7 +58,13 @@ export function normalizeZenResponsesRequest(payload: Record<string, unknown>, a
     tools.push({ ...executor, name, description: name === 'read' ? 'Read files using the shell command schema.' : executor.description })
     aliases.set(name, String(executor.name))
   }
-  return { ...payload, store: false, stream: true, tools, tool_choice: payload.tool_choice ?? 'auto' }
+  const reverseNames = new Map([...aliases].map(([wire, runtime]) => [runtime, wire]))
+  const input = Array.isArray(payload.input) ? payload.input.map(value => {
+    const item = value as Record<string, unknown>
+    return item.type === 'function_call' && typeof item.name === 'string' && reverseNames.has(item.name)
+      ? { ...item, name: reverseNames.get(item.name) } : item
+  }) : payload.input
+  return { ...payload, input, store: false, stream: true, tools, tool_choice: payload.tool_choice ?? 'auto' }
 }
 
 export async function resolveZenWireApi(payload: ResponsesApiRequest, bearerToken = ''): Promise<'responses' | 'chat'> {
@@ -54,7 +74,7 @@ export async function resolveZenWireApi(payload: ResponsesApiRequest, bearerToke
   if (model.supportsTools === false) throw new Error(`Zen model "${payload.model}" does not support agent tools. Select a tool-capable model.`)
   if (payload.previous_response_id) throw new Error('Zen model routing requires full conversation history, not previous_response_id.')
   for (const item of Array.isArray(payload.input) ? payload.input : []) {
-    if (item.type === 'reasoning' && (item as Record<string, unknown>).encrypted_content && !item.summary?.length && !item.content) throw new Error('Opaque reasoning history cannot be replayed across Zen models. Start a new conversation.')
+    // Native Responses keeps its reasoning state; the Chat adapter replays only text/summary, never encrypted provider state.
     for (const part of Array.isArray(item.content) ? item.content : []) {
       if (part.type && !['input_text', 'output_text', 'text'].includes(part.type)) {
         if (part.type !== 'input_image' || !model.inputModalities?.includes('image')) {
@@ -62,9 +82,6 @@ export async function resolveZenWireApi(payload: ResponsesApiRequest, bearerToke
         }
       }
     }
-  }
-  if (Array.isArray(payload.tools) && payload.tools.some(tool => !tool || typeof tool !== 'object' || (tool as ZenTool).type !== 'function')) {
-    throw new Error('Zen currently supports function tools only. Disable unsupported tools before sending.')
   }
   return model.upstreamApi === 'responses' ? 'responses' : 'chat'
 }

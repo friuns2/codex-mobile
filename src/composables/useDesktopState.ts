@@ -1890,7 +1890,7 @@ export function useDesktopState() {
 
       if (resumedThreadById.value[threadId] !== true) {
         const resumedThread = await resumeThread(threadId)
-        if (resumedThread.model) {
+        if (resumedThread.model && !normalizeStoredModelId(selectedModelIdByContext.value[threadId])) {
           setThreadModelId(threadId, resolveThreadModelForProvider(threadId, resumedThread.model, resumedThread.modelProvider))
         }
         if (resumedThread.modelProvider) {
@@ -4412,7 +4412,7 @@ export function useDesktopState() {
       if (detail.modelProvider) {
         setThreadModelProviderId(threadId, detail.modelProvider)
       }
-      if (detail.model) {
+      if (detail.model && !normalizeStoredModelId(selectedModelIdByContext.value[threadId])) {
         setThreadModelId(threadId, resolveThreadModelForProvider(threadId, detail.model, detail.modelProvider))
       }
       if (resumedThread) {
@@ -5081,7 +5081,7 @@ export function useDesktopState() {
     try {
       if (resumedThreadById.value[threadId] !== true) {
         const resumedThread = await resumeThread(threadId)
-        if (resumedThread.model) {
+        if (resumedThread.model && !normalizeStoredModelId(selectedModelIdByContext.value[threadId])) {
           setThreadModelId(threadId, resolveThreadModelForProvider(threadId, resumedThread.model, resumedThread.modelProvider))
         }
         if (resumedThread.modelProvider) {
