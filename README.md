@@ -64,6 +64,8 @@ node -v   # should be 18+
 npx codexapp
 ```
 
+Maintainers: follow [the npm publishing procedure](docs/publishing.md) to release `@brutalstrikedevs/codexapp`.
+
 ### Windows 🪟 (PowerShell)
 ```powershell
 node -v   # 18+
