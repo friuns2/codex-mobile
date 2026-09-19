@@ -9,12 +9,13 @@ describe('OpenCode Zen normalization', () => {
   it('aliases required tools to an executable shell with its real schema, without mutating input', () => {
     const tools = [shell]
     const aliases = new Map<string, string>()
-    const normalized = normalizeZenResponsesRequest({ tools, stream: false }, aliases)
+    const normalized = normalizeZenResponsesRequest({ tools, stream: false, input: [{ type: 'function_call', name: 'exec_command', call_id: 'real', arguments: '{}' }] }, aliases)
     expect(normalized.stream).toBe(true)
     expect(normalized.store).toBe(false)
     expect(normalized.tool_choice).toBe('auto')
     expect(normalized.tools).toEqual(expect.arrayContaining(['bash', 'read'].map(name => expect.objectContaining({ name, parameters: shell.parameters }))))
     expect(tools).toHaveLength(1)
+    expect(normalized.input).toEqual([expect.objectContaining({ name: 'exec_command' })])
     expect([...aliases]).toEqual([['bash', 'exec_command'], ['read', 'exec_command']])
   })
   it('flattens executable namespace tools and maps portable history back to wire names', () => {

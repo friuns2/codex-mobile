@@ -58,7 +58,7 @@ export function normalizeZenResponsesRequest(payload: Record<string, unknown>, a
     tools.push({ ...executor, name, description: name === 'read' ? 'Read files using the shell command schema.' : executor.description })
     aliases.set(name, String(executor.name))
   }
-  const reverseNames = new Map([...aliases].map(([wire, runtime]) => [runtime, wire]))
+  const reverseNames = new Map([...aliases].filter(([wire]) => wire !== 'bash' && wire !== 'read').map(([wire, runtime]) => [runtime, wire]))
   const input = Array.isArray(payload.input) ? payload.input.map(value => {
     const item = value as Record<string, unknown>
     return item.type === 'function_call' && typeof item.name === 'string' && reverseNames.has(item.name)
