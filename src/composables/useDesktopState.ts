@@ -1979,22 +1979,30 @@ export function useDesktopState() {
     return [`Mode: ${modeLabel}`, `Model: ${modelLabel}`, `Thinking: ${effortLabel}`, `Speed: ${speedLabel}`]
   }
 
+  let modelRefreshGeneration = 0
+
   async function refreshModelPreferences(options?: { providerChanged?: boolean; includeProviderModels?: boolean }): Promise<void> {
+    const generation = ++modelRefreshGeneration
+    const refreshThreadId = selectedThreadId.value
     codexCliMissingError.value = ''
     try {
       const currentConfig = await getCurrentModelConfig()
+      if (generation !== modelRefreshGeneration || refreshThreadId !== selectedThreadId.value) return
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
       activeProviderId.value = normalizedProviderId
       const targetProviderId = readProviderIdForThread(selectedThreadId.value)
       const isProviderBacked = targetProviderId !== 'codex'
-      const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
+      let metadata: ZenModelMetadata[] = []
       const modelIds = await getAvailableModelIds({
         includeProviderModels: isProviderBacked || options?.includeProviderModels !== false,
         requireProviderModels: isProviderBacked,
         providerId: isProviderBacked ? targetProviderId : undefined,
-        onMetadata: models => { availableModelMetadata.value = models },
+        onMetadata: models => { metadata = models },
       })
+      if (generation !== modelRefreshGeneration || refreshThreadId !== selectedThreadId.value) return
+      availableModelMetadata.value = metadata
+      const normalizedSelectedModelId = readModelIdForThread(refreshThreadId)
       const providerModelContextId = toProviderModelContextId(targetProviderId)
       const providerScopedModelId = providerModelContextId
         ? normalizeStoredModelId(selectedModelIdByContext.value[providerModelContextId])

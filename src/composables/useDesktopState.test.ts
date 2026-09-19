@@ -741,6 +741,22 @@ describe('live error overlay', () => {
 })
 
 describe('provider model selection', () => {
+  it('does not overwrite a model chosen while catalog refresh is pending', async () => {
+    installTestWindow()
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({ model: 'muse-spark-1.3-contributor-free', providerId: 'opencode_zen', reasoningEffort: 'medium', speedMode: 'standard' })
+    let release!: (models: string[]) => void
+    gatewayMocks.getAvailableModelIds.mockImplementation(() => new Promise<string[]>(resolve => { release = resolve }))
+    const state = useDesktopState()
+    state.primeSelectedThread('zen-race')
+    state.setSelectedModelId('muse-spark-1.3-contributor-free')
+    const refreshing = state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    state.setSelectedModelId('mimo-v2.5-free')
+    release(['muse-spark-1.3-contributor-free', 'mimo-v2.5-free'])
+    await refreshing
+    expect(state.selectedModelId.value).toBe('mimo-v2.5-free')
+  })
+
   it('preserves an explicitly selected next-turn model across thread resume and reload', async () => {
     installTestWindow()
     gatewayMocks.resumeThread.mockResolvedValue({ model: 'muse-spark-1.3-contributor-free', modelProvider: 'opencode_zen', messages: [], inProgress: false, activeTurnId: '', hasMoreOlder: false, turnIndexByTurnId: {} })
