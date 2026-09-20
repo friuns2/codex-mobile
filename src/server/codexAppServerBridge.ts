@@ -444,7 +444,29 @@ function isInlineDataUrl(value: string): boolean {
   return /^data:/iu.test(value.trim())
 }
 
-function inferImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
+function readUint32BigEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] * 0x1000000
+    + bytes[offset + 1] * 0x10000
+    + bytes[offset + 2] * 0x100
+    + bytes[offset + 3]
+}
+
+function readUint32LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset]
+    + bytes[offset + 1] * 0x100
+    + bytes[offset + 2] * 0x10000
+    + bytes[offset + 3] * 0x1000000
+}
+
+function matchesAscii(bytes: Uint8Array, offset: number, value: string): boolean {
+  if (offset < 0 || offset + value.length > bytes.length) return false
+  for (let index = 0; index < value.length; index += 1) {
+    if (bytes[offset + index] !== value.charCodeAt(index)) return false
+  }
+  return true
+}
+
+function inferImageMimeTypeFromHeader(bytes: Uint8Array): string | null {
   if (
     bytes.length >= 8 &&
     bytes[0] === 0x89 &&
@@ -504,11 +526,140 @@ function inferImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
   return null
 }
 
+function isStructurallyCompletePng(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/png') return false
+  let offset = 8
+  let firstChunk = true
+  while (offset + 12 <= bytes.length) {
+    const payloadSize = readUint32BigEndian(bytes, offset)
+    const chunkEnd = offset + 12 + payloadSize
+    if (!Number.isSafeInteger(chunkEnd) || chunkEnd > bytes.length) return false
+    const typeOffset = offset + 4
+    if (firstChunk && (!matchesAscii(bytes, typeOffset, 'IHDR') || payloadSize !== 13)) return false
+    if (matchesAscii(bytes, typeOffset, 'IEND')) {
+      return payloadSize === 0 && chunkEnd === bytes.length
+    }
+    firstChunk = false
+    offset = chunkEnd
+  }
+  return false
+}
+
+function isStructurallyCompleteWebp(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/webp' || bytes.length < 20) return false
+  const declaredLength = readUint32LittleEndian(bytes, 4) + 8
+  if (declaredLength !== bytes.length) return false
+  const hasImageChunk = matchesAscii(bytes, 12, 'VP8 ')
+    || matchesAscii(bytes, 12, 'VP8L')
+    || matchesAscii(bytes, 12, 'VP8X')
+  if (!hasImageChunk) return false
+  const firstChunkLength = readUint32LittleEndian(bytes, 16)
+  const paddedChunkLength = firstChunkLength + (firstChunkLength % 2)
+  return 20 + paddedChunkLength <= bytes.length
+}
+
+function isStructurallyCompleteJpeg(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/jpeg' || bytes.length < 8) return false
+  let offset = 2
+  let hasStartOfFrame = false
+  let hasStartOfScan = false
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      if (!hasStartOfScan) return false
+      offset += 1
+      continue
+    }
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1
+    if (offset >= bytes.length) return false
+    const marker = bytes[offset]
+    offset += 1
+    if (marker === 0xd9) return hasStartOfFrame && hasStartOfScan && offset === bytes.length
+    if (marker === 0x00 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
+    if (offset + 2 > bytes.length) return false
+    const segmentLength = bytes[offset] * 0x100 + bytes[offset + 1]
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) return false
+    if ((marker >= 0xc0 && marker <= 0xc3)
+      || (marker >= 0xc5 && marker <= 0xc7)
+      || (marker >= 0xc9 && marker <= 0xcb)
+      || (marker >= 0xcd && marker <= 0xcf)) {
+      hasStartOfFrame = true
+    }
+    if (marker === 0xda) hasStartOfScan = true
+    offset += segmentLength
+  }
+  return false
+}
+
+function isStructurallyCompleteBmp(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/bmp' || bytes.length < 26) return false
+  const declaredLength = readUint32LittleEndian(bytes, 2)
+  const pixelOffset = readUint32LittleEndian(bytes, 10)
+  const dibHeaderLength = readUint32LittleEndian(bytes, 14)
+  return declaredLength === bytes.length
+    && pixelOffset >= 14 + dibHeaderLength
+    && pixelOffset < bytes.length
+    && dibHeaderLength >= 12
+    && 14 + dibHeaderLength <= bytes.length
+}
+
+function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/avif') return false
+  let offset = 0
+  let hasFtyp = false
+  let hasMeta = false
+  let hasMediaData = false
+  while (offset + 8 <= bytes.length) {
+    const size32 = readUint32BigEndian(bytes, offset)
+    let headerLength = 8
+    let boxLength = size32
+    if (size32 === 1) {
+      if (offset + 16 > bytes.length || readUint32BigEndian(bytes, offset + 8) !== 0) return false
+      headerLength = 16
+      boxLength = readUint32BigEndian(bytes, offset + 12)
+    } else if (size32 === 0) {
+      boxLength = bytes.length - offset
+    }
+    if (boxLength < headerLength || offset + boxLength > bytes.length) return false
+    if (matchesAscii(bytes, offset + 4, 'ftyp')) {
+      if (offset !== 0 || boxLength < headerLength + 8) return false
+      for (let brandOffset = offset + headerLength; brandOffset + 4 <= offset + boxLength; brandOffset += 4) {
+        if (matchesAscii(bytes, brandOffset, 'avif') || matchesAscii(bytes, brandOffset, 'avis')) {
+          hasFtyp = true
+          break
+        }
+      }
+    } else if (matchesAscii(bytes, offset + 4, 'meta')) {
+      hasMeta = true
+    } else if (matchesAscii(bytes, offset + 4, 'mdat')) {
+      hasMediaData = true
+    }
+    offset += boxLength
+  }
+  return offset === bytes.length && hasFtyp && hasMeta && hasMediaData
+}
+
+function inferCompleteImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
+  const mimeType = inferImageMimeTypeFromHeader(bytes)
+  if (mimeType === 'image/png') return isStructurallyCompletePng(bytes) ? mimeType : null
+  if (mimeType === 'image/jpeg') return isStructurallyCompleteJpeg(bytes) ? mimeType : null
+  if (mimeType === 'image/webp') return isStructurallyCompleteWebp(bytes) ? mimeType : null
+  if (mimeType === 'image/gif') {
+    return bytes.length >= 14
+      && bytes.subarray(13, -1).includes(0x2c)
+      && bytes[bytes.length - 1] === 0x3b
+      ? mimeType
+      : null
+  }
+  if (mimeType === 'image/bmp') return isStructurallyCompleteBmp(bytes) ? mimeType : null
+  if (mimeType === 'image/avif') return isStructurallyCompleteAvif(bytes) ? mimeType : null
+  return null
+}
+
 function inferImageMimeTypeFromBase64(value: string): string | null {
   const compact = value.trim().replace(/\s+/gu, '')
   if (compact.length < 8 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(compact)) return null
   try {
-    return inferImageMimeTypeFromBytes(Buffer.from(compact.slice(0, 64), 'base64'))
+    return inferImageMimeTypeFromHeader(Buffer.from(compact.slice(0, 64), 'base64'))
   } catch {
     return null
   }
@@ -577,9 +728,9 @@ async function persistInlineDataUrlToLocalFile(dataUrl: string, baseName: string
   if (bytes.length === 0) return null
 
   const hash = createHash('sha1').update(bytes).digest('hex')
-  const persistedMimeType = mimeType.startsWith('image/')
-    ? inferImageMimeTypeFromBytes(bytes) ?? mimeType
-    : mimeType
+  const inferredImageMimeType = inferCompleteImageMimeTypeFromBytes(bytes)
+  if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml' && !inferredImageMimeType) return null
+  const persistedMimeType = inferredImageMimeType ?? mimeType
   const ext = extensionFromMimeType(persistedMimeType)
   const mediaDir = join(tmpdir(), 'codex-web-inline-media')
   await mkdir(mediaDir, { recursive: true })
@@ -6040,6 +6191,7 @@ export class AppServerProcess {
   private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
+  private readonly notificationGenerationByThreadId = new Map<string, number>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private activeConfigSignature = ''
 
@@ -6194,6 +6346,10 @@ export class AppServerProcess {
     this.captureItemFromNotification(notification)
     const nThreadId = this.extractThreadIdFromParams(notification.params)
     if (nThreadId) {
+      this.notificationGenerationByThreadId.set(
+        nThreadId,
+        (this.notificationGenerationByThreadId.get(nThreadId) ?? 0) + 1,
+      )
       this.invalidateLiveStateCache(nThreadId)
       this.threadTurnPageReadCacheByThreadId.delete(nThreadId)
     }
@@ -6253,6 +6409,16 @@ export class AppServerProcess {
     this.threadTurnPageReadCacheByThreadId.delete(threadId)
   }
 
+  getNotificationGeneration(threadId: string): number {
+    return this.notificationGenerationByThreadId.get(threadId) ?? 0
+  }
+
+  storeThreadReadSnapshotIfCurrent(threadId: string, generation: number, snapshot: unknown): boolean {
+    if (this.getNotificationGeneration(threadId) !== generation) return false
+    this.storeThreadReadSnapshot(threadId, snapshot)
+    return true
+  }
+
   getLastThreadReadSnapshot(threadId: string): unknown | null {
     return this.lastThreadReadSnapshotByThreadId.get(threadId) ?? null
   }
@@ -6285,6 +6451,18 @@ export class AppServerProcess {
 
   cacheLiveState(threadId: string, data: unknown, turnCount: number, sessionSize: number): void {
     this.liveStateCache.set(threadId, { data, turnCount, sessionSize })
+  }
+
+  cacheLiveStateIfCurrent(
+    threadId: string,
+    generation: number,
+    data: unknown,
+    turnCount: number,
+    sessionSize: number,
+  ): boolean {
+    if (this.getNotificationGeneration(threadId) !== generation) return false
+    this.cacheLiveState(threadId, data, turnCount, sessionSize)
+    return true
   }
 
   getCachedLiveState(threadId: string, turnCount: number, sessionSize: number): unknown | null {
@@ -7703,7 +7881,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
           : sanitizedResult
 
-        if (body.method === 'thread/read') {
+        const resultRecordBeforeCaptureMerge = asRecord(result)
+        const resultThreadBeforeCaptureMerge = asRecord(resultRecordBeforeCaptureMerge?.thread)
+        const resultThreadId = typeof resultThreadBeforeCaptureMerge?.id === 'string'
+          ? resultThreadBeforeCaptureMerge.id
+          : ''
+        const resultNotificationGeneration = resultThreadId
+          ? appServer.getNotificationGeneration(resultThreadId)
+          : 0
+
+        if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
           result = await mergeCapturedItemsIntoThreadResult(appServer, result)
         }
 
@@ -7711,8 +7898,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          const rpcRecord = asRecord(result)
 	          const rpcThread = asRecord(rpcRecord?.thread)
 	          const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
-          if (rpcThreadId) {
-            appServer.storeThreadReadSnapshot(rpcThreadId, result)
+          if (rpcThreadId && rpcThreadId === resultThreadId) {
+            appServer.storeThreadReadSnapshotIfCurrent(rpcThreadId, resultNotificationGeneration, result)
           }
         }
 
@@ -7831,13 +8018,13 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
+          const notificationGeneration = appServer.getNotificationGeneration(threadId)
           const threadReadResult = mergeStreamTurnErrorsIntoThreadResult(appServer, await appServer.rpc('thread/read', {
             threadId,
             includeTurns: true,
           }))
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', threadReadResult)
           const mergedSanitized = await mergeCapturedItemsIntoThreadResult(appServer, sanitized)
-          appServer.storeThreadReadSnapshot(threadId, mergedSanitized)
 
           const record = asRecord(mergedSanitized)
           const thread = asRecord(record?.thread)
@@ -7852,7 +8039,9 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             } catch { /* missing */ }
           }
 
-          const cached = appServer.getCachedLiveState(threadId, rawTurns.length, sessionSize)
+          const cached = appServer.getNotificationGeneration(threadId) === notificationGeneration
+            ? appServer.getCachedLiveState(threadId, rawTurns.length, sessionSize)
+            : null
           if (cached) {
             setJson(res, 200, cached)
             return
@@ -7883,8 +8072,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }
 
           if (!isInProgress) {
-            appServer.cacheLiveState(threadId, responseData, rawTurns.length, sessionSize)
+            appServer.cacheLiveStateIfCurrent(
+              threadId,
+              notificationGeneration,
+              responseData,
+              rawTurns.length,
+              sessionSize,
+            )
           }
+
+          appServer.storeThreadReadSnapshotIfCurrent(threadId, notificationGeneration, mergedSanitized)
 
           setJson(res, 200, responseData)
         } catch (error) {

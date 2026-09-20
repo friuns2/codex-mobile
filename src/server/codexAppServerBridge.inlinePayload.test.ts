@@ -20,10 +20,10 @@ import {
 const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
-const jpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2w=='
-const webpBase64 = 'UklGRiIAAABXRUJQVlA4IC4AAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA='
-const avifBase64 = 'AAAAIGZ0eXBhdmlm'
-const bmpBase64 = 'Qk0AAAAA'
+const jpegBase64 = '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATAABAQAAAAAAAAAAAAAAAAAAAAYBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAAgACAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiwBRf3//2Q=='
+const webpBase64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA='
+const avifBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAADG1ldGEAAAAAAAAADG1kYXQBAgME'
+const bmpBase64 = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9AAD9AAAAAP0AAP0AAA=='
 
 afterEach(() => {
   vi.useRealTimers()
@@ -69,12 +69,12 @@ describe('thread inline media sanitization', () => {
     })
     const appServer = new AppServerProcess(sanitizer)
     const internals = appServer as unknown as {
-      captureItemFromNotification: (notification: { method: string; params: unknown }) => void
+      emitNotification: (notification: { method: string; params: unknown }) => void
       capturedItemsByThreadId: Map<string, Map<string, { data: Record<string, unknown>; sanitized: boolean }>>
     }
     const turns = [{ id: 'turn-live', items: [] }]
 
-    internals.captureItemFromNotification({
+    internals.emitNotification({
       method: 'item/started',
       params: {
         threadId: 'thread-live',
@@ -84,9 +84,10 @@ describe('thread inline media sanitization', () => {
     })
     const firstRead = appServer.mergeItemsIntoTurns('thread-live', turns)
     const concurrentRead = appServer.mergeItemsIntoTurns('thread-live', turns)
+    const notificationGeneration = appServer.getNotificationGeneration('thread-live')
     expect(sanitizer).toHaveBeenCalledTimes(1)
 
-    internals.captureItemFromNotification({
+    internals.emitNotification({
       method: 'item/completed',
       params: {
         threadId: 'thread-live',
@@ -113,6 +114,10 @@ describe('thread inline media sanitization', () => {
     const cachedCapture = internals.capturedItemsByThreadId.get('thread-live')?.get('generated-live')
     expect(cachedCapture?.sanitized).toBe(true)
     expect(cachedCapture?.data).not.toHaveProperty('result')
+    expect(appServer.cacheLiveStateIfCurrent('thread-live', notificationGeneration, { stale: true }, 1, 1)).toBe(false)
+    expect(appServer.getCachedLiveState('thread-live', 1, 1)).toBeNull()
+    expect(appServer.storeThreadReadSnapshotIfCurrent('thread-live', notificationGeneration, { stale: true })).toBe(false)
+    expect(appServer.getLastThreadReadSnapshot('thread-live')).toBeNull()
 
     await mergeCapturedItemsIntoThreadResult(appServer, mergedResult)
     expect(internals.capturedItemsByThreadId.has('thread-live')).toBe(false)
@@ -298,6 +303,29 @@ describe('thread inline media sanitization', () => {
     }
     expect(jpegView.path).toMatch(/\.jpg$/u)
     expect(gifView.path).toMatch(/\.gif$/u)
+  })
+
+  it('skips a truncated image header before a complete fallback', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/resume', {
+      thread: {
+        id: 'thread-1',
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'generated-1',
+            type: 'imageGeneration',
+            result: 'Qk0AAAAA',
+            b64_json: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toMatch(/\.png$/u)
+    expect(existsSync(imageView.path as string)).toBe(true)
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('b64_json')
   })
 
   it('sanitizes generated images captured after the materialized thread read', async () => {

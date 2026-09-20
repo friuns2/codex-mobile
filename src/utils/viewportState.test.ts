@@ -37,6 +37,7 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousKeyboardOpen: true,
       widthChanged: true,
       holdStartVisualHeight: 0,
+      currentLayoutHeight: 375,
       currentVisualHeight: 200,
       hasKeyboardFocus: true,
     })).toBe(true)
@@ -48,6 +49,7 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousKeyboardOpen: true,
       widthChanged: true,
       holdStartVisualHeight: 0,
+      currentLayoutHeight: 375,
       currentVisualHeight: 200,
       hasKeyboardFocus: false,
     })).toBe(false)
@@ -59,6 +61,7 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousKeyboardOpen: true,
       widthChanged: false,
       holdStartVisualHeight: 200,
+      currentLayoutHeight: 375,
       currentVisualHeight: 375,
       hasKeyboardFocus: true,
     })).toBe(false)
@@ -70,6 +73,7 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousKeyboardOpen: true,
       widthChanged: false,
       holdStartVisualHeight: 200,
+      currentLayoutHeight: 375,
       currentVisualHeight: 280,
       hasKeyboardFocus: true,
     })).toBe(true)
@@ -78,7 +82,20 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousKeyboardOpen: true,
       widthChanged: false,
       holdStartVisualHeight: 200,
+      currentLayoutHeight: 375,
       currentVisualHeight: 360,
+      hasKeyboardFocus: true,
+    })).toBe(false)
+  })
+
+  it('does not hold keyboard layout when the first rotated frame is already expanded', () => {
+    expect(resolveVirtualKeyboardRotationHold({
+      previousHold: false,
+      previousKeyboardOpen: true,
+      widthChanged: true,
+      holdStartVisualHeight: 0,
+      currentLayoutHeight: 375,
+      currentVisualHeight: 375,
       hasKeyboardFocus: true,
     })).toBe(false)
   })

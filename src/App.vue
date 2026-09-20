@@ -2309,6 +2309,7 @@ function applyVisualViewportState(): void {
     previousKeyboardOpen,
     widthChanged,
     holdStartVisualHeight: virtualKeyboardRotationHoldStartVisualHeight,
+    currentLayoutHeight: nextLayoutViewportHeight,
     currentVisualHeight: nextVisualViewportHeight,
     hasKeyboardFocus: hasEditableKeyboardFocus(),
   })
