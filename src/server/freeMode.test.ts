@@ -162,6 +162,19 @@ describe('unauthenticated free mode defaults', () => {
     ])
   })
 
+  it('disables hosted tools unsupported by Zen', () => {
+    const args = getFreeModeConfigArgs({
+      enabled: true, apiKey: null, model: 'muse-spark-1.3-contributor-free',
+      provider: 'opencode-zen', wireApi: 'responses',
+    }, 4173)
+    expect(args).toContain('web_search="disabled"')
+    expect(args).toContain('features.image_generation=false')
+    expect(getFreeModeConfigArgs({
+      enabled: true, apiKey: 'test', model: FREE_MODE_DEFAULT_MODEL,
+      provider: 'openrouter', wireApi: 'responses',
+    }, 4173)).not.toContain('features.image_generation=false')
+  })
+
   it('keeps OpenRouter config available for manual free mode', () => {
     const args = getFreeModeConfigArgs({
       enabled: true,
