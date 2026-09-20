@@ -6702,6 +6702,7 @@ type StreamEventFrame = {
 type CapturedItem = {
   id: string
   type: string
+  threadId: string
   turnId: string
   data: Record<string, unknown>
   completed: boolean
@@ -6714,6 +6715,15 @@ type CapturedItem = {
 const CAPTURED_ITEM_MAX_COUNT_PER_THREAD = 100
 const CAPTURED_ITEM_MAX_BYTES_PER_THREAD = 64 * 1024 * 1024
 const CAPTURED_ITEM_TTL_MS = 5 * 60 * 1000
+const CAPTURED_ITEM_SANITIZE_CONCURRENCY = 2
+const CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT = 32
+const NOTIFICATION_GENERATION_THREAD_LIMIT = 1000
+
+type CapturedItemSanitizeTask = {
+  captured: CapturedItem
+  promise: Promise<void>
+  resolve: () => void
+}
 
 function estimateCapturedItemBytes(value: unknown): number {
   const pending: unknown[] = [value]
@@ -6773,6 +6783,8 @@ export class AppServerProcess {
   private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
   private readonly capturedItemCleanupTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly capturedItemSanitizeQueue: CapturedItemSanitizeTask[] = []
+  private activeCapturedItemSanitizations = 0
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private readonly notificationGenerationByThreadId = new Map<string, number>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
@@ -7017,10 +7029,14 @@ export class AppServerProcess {
     this.captureItemFromNotification(notification)
     const nThreadId = this.extractThreadIdFromParams(notification.params)
     if (nThreadId) {
-      this.notificationGenerationByThreadId.set(
-        nThreadId,
-        (this.notificationGenerationByThreadId.get(nThreadId) ?? 0) + 1,
-      )
+      const nextGeneration = (this.notificationGenerationByThreadId.get(nThreadId) ?? 0) + 1
+      this.notificationGenerationByThreadId.delete(nThreadId)
+      this.notificationGenerationByThreadId.set(nThreadId, nextGeneration)
+      while (this.notificationGenerationByThreadId.size > NOTIFICATION_GENERATION_THREAD_LIMIT) {
+        const oldestThreadId = this.notificationGenerationByThreadId.keys().next().value as string | undefined
+        if (!oldestThreadId) break
+        this.notificationGenerationByThreadId.delete(oldestThreadId)
+      }
       this.invalidateLiveStateCache(nThreadId)
       this.threadTurnPageReadCacheByThreadId.delete(nThreadId)
     }
@@ -7182,6 +7198,7 @@ export class AppServerProcess {
     const captured: CapturedItem = {
       id: itemId,
       type: itemType,
+      threadId,
       turnId,
       data: item as Record<string, unknown>,
       completed: isCompleted,
@@ -7252,24 +7269,61 @@ export class AppServerProcess {
   private clearCapturedItemState(): void {
     for (const timer of this.capturedItemCleanupTimersByThreadId.values()) clearTimeout(timer)
     this.capturedItemCleanupTimersByThreadId.clear()
+    for (const threadItems of this.capturedItemsByThreadId.values()) threadItems.clear()
     this.capturedItemsByThreadId.clear()
+    for (const task of this.capturedItemSanitizeQueue.splice(0)) {
+      if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
+      task.resolve()
+    }
+    this.notificationGenerationByThreadId.clear()
   }
 
-  private async ensureCapturedItemSanitized(captured: CapturedItem): Promise<void> {
-    if (captured.sanitized) return
-    if (!captured.sanitizePromise) {
-      captured.sanitizePromise = (async () => {
-        const sanitizedItems = await this.capturedItemSanitizer(captured.turnId, [captured.data])
-        captured.data = asRecord(sanitizedItems[0]) ?? captured.data
-        captured.sanitized = true
+  private isCapturedItemCurrent(captured: CapturedItem): boolean {
+    return this.capturedItemsByThreadId.get(captured.threadId)?.get(captured.id) === captured
+  }
+
+  private pumpCapturedItemSanitizeQueue(): void {
+    while (this.activeCapturedItemSanitizations < CAPTURED_ITEM_SANITIZE_CONCURRENCY) {
+      const task = this.capturedItemSanitizeQueue.shift()
+      if (!task) return
+      this.activeCapturedItemSanitizations += 1
+      void (async () => {
+        if (!this.isCapturedItemCurrent(task.captured)) return
+        const sanitizedItems = await this.capturedItemSanitizer(task.captured.turnId, [task.captured.data])
+        if (!this.isCapturedItemCurrent(task.captured)) return
+        task.captured.data = asRecord(sanitizedItems[0]) ?? task.captured.data
+        task.captured.sanitized = true
       })().catch((error) => {
+        if (!this.isCapturedItemCurrent(task.captured)) return
         console.error(
-          `[codex-api] Failed to sanitize captured item ${captured.id} (${captured.type}) for turn ${captured.turnId}`,
+          `[codex-api] Failed to sanitize captured item ${task.captured.id} (${task.captured.type}) for turn ${task.captured.turnId}`,
           error,
         )
       }).finally(() => {
-        captured.sanitizePromise = null
+        this.activeCapturedItemSanitizations -= 1
+        if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
+        task.resolve()
+        this.pumpCapturedItemSanitizeQueue()
       })
+    }
+  }
+
+  private async ensureCapturedItemSanitized(captured: CapturedItem): Promise<void> {
+    if (captured.sanitized || !this.isCapturedItemCurrent(captured)) return
+    if (!captured.sanitizePromise) {
+      if (this.capturedItemSanitizeQueue.length >= CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT) return
+      let resolveTask: (() => void) | undefined
+      const promise = new Promise<void>((resolve) => {
+        resolveTask = resolve
+      })
+      const task: CapturedItemSanitizeTask = {
+        captured,
+        promise,
+        resolve: () => resolveTask?.(),
+      }
+      captured.sanitizePromise = promise
+      this.capturedItemSanitizeQueue.push(task)
+      this.pumpCapturedItemSanitizeQueue()
     }
     await captured.sanitizePromise
   }
