@@ -19,6 +19,7 @@
 9. Load an older turn through `/codex-api/thread-turn-page` while its image exists only in a completion notification, and simulate one temporary image-file write failure alongside another valid captured image.
 10. Keep an active thread emitting more than 100 unmaterialized items without reading it, then leave it idle for more than five minutes.
 11. Emit a burst of generated-image notifications across many threads while image persistence is deliberately blocked.
+12. Trigger empty-thread and materialization-pending recovery responses after a generated-image notification arrives.
 
 #### Expected Results
 - Inline `data:` image payload is not sent in RPC response.
@@ -32,6 +33,8 @@
 - A container header without raster data does not suppress a later valid fallback, and normalized image views omit duplicate `url`, `image_url`, and `images` payload fields.
 - Background image persistence runs at most two jobs concurrently, retains at most 32 queued jobs, skips captures that have already been replaced or pruned, and clears queued work during disposal.
 - Notification generation state retains at most 1,000 recently active thread IDs and is cleared during full process-state cleanup.
+- A read that needs an image waits for space in the bounded sanitation queue instead of omitting the preview; a full state reset releases old-generation slots so restarted processing can continue immediately.
+- Empty or materialization-pending `thread/read` recovery responses merge current captured images, including a synthetic pending turn when no materialized turn exists yet.
 
 #### Rollback/Cleanup
 - Remove the fallback fixture and any temporary unsupported-extension file.

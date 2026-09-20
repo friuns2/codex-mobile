@@ -6721,6 +6721,7 @@ const NOTIFICATION_GENERATION_THREAD_LIMIT = 1000
 
 type CapturedItemSanitizeTask = {
   captured: CapturedItem
+  generation: number
   promise: Promise<void>
   resolve: () => void
 }
@@ -6785,6 +6786,9 @@ export class AppServerProcess {
   private readonly capturedItemCleanupTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly capturedItemSanitizeQueue: CapturedItemSanitizeTask[] = []
   private activeCapturedItemSanitizations = 0
+  private capturedItemSanitizeGeneration = 0
+  private capturedItemSanitizeCapacityPromise: Promise<void> | null = null
+  private resolveCapturedItemSanitizeCapacity: (() => void) | null = null
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private readonly notificationGenerationByThreadId = new Map<string, number>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
@@ -7215,7 +7219,7 @@ export class AppServerProcess {
       || itemType === 'image_generation'
       || itemType === 'imageView'
     if (isGeneratedImage && threadItems.get(itemId) === captured) {
-      void this.ensureCapturedItemSanitized(captured).then(() => {
+      void this.ensureCapturedItemSanitized(captured, false).then(() => {
         if (threadItems?.get(itemId) !== captured) return
         captured.estimatedBytes = estimateCapturedItemBytes(captured.data)
         this.pruneCapturedItemsForThread(threadId)
@@ -7267,6 +7271,8 @@ export class AppServerProcess {
   }
 
   private clearCapturedItemState(): void {
+    this.capturedItemSanitizeGeneration += 1
+    this.activeCapturedItemSanitizations = 0
     for (const timer of this.capturedItemCleanupTimersByThreadId.values()) clearTimeout(timer)
     this.capturedItemCleanupTimersByThreadId.clear()
     for (const threadItems of this.capturedItemsByThreadId.values()) threadItems.clear()
@@ -7275,6 +7281,7 @@ export class AppServerProcess {
       if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
       task.resolve()
     }
+    this.signalCapturedItemSanitizeCapacity()
     this.notificationGenerationByThreadId.clear()
   }
 
@@ -7282,10 +7289,27 @@ export class AppServerProcess {
     return this.capturedItemsByThreadId.get(captured.threadId)?.get(captured.id) === captured
   }
 
+  private waitForCapturedItemSanitizeCapacity(): Promise<void> {
+    if (!this.capturedItemSanitizeCapacityPromise) {
+      this.capturedItemSanitizeCapacityPromise = new Promise<void>((resolve) => {
+        this.resolveCapturedItemSanitizeCapacity = resolve
+      })
+    }
+    return this.capturedItemSanitizeCapacityPromise
+  }
+
+  private signalCapturedItemSanitizeCapacity(): void {
+    const resolve = this.resolveCapturedItemSanitizeCapacity
+    this.capturedItemSanitizeCapacityPromise = null
+    this.resolveCapturedItemSanitizeCapacity = null
+    resolve?.()
+  }
+
   private pumpCapturedItemSanitizeQueue(): void {
     while (this.activeCapturedItemSanitizations < CAPTURED_ITEM_SANITIZE_CONCURRENCY) {
       const task = this.capturedItemSanitizeQueue.shift()
       if (!task) return
+      this.signalCapturedItemSanitizeCapacity()
       this.activeCapturedItemSanitizations += 1
       void (async () => {
         if (!this.isCapturedItemCurrent(task.captured)) return
@@ -7300,24 +7324,32 @@ export class AppServerProcess {
           error,
         )
       }).finally(() => {
-        this.activeCapturedItemSanitizations -= 1
         if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
         task.resolve()
-        this.pumpCapturedItemSanitizeQueue()
+        if (task.generation === this.capturedItemSanitizeGeneration) {
+          this.activeCapturedItemSanitizations -= 1
+          this.signalCapturedItemSanitizeCapacity()
+          this.pumpCapturedItemSanitizeQueue()
+        }
       })
     }
   }
 
-  private async ensureCapturedItemSanitized(captured: CapturedItem): Promise<void> {
+  private async ensureCapturedItemSanitized(captured: CapturedItem, waitForCapacity = true): Promise<void> {
     if (captured.sanitized || !this.isCapturedItemCurrent(captured)) return
     if (!captured.sanitizePromise) {
-      if (this.capturedItemSanitizeQueue.length >= CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT) return
+      while (this.capturedItemSanitizeQueue.length >= CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT) {
+        if (!waitForCapacity) return
+        await this.waitForCapturedItemSanitizeCapacity()
+        if (captured.sanitized || !this.isCapturedItemCurrent(captured)) return
+      }
       let resolveTask: (() => void) | undefined
       const promise = new Promise<void>((resolve) => {
         resolveTask = resolve
       })
       const task: CapturedItemSanitizeTask = {
         captured,
+        generation: this.capturedItemSanitizeGeneration,
         promise,
         resolve: () => resolveTask?.(),
       }
@@ -7328,7 +7360,7 @@ export class AppServerProcess {
     await captured.sanitizePromise
   }
 
-  async mergeItemsIntoTurns(threadId: string, turns: unknown[]): Promise<unknown[]> {
+  async mergeItemsIntoTurns(threadId: string, turns: unknown[], appendMissingTurns = false): Promise<unknown[]> {
     const capturedMap = this.capturedItemsByThreadId.get(threadId)
     if (!capturedMap || capturedMap.size === 0) return turns
 
@@ -7376,11 +7408,13 @@ export class AppServerProcess {
       group.push(captured)
     }
 
-    return turns.map((turn) => {
+    const mergedTurnIds = new Set<string>()
+    const mergedTurns = turns.map((turn) => {
       const turnRecord = asRecord(turn)
       if (!turnRecord) return turn
       const turnId = typeof turnRecord.id === 'string' ? turnRecord.id : ''
       if (!turnId) return turn
+      mergedTurnIds.add(turnId)
 
       const captured = itemsByTurnId.get(turnId)
       if (!captured || captured.length === 0) return turn
@@ -7404,6 +7438,16 @@ export class AppServerProcess {
         items: mergedItems,
       }
     })
+    if (appendMissingTurns) {
+      for (const [turnId, captured] of itemsByTurnId) {
+        if (mergedTurnIds.has(turnId)) continue
+        mergedTurns.push({
+          id: turnId,
+          items: captured.map((item) => item.data),
+        })
+      }
+    }
+    return mergedTurns
   }
 
   private sendServerRequestReply(requestId: number, reply: ServerRequestReply): void {
@@ -7669,6 +7713,7 @@ export class AppServerProcess {
 export async function mergeCapturedItemsIntoThreadResult(
   appServer: Pick<AppServerProcess, 'mergeItemsIntoTurns'>,
   result: unknown,
+  appendMissingTurns = false,
 ): Promise<unknown> {
   const record = asRecord(result)
   const thread = asRecord(record?.thread)
@@ -7676,7 +7721,7 @@ export async function mergeCapturedItemsIntoThreadResult(
   const turns = Array.isArray(thread?.turns) ? thread.turns : null
   if (!record || !thread || !threadId || !turns) return result
 
-  const mergedTurns = await appServer.mergeItemsIntoTurns(threadId, turns)
+  const mergedTurns = await appServer.mergeItemsIntoTurns(threadId, turns, appendMissingTurns)
   if (mergedTurns === turns) return result
   return {
     ...record,
@@ -8684,25 +8729,27 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          }
 		          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
 		            const params = asRecord(body.params)
-		            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
-		            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
-		            if (snapshot) {
-		              setJson(res, 200, { result: snapshot })
-		              return
-		            }
+	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
+	            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
+	            if (snapshot) {
+	              const mergedSnapshot = await mergeCapturedItemsIntoThreadResult(appServer, snapshot)
+	              setJson(res, 200, { result: mergedSnapshot })
+	              return
+	            }
 		          }
           if (body.method === 'thread/read' && isThreadMaterializationPendingError(error)) {
             const params = asRecord(body.params)
             const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
             if (threadId) {
-              setJson(res, 200, {
-                result: {
-                  thread: {
-                    id: threadId,
-                    turns: [],
-                    status: { type: 'inProgress' },
-                  },
+              const pendingResult = await mergeCapturedItemsIntoThreadResult(appServer, {
+                thread: {
+                  id: threadId,
+                  turns: [],
+                  status: { type: 'inProgress' },
                 },
+              }, true)
+              setJson(res, 200, {
+                result: pendingResult,
               })
               return
             }
