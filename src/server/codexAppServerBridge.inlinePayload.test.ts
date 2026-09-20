@@ -22,7 +22,9 @@ const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATAABAQAAAAAAAAAAAAAAAAAAAAYBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAAgACAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiwBRf3//2Q=='
 const webpBase64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA='
-const avifBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAADG1ldGEAAAAAAAAADG1kYXQBAgME'
+const avifBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAALG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMbWRhdAECAwQ='
+const webpExtendedHeaderOnlyBase64 = 'UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAAAAAAAAA'
+const animatedWebpContainerBase64 = 'UklGRkYAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GGgAAAAAAAAAAAAAAAAAAAAAAAABWUDggAQAAAAAA'
 const bmpBase64 = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9AAD9AAAAAP0AAP0AAA=='
 
 afterEach(() => {
@@ -56,6 +58,42 @@ describe('thread inline media sanitization', () => {
     expect(currentItems).toEqual([])
     expect(capturedMap.get(replacement.id)).toBe(replacement)
     expect(replacement.sanitized).toBe(false)
+  })
+
+  it('bounds captured notification state and expires it without a thread read', () => {
+    vi.useFakeTimers()
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemsByThreadId: Map<string, Map<string, unknown>>
+    }
+
+    for (let index = 0; index < 105; index += 1) {
+      internals.emitNotification({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread-bounded',
+          turnId: 'turn-live',
+          item: { id: `command-${index}`, type: 'commandExecution', command: `echo ${index}` },
+        },
+      })
+    }
+
+    expect(internals.capturedItemsByThreadId.get('thread-bounded')?.size).toBe(100)
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1)
+    expect(internals.capturedItemsByThreadId.has('thread-bounded')).toBe(false)
+
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-bounded',
+        turnId: 'turn-live',
+        item: { id: 'command-after-expiry', type: 'commandExecution', command: 'echo retained' },
+      },
+    })
+    expect(internals.capturedItemsByThreadId.has('thread-bounded')).toBe(true)
+    appServer.dispose()
+    expect(internals.capturedItemsByThreadId.has('thread-bounded')).toBe(false)
   })
 
   it('shares live image cleanup, defers replacements, and merges them into thread reads', async () => {
@@ -100,7 +138,7 @@ describe('thread inline media sanitization', () => {
     for (const mergedTurns of await Promise.all([firstRead, concurrentRead])) {
       expect((mergedTurns[0] as { items: unknown[] }).items).toEqual([])
     }
-    expect(sanitizer).toHaveBeenCalledTimes(1)
+    expect(sanitizer).toHaveBeenCalledTimes(2)
 
     const mergedResult = await mergeCapturedItemsIntoThreadResult(appServer, {
       thread: { id: 'thread-live', turns },
@@ -398,6 +436,40 @@ describe('thread inline media sanitization', () => {
     expect(imageView).not.toHaveProperty('b64_json')
   })
 
+  it('skips a WebP extended header without image data before a complete fallback', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'generated-1',
+            type: 'imageGeneration',
+            result: webpExtendedHeaderOnlyBase64,
+            b64_json: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toMatch(/\.png$/u)
+    expect(existsSync(imageView.path as string)).toBe(true)
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('b64_json')
+  })
+
+  it('accepts an animated WebP whose raster chunk is nested in a frame', async () => {
+    const [imageView] = await sanitizeThreadItemsForTurn('turn-animated', [{
+      id: 'generated-animated',
+      type: 'imageGeneration',
+      result: animatedWebpContainerBase64,
+    }]) as Array<Record<string, unknown>>
+
+    expect(imageView.path).toMatch(/\.webp$/u)
+    expect(existsSync(imageView.path as string)).toBe(true)
+    expect(imageView).not.toHaveProperty('result')
+  })
+
   it('sanitizes generated images captured after the materialized thread read', async () => {
     const items = await sanitizeThreadItemsForTurn('turn-live', [{
       id: 'generated-live',
@@ -451,6 +523,9 @@ describe('thread inline media sanitization', () => {
             type: 'imageView',
             path: `/codex-local-image?path=${encodeURIComponent(imagePath)}`,
             result: pngBase64,
+            url: pngDataUrl,
+            image_url: pngDataUrl,
+            images: [pngDataUrl],
           }],
         }],
       },
@@ -459,6 +534,9 @@ describe('thread inline media sanitization', () => {
     const imageView = result.thread.turns[0].items[0]
     expect(imageView.path).toBe(imagePath)
     expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('url')
+    expect(imageView).not.toHaveProperty('image_url')
+    expect(imageView).not.toHaveProperty('images')
   })
 
   it('normalizes a local file URL before removing duplicate image payloads', async () => {

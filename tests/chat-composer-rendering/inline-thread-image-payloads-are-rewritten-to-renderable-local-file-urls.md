@@ -17,6 +17,7 @@
 7. Reload the active thread before the generated image is materialized in the session file and inspect the ordinary `thread/read` response.
 8. Resume the same thread through `thread/resume`, then load the truncated-first-fallback fixture.
 9. Load an older turn through `/codex-api/thread-turn-page` while its image exists only in a completion notification, and simulate one temporary image-file write failure alongside another valid captured image.
+10. Keep an active thread emitting more than 100 unmaterialized items without reading it, then leave it idle for more than five minutes.
 
 #### Expected Results
 - Inline `data:` image payload is not sent in RPC response.
@@ -26,6 +27,8 @@
 - The ordinary `thread/read` response merges the sanitized captured image, so reloading during the materialization window does not temporarily hide it.
 - `thread/resume` includes the same sanitized capture, and a header-only candidate does not mask a later complete image fallback.
 - A completed notification replaces an incomplete same-ID placeholder in normal and paged turns; one image cleanup failure is omitted for that response and retried later without blocking other images or the thread response.
+- Active notification state retains at most 100 items or 64 MiB per thread, expires after five minutes without a read, and is cleared when the app-server process is disposed.
+- A container header without raster data does not suppress a later valid fallback, and normalized image views omit duplicate `url`, `image_url`, and `images` payload fields.
 
 #### Rollback/Cleanup
 - Remove the fallback fixture and any temporary unsupported-extension file.
