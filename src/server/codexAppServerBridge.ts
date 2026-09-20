@@ -50,6 +50,7 @@ import {
 } from '../commandResolution.js'
 import type { CollaborationModeKind, ReasoningEffort } from '../types/codex.js'
 import { isAbsoluteLikePath } from '../pathUtils.js'
+import { isSupportedLocalImagePath } from './localImageTypes.js'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -738,6 +739,7 @@ async function resolveExistingLocalImagePath(value: unknown): Promise<string | n
     }
   }
   if (!isAbsolute(imagePath)) return null
+  if (!isSupportedLocalImagePath(imagePath)) return null
 
   try {
     return (await stat(imagePath)).isFile() ? imagePath : null
