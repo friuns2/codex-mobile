@@ -643,6 +643,25 @@ function isStructurallyCompleteWebp(bytes: Uint8Array): boolean {
   const declaredLength = readUint32LittleEndian(bytes, 4) + 8
   if (declaredLength !== bytes.length) return false
 
+  const isValidRasterChunk = (offset: number, chunkLength: number): boolean => {
+    const payloadOffset = offset + 8
+    if (matchesAscii(bytes, offset, 'VP8 ')) {
+      if (chunkLength < 10 || payloadOffset + 10 > bytes.length) return false
+      const isKeyFrame = (bytes[payloadOffset] & 0x01) === 0
+      const hasStartCode = bytes[payloadOffset + 3] === 0x9d
+        && bytes[payloadOffset + 4] === 0x01
+        && bytes[payloadOffset + 5] === 0x2a
+      const width = (bytes[payloadOffset + 6] | (bytes[payloadOffset + 7] << 8)) & 0x3fff
+      const height = (bytes[payloadOffset + 8] | (bytes[payloadOffset + 9] << 8)) & 0x3fff
+      return isKeyFrame && hasStartCode && width > 0 && height > 0
+    }
+    if (matchesAscii(bytes, offset, 'VP8L')) {
+      if (chunkLength < 5 || payloadOffset + 5 > bytes.length || bytes[payloadOffset] !== 0x2f) return false
+      return ((readUint32LittleEndian(bytes, payloadOffset + 1) >>> 29) & 0x07) === 0
+    }
+    return false
+  }
+
   const inspectChunkRange = (start: number, end: number): { valid: boolean; hasImagePayload: boolean } => {
     let nestedOffset = start
     let hasImagePayload = false
@@ -650,8 +669,7 @@ function isStructurallyCompleteWebp(bytes: Uint8Array): boolean {
       const nestedLength = readUint32LittleEndian(bytes, nestedOffset + 4)
       const nestedPaddedLength = nestedLength + (nestedLength % 2)
       if (nestedOffset + 8 + nestedPaddedLength > end) return { valid: false, hasImagePayload: false }
-      if ((matchesAscii(bytes, nestedOffset, 'VP8 ') || matchesAscii(bytes, nestedOffset, 'VP8L'))
-        && nestedLength > 0) {
+      if (isValidRasterChunk(nestedOffset, nestedLength)) {
         hasImagePayload = true
       }
       nestedOffset += 8 + nestedPaddedLength
@@ -665,7 +683,7 @@ function isStructurallyCompleteWebp(bytes: Uint8Array): boolean {
     const chunkLength = readUint32LittleEndian(bytes, offset + 4)
     const paddedChunkLength = chunkLength + (chunkLength % 2)
     if (offset + 8 + paddedChunkLength > bytes.length) return false
-    if ((matchesAscii(bytes, offset, 'VP8 ') || matchesAscii(bytes, offset, 'VP8L')) && chunkLength > 0) {
+    if (isValidRasterChunk(offset, chunkLength)) {
       hasImagePayload = true
     } else if (matchesAscii(bytes, offset, 'ANMF') && chunkLength > 16) {
       const frame = inspectChunkRange(offset + 8 + 16, offset + 8 + chunkLength)
@@ -6781,6 +6799,7 @@ type CapturedItemSanitizeTask = {
 
 function estimateCapturedItemBytes(value: unknown): number {
   const maxVisitedNodes = 10_000
+  const nodeOverheadBytes = 16
   const pending: unknown[] = [value]
   const seen = new Set<object>()
   let total = 0
@@ -6789,20 +6808,38 @@ function estimateCapturedItemBytes(value: unknown): number {
     if (visitedNodes >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
     const current = pending.pop()
     visitedNodes += 1
+    total += nodeOverheadBytes
     if (typeof current === 'string') {
       total += Buffer.byteLength(current, 'utf8')
+      continue
+    }
+    if (typeof current === 'number') {
+      total += 8
+      continue
+    }
+    if (typeof current === 'bigint') {
+      total += Buffer.byteLength(current.toString(), 'utf8')
+      continue
+    }
+    if (typeof current === 'boolean') {
+      total += 4
       continue
     }
     if (!current || typeof current !== 'object' || seen.has(current)) continue
     seen.add(current)
     if (Array.isArray(current)) {
+      total += current.length * 8
+      if (total > CAPTURED_ITEM_MAX_BYTES_PER_THREAD) return total
       for (let index = current.length - 1; index >= 0; index -= 1) {
         if (visitedNodes + pending.length >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
         pending.push(current[index])
       }
     } else {
+      total += 32
       for (const key in current as Record<string, unknown>) {
         if (!Object.prototype.hasOwnProperty.call(current, key)) continue
+        total += Buffer.byteLength(key, 'utf8') + 8
+        if (total > CAPTURED_ITEM_MAX_BYTES_PER_THREAD) return total
         if (visitedNodes + pending.length >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
         pending.push((current as Record<string, unknown>)[key])
       }
@@ -6816,9 +6853,19 @@ export async function sanitizeCapturedItemsForMerge<T extends { id: string; sani
   sanitize: (captured: T) => Promise<void>,
 ): Promise<T[]> {
   const snapshot = Array.from(capturedMap.values())
-  for (const captured of snapshot) {
-    await sanitize(captured)
+  let nextIndex = 0
+  const sanitizeNext = async (): Promise<void> => {
+    while (nextIndex < snapshot.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const captured = snapshot[index]
+      if (captured) await sanitize(captured)
+    }
   }
+  await Promise.all(Array.from(
+    { length: Math.min(CAPTURED_ITEM_SANITIZE_CONCURRENCY, snapshot.length) },
+    () => sanitizeNext(),
+  ))
   return snapshot.filter((captured) => captured.sanitized && capturedMap.get(captured.id) === captured)
 }
 
@@ -7099,14 +7146,7 @@ export class AppServerProcess {
     this.captureItemFromNotification(notification)
     const nThreadId = this.extractThreadIdFromParams(notification.params)
     if (nThreadId) {
-      this.nextNotificationGeneration += 1
-      this.notificationGenerationByThreadId.delete(nThreadId)
-      this.notificationGenerationByThreadId.set(nThreadId, this.nextNotificationGeneration)
-      while (this.notificationGenerationByThreadId.size > NOTIFICATION_GENERATION_THREAD_LIMIT) {
-        const oldestThreadId = this.notificationGenerationByThreadId.keys().next().value as string | undefined
-        if (!oldestThreadId) break
-        this.notificationGenerationByThreadId.delete(oldestThreadId)
-      }
+      this.assignNextNotificationGeneration(nThreadId)
       this.invalidateLiveStateCache(nThreadId)
       this.threadTurnPageReadCacheByThreadId.delete(nThreadId)
     }
@@ -7166,8 +7206,28 @@ export class AppServerProcess {
     this.threadTurnPageReadCacheByThreadId.delete(threadId)
   }
 
+  private trimNotificationGenerations(): void {
+    while (this.notificationGenerationByThreadId.size > NOTIFICATION_GENERATION_THREAD_LIMIT) {
+      const oldestThreadId = this.notificationGenerationByThreadId.keys().next().value as string | undefined
+      if (!oldestThreadId) break
+      this.notificationGenerationByThreadId.delete(oldestThreadId)
+    }
+  }
+
+  private assignNextNotificationGeneration(threadId: string): number {
+    this.nextNotificationGeneration += 1
+    this.notificationGenerationByThreadId.delete(threadId)
+    this.notificationGenerationByThreadId.set(threadId, this.nextNotificationGeneration)
+    this.trimNotificationGenerations()
+    return this.nextNotificationGeneration
+  }
+
   getNotificationGeneration(threadId: string): number {
-    return this.notificationGenerationByThreadId.get(threadId) ?? this.nextNotificationGeneration
+    const generation = this.notificationGenerationByThreadId.get(threadId)
+    if (generation === undefined) return this.assignNextNotificationGeneration(threadId)
+    this.notificationGenerationByThreadId.delete(threadId)
+    this.notificationGenerationByThreadId.set(threadId, generation)
+    return generation
   }
 
   storeThreadReadSnapshotIfCurrent(threadId: string, generation: number, snapshot: unknown): boolean {

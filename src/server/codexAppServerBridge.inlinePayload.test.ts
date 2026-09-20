@@ -24,7 +24,8 @@ const jpegBase64 = '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAI
 const webpBase64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA='
 const avifBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAALG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMbWRhdAECAwQ='
 const webpExtendedHeaderOnlyBase64 = 'UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAAAAAAAAA'
-const animatedWebpContainerBase64 = 'UklGRkYAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GGgAAAAAAAAAAAAAAAAAAAAAAAABWUDggAQAAAAAA'
+const animatedWebpContainerBase64 = 'UklGRk4AAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GIgAAAAAAAAAAAAAAAAAAAAAAAABWUDggCgAAABAAAJ0BKgEAAQA='
+const malformedWebpRasterBase64 = 'UklGRg4AAABXRUJQVlA4IAEAAAAAAA=='
 const bmpBase64 = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9AAD9AAAAAP0AAP0AAA=='
 
 afterEach(() => {
@@ -58,6 +59,45 @@ describe('thread inline media sanitization', () => {
     expect(currentItems).toEqual([])
     expect(capturedMap.get(replacement.id)).toBe(replacement)
     expect(replacement.sanitized).toBe(false)
+  })
+
+  it('sanitizes a fixed captured-item snapshot with bounded parallelism', async () => {
+    type Captured = { id: string; sanitized: boolean }
+    const capturedMap = new Map(Array.from({ length: 4 }, (_, index) => {
+      const captured: Captured = { id: `generated-${index}`, sanitized: false }
+      return [captured.id, captured] as const
+    }))
+    let active = 0
+    let maxActive = 0
+    const releases: Array<() => void> = []
+
+    const mergedPromise = sanitizeCapturedItemsForMerge(capturedMap, async (captured) => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await new Promise<void>((resolve) => {
+        releases.push(() => {
+          active -= 1
+          captured.sanitized = true
+          resolve()
+        })
+      })
+    })
+
+    await vi.waitFor(() => expect(releases).toHaveLength(2))
+    expect(active).toBe(2)
+    expect(maxActive).toBe(2)
+    releases.splice(0).forEach((release) => release())
+    await vi.waitFor(() => expect(releases).toHaveLength(2))
+    expect(active).toBe(2)
+    releases.splice(0).forEach((release) => release())
+
+    expect((await mergedPromise).map((captured) => captured.id)).toEqual([
+      'generated-0',
+      'generated-1',
+      'generated-2',
+      'generated-3',
+    ])
+    expect(maxActive).toBe(2)
   })
 
   it('bounds captured notification state and expires it without a thread read', () => {
@@ -143,6 +183,30 @@ describe('thread inline media sanitization', () => {
       },
     })).not.toThrow()
     expect(internals.capturedItemsByThreadId.has('thread-wide')).toBe(false)
+    appServer.dispose()
+  })
+
+  it('accounts for object keys and scalar storage in captured notification limits', () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemEstimatedBytesTotal: number
+    }
+    const output = Object.fromEntries(Array.from(
+      { length: 250 },
+      (_, index) => [`key-${index}`.padEnd(1000, 'x'), true],
+    ))
+
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-key-storage',
+        turnId: 'turn-live',
+        item: { id: 'command-key-storage', type: 'commandExecution', output },
+      },
+    })
+
+    expect(internals.capturedItemEstimatedBytesTotal).toBeGreaterThan(250_000)
     appServer.dispose()
   })
 
@@ -291,11 +355,31 @@ describe('thread inline media sanitization', () => {
     expect(internals.notificationGenerationByThreadId.size).toBe(1000)
     expect(internals.notificationGenerationByThreadId.has('thread-stale')).toBe(false)
     expect(internals.notificationGenerationByThreadId.has('thread-generation-0')).toBe(false)
-    expect(internals.notificationGenerationByThreadId.get('thread-generation-1004')).toBe(1006)
+    expect(internals.notificationGenerationByThreadId.get('thread-generation-1004')).toBe(1007)
     expect(appServer.cacheLiveStateIfCurrent('thread-stale', staleGeneration, { stale: true }, 1, 1)).toBe(false)
     expect(appServer.storeThreadReadSnapshotIfCurrent('thread-stale', staleGeneration, { stale: true })).toBe(false)
     appServer.dispose()
     expect(internals.notificationGenerationByThreadId.size).toBe(0)
+  })
+
+  it('keeps a quiet thread generation stable during unrelated activity', () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+    }
+    const quietGeneration = appServer.getNotificationGeneration('thread-quiet')
+
+    internals.emitNotification({ method: 'turn/started', params: { threadId: 'thread-other' } })
+
+    expect(appServer.cacheLiveStateIfCurrent(
+      'thread-quiet',
+      quietGeneration,
+      { current: true },
+      1,
+      1,
+    )).toBe(true)
+    expect(appServer.getCachedLiveState('thread-quiet', 1, 1)).toEqual({ current: true })
+    appServer.dispose()
   })
 
   it('shares live image cleanup, defers replacements, and merges them into thread reads', async () => {
@@ -719,6 +803,28 @@ describe('thread inline media sanitization', () => {
             id: 'generated-1',
             type: 'imageGeneration',
             result: webpExtendedHeaderOnlyBase64,
+            b64_json: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toMatch(/\.png$/u)
+    expect(existsSync(imageView.path as string)).toBe(true)
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('b64_json')
+  })
+
+  it('skips a malformed WebP raster chunk before a complete fallback', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'generated-1',
+            type: 'imageGeneration',
+            result: malformedWebpRasterBase64,
             b64_json: pngBase64,
           }],
         }],
