@@ -7086,7 +7086,12 @@ export class AppServerProcess {
         const sanitizedItems = await this.capturedItemSanitizer(captured.turnId, [captured.data])
         captured.data = asRecord(sanitizedItems[0]) ?? captured.data
         captured.sanitized = true
-      })().finally(() => {
+      })().catch((error) => {
+        console.error(
+          `[codex-api] Failed to sanitize captured item ${captured.id} (${captured.type}) for turn ${captured.turnId}`,
+          error,
+        )
+      }).finally(() => {
         captured.sanitizePromise = null
       })
     }
@@ -7097,18 +7102,28 @@ export class AppServerProcess {
     const capturedMap = this.capturedItemsByThreadId.get(threadId)
     if (!capturedMap || capturedMap.size === 0) return turns
 
-    const materializedItemIds = new Set<string>()
+    const materializedItemsById = new Map<string, Record<string, unknown>>()
     for (const turn of turns) {
       const turnRecord = asRecord(turn)
       const items = Array.isArray(turnRecord?.items) ? turnRecord.items : []
       for (const item of items) {
         const itemRecord = asRecord(item)
         const itemId = typeof itemRecord?.id === 'string' ? itemRecord.id : ''
-        if (itemId) materializedItemIds.add(itemId)
+        if (itemId && itemRecord) materializedItemsById.set(itemId, itemRecord)
       }
     }
-    for (const itemId of materializedItemIds) {
-      capturedMap.delete(itemId)
+    for (const [itemId, captured] of capturedMap) {
+      const materializedItem = materializedItemsById.get(itemId)
+      if (!materializedItem) continue
+      const isGeneratedImage = captured.type === 'imageGeneration'
+        || captured.type === 'image_generation'
+        || captured.type === 'imageView'
+      const materializedType = asNonEmptyString(materializedItem.type) ?? ''
+      const hasRenderableMaterializedImage = materializedType === 'imageView'
+        && Boolean(await resolveExistingLocalImagePath(materializedItem.path))
+      if (!isGeneratedImage || hasRenderableMaterializedImage) {
+        capturedMap.delete(itemId)
+      }
     }
     if (capturedMap.size === 0) {
       this.capturedItemsByThreadId.delete(threadId)
@@ -7140,17 +7155,22 @@ export class AppServerProcess {
       if (!captured || captured.length === 0) return turn
 
       const existingItems = Array.isArray(turnRecord.items) ? (turnRecord.items as Record<string, unknown>[]) : []
-      const existingIds = new Set(existingItems.map((it) => (typeof it.id === 'string' ? it.id : '')).filter(Boolean))
-
-      const newItems = captured
-        .filter((c) => !existingIds.has(c.id))
-        .map((c) => c.data)
-
-      if (newItems.length === 0) return turn
+      const capturedById = new Map(captured.map((item) => [item.id, item]))
+      const replacedIds = new Set<string>()
+      const mergedItems = existingItems.map((item) => {
+        const itemId = typeof item.id === 'string' ? item.id : ''
+        const replacement = itemId ? capturedById.get(itemId) : undefined
+        if (!replacement) return item
+        replacedIds.add(itemId)
+        return replacement.data
+      })
+      for (const item of captured) {
+        if (!replacedIds.has(item.id)) mergedItems.push(item.data)
+      }
 
       return {
         ...turnRecord,
-        items: [...existingItems, ...newItems],
+        items: mergedItems,
       }
     })
   }
@@ -8544,7 +8564,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             },
           }
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', pagedResult)
-          const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
+          const skillMergedResult = await mergeSessionSkillInputsIntoThreadResult(sanitized)
+          const result = await mergeCapturedItemsIntoThreadResult(appServer, skillMergedResult)
 
           setJson(res, 200, {
             result,
