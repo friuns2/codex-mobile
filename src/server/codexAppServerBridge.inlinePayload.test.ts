@@ -127,7 +127,7 @@ describe('thread inline media sanitization', () => {
     let activeSanitizers = 0
     let maxActiveSanitizers = 0
     const releases: Array<() => void> = []
-    const sanitizer = vi.fn(async (_turnId: string, items: unknown[]) => {
+    const sanitizer = vi.fn(async (turnId: string, items: unknown[]) => {
       activeSanitizers += 1
       maxActiveSanitizers = Math.max(maxActiveSanitizers, activeSanitizers)
       await new Promise<void>((resolve) => {
@@ -136,7 +136,7 @@ describe('thread inline media sanitization', () => {
           resolve()
         })
       })
-      return items
+      return sanitizeThreadItemsForTurn(turnId, items)
     })
     const appServer = new AppServerProcess(sanitizer)
     const internals = appServer as unknown as {
@@ -598,7 +598,7 @@ describe('thread inline media sanitization', () => {
         turns: [{
           id: 'turn-1',
           items: [
-            { id: 'url-only', type: 'imageGeneration', url: pngDataUrl },
+            { id: 'url-only', type: 'imageGeneration', url: `data:image/png;charset=utf-8;base64,${pngBase64}` },
             { id: 'image-url-only', type: 'imageGeneration', image_url: jpegBase64 },
             { id: 'images-only', type: 'imageGeneration', images: ['invalid', { url: `data:image/gif;base64,${gifBase64}` }] },
           ],
@@ -617,6 +617,51 @@ describe('thread inline media sanitization', () => {
       expect(imageView).not.toHaveProperty('image_url')
       expect(imageView).not.toHaveProperty('images')
     }
+  })
+
+  it('bounds generated-image list fallback scanning', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'images-over-budget',
+            type: 'imageGeneration',
+            images: [...Array.from({ length: 32 }, () => 'invalid'), pngBase64],
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const image = result.thread.turns[0].items[0]
+    expect(image.type).toBe('imageGeneration')
+    expect(image).not.toHaveProperty('path')
+    expect(image).not.toHaveProperty('images')
+  })
+
+  it('omits an invalid captured image and leaves it retryable', async () => {
+    const logSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemsByThreadId: Map<string, Map<string, { sanitized: boolean; data: Record<string, unknown> }>>
+    }
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-invalid-image',
+        turnId: 'turn-live',
+        item: { id: 'invalid-image', type: 'imageGeneration', result: 'iVBORw0KGgoAAAAA' },
+      },
+    })
+
+    const merged = await appServer.mergeItemsIntoTurns('thread-invalid-image', [{ id: 'turn-live', items: [] }]) as Array<{ items: unknown[] }>
+    const captured = internals.capturedItemsByThreadId.get('thread-invalid-image')?.get('invalid-image')
+    expect(merged[0].items).toEqual([])
+    expect(captured?.sanitized).toBe(false)
+    expect(captured?.data).toHaveProperty('result')
+    expect(logSpy).toHaveBeenCalledTimes(1)
+    appServer.dispose()
   })
 
   it('skips a truncated image header before a complete fallback', async () => {
