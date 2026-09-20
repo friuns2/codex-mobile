@@ -792,15 +792,23 @@ function toAttachmentLinkTarget(block: Record<string, unknown>, fallback: string
 
 async function persistInlineDataUrlToLocalFile(dataUrl: string, baseName: string): Promise<string | null> {
   const trimmed = dataUrl.trim()
-  const match = /^data:([^;,]*)(;base64)?,(.*)$/isu.exec(trimmed)
-  if (!match) return null
-  const mimeType = (match[1] ?? '').trim().toLowerCase()
-  const encodedPayload = match[3] ?? ''
+  if (!trimmed.toLowerCase().startsWith('data:')) return null
+  const commaIndex = trimmed.indexOf(',')
+  if (commaIndex < 5) return null
+  const metadataParts = trimmed.slice(5, commaIndex).split(';')
+  const mimeType = (metadataParts.shift() ?? '').trim().toLowerCase()
+  const isBase64 = metadataParts.some((part) => part.trim().toLowerCase() === 'base64')
+  const encodedPayload = trimmed.slice(commaIndex + 1)
+  if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml' && !isBase64) return null
   let bytes: Buffer
   try {
-    bytes = match[2]
-      ? Buffer.from(encodedPayload, 'base64')
-      : Buffer.from(decodeURIComponent(encodedPayload), 'utf8')
+    if (isBase64) {
+      const compactPayload = encodedPayload.replace(/\s+/gu, '')
+      if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(compactPayload) || compactPayload.length % 4 === 1) return null
+      bytes = Buffer.from(compactPayload, 'base64')
+    } else {
+      bytes = Buffer.from(decodeURIComponent(encodedPayload), 'utf8')
+    }
   } catch {
     return null
   }
@@ -897,34 +905,50 @@ async function resolveGeneratedImageFallbackPath(
   const mimeType = asNonEmptyString(record.mime_type)
     ?? asNonEmptyString(record.mimeType)
     ?? 'image/png'
-  const rawCandidates: unknown[] = [
-    record.result,
-    record.b64_json,
-    record.image,
-    record.url,
-    record.image_url,
-  ]
+  const maxCandidates = 32
+  const maxCandidateCharacters = 32 * 1024 * 1024
+  const rawCandidates: string[] = []
+  let candidateCharacters = 0
+  let candidateBudgetExhausted = false
+  const addCandidate = (value: unknown): void => {
+    if (candidateBudgetExhausted || rawCandidates.length >= maxCandidates) {
+      candidateBudgetExhausted = true
+      return
+    }
+    const candidate = asNonEmptyString(value)
+    if (!candidate) return
+    if (candidate.length > maxCandidateCharacters - candidateCharacters) {
+      candidateBudgetExhausted = true
+      return
+    }
+    rawCandidates.push(candidate)
+    candidateCharacters += candidate.length
+  }
+  for (const value of [record.result, record.b64_json, record.image, record.url, record.image_url]) {
+    addCandidate(value)
+  }
   if (Array.isArray(record.images)) {
-    for (const entry of record.images) {
+    for (let index = 0; index < record.images.length && index < maxCandidates && !candidateBudgetExhausted; index += 1) {
+      const entry = record.images[index]
       const entryRecord = asRecord(entry)
       if (entryRecord) {
-        rawCandidates.push(
+        for (const value of [
           entryRecord.result,
           entryRecord.b64_json,
           entryRecord.image,
           entryRecord.url,
           entryRecord.image_url,
-        )
+        ]) {
+          addCandidate(value)
+        }
       } else {
-        rawCandidates.push(entry)
+        addCandidate(entry)
       }
     }
   } else {
-    rawCandidates.push(record.images)
+    addCandidate(record.images)
   }
-  for (const rawCandidate of rawCandidates) {
-    const candidate = asNonEmptyString(rawCandidate)
-    if (!candidate) continue
+  for (const candidate of rawCandidates) {
     const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
     if (dataUrl) {
       const localPath = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
@@ -995,6 +1019,7 @@ async function sanitizeInlineUserContentBlock(
         path: fallbackPath,
       }
     }
+    return omitGeneratedImagePayloadFields(record)
   }
 
   if (type === 'imageGeneration' || type === 'image_generation') {
@@ -1006,6 +1031,7 @@ async function sanitizeInlineUserContentBlock(
         path: fallbackPath,
       }
     }
+    return omitGeneratedImagePayloadFields(record)
   }
 
   const imageUrl = asNonEmptyString(record.url) ?? asNonEmptyString(record.image_url)
@@ -6836,7 +6862,20 @@ export class AppServerProcess {
         if (!this.isCapturedItemCurrent(task.captured)) return
         const sanitizedItems = await this.capturedItemSanitizer(task.captured.turnId, [task.captured.data])
         if (!this.isCapturedItemCurrent(task.captured)) return
-        task.captured.data = asRecord(sanitizedItems[0]) ?? task.captured.data
+        const sanitizedData = asRecord(sanitizedItems[0]) ?? task.captured.data
+        const isGeneratedImage = task.captured.type === 'imageGeneration'
+          || task.captured.type === 'image_generation'
+          || task.captured.type === 'imageView'
+        if (isGeneratedImage) {
+          const hasPayloadFields = Array.from(INLINE_GENERATED_IMAGE_PAYLOAD_FIELD_NAMES)
+            .some((fieldName) => Object.prototype.hasOwnProperty.call(sanitizedData, fieldName))
+          const hasRenderablePath = sanitizedData.type === 'imageView'
+            && Boolean(await resolveExistingLocalImagePath(sanitizedData.path))
+          if (hasPayloadFields || !hasRenderablePath) {
+            throw new Error('Generated image sanitization did not produce a payload-free renderable imageView')
+          }
+        }
+        task.captured.data = sanitizedData
         task.captured.sanitized = true
       })().catch((error) => {
         if (!this.isCapturedItemCurrent(task.captured)) return

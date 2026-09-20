@@ -37,6 +37,7 @@
 - A read that needs an image waits for space in the bounded sanitation queue instead of omitting the preview; a full state reset releases old-generation slots so restarted processing can continue immediately.
 - Empty or materialization-pending `thread/read` recovery responses merge current captured images, including a synthetic pending turn when no materialized turn exists yet.
 - Generated images recover scalar `url` and `image_url` fallbacks plus string or object entries in `images`; concurrent reads share the same job even after waiting for capacity, and evicted generation entries cannot make stale responses current again.
+- Generated fallback recovery examines at most 32 candidates and 32 MiB of candidate text, accepts parameterized Base64 image data URLs, and strips unusable payloads from normal responses. Captured images are marked sanitized only after producing a payload-free `imageView` with a renderable path; failed cleanup is omitted and retried.
 
 #### Rollback/Cleanup
 - Remove the fallback fixture and any temporary unsupported-extension file.
