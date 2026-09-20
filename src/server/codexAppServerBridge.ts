@@ -674,6 +674,12 @@ const INLINE_IMAGE_FIELD_NAMES = new Set([
   'url',
 ])
 
+const INLINE_GENERATED_IMAGE_PAYLOAD_FIELD_NAMES = new Set([
+  'b64_json',
+  'image',
+  'result',
+])
+
 type InlinePayloadSanitizeContext = {
   turnId: string
   itemId: string
@@ -683,6 +689,33 @@ type InlinePayloadSanitizeContext = {
 
 function isPotentialInlineImageField(fieldName: string | undefined): boolean {
   return typeof fieldName === 'string' && INLINE_IMAGE_FIELD_NAMES.has(fieldName)
+}
+
+function omitGeneratedImagePayloadFields(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => !INLINE_GENERATED_IMAGE_PAYLOAD_FIELD_NAMES.has(key)),
+  )
+}
+
+async function hasExistingLocalImagePath(value: unknown): Promise<boolean> {
+  const rawPath = asNonEmptyString(value)
+  if (!rawPath) return false
+
+  let imagePath = rawPath
+  if (rawPath.startsWith('/codex-local-image?')) {
+    try {
+      imagePath = new URL(rawPath, 'http://localhost').searchParams.get('path') ?? ''
+    } catch {
+      return false
+    }
+  }
+  if (!isAbsolute(imagePath)) return false
+
+  try {
+    return (await stat(imagePath)).isFile()
+  } catch {
+    return false
+  }
 }
 
 async function sanitizeInlineImageString(
@@ -713,6 +746,11 @@ async function sanitizeInlineUserContentBlock(
   if (!record) return block
 
   const type = asNonEmptyString(record.type) ?? ''
+  if (type === 'imageView' && await hasExistingLocalImagePath(record.path)) {
+    const nextRecord = omitGeneratedImagePayloadFields(record)
+    return Object.keys(nextRecord).length === Object.keys(record).length ? block : nextRecord
+  }
+
   const imageUrl = asNonEmptyString(record.url) ?? asNonEmptyString(record.image_url)
   if (imageUrl && isInlineDataUrl(imageUrl)) {
     const localUrl = await persistInlineDataUrlToLocalFile(imageUrl, `inline-image-${context.turnId}-${context.itemId}-${String(context.blockIndex)}`)
@@ -748,7 +786,7 @@ async function sanitizeInlineUserContentBlock(
       const localUrl = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
       if (localUrl) {
         return {
-          ...record,
+          ...omitGeneratedImagePayloadFields(record),
           type: 'imageView',
           path: localUrl,
         }

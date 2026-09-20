@@ -71,12 +71,67 @@ describe('thread inline media sanitization', () => {
     expect(images[0]).toMatch(/^\/codex-local-image\?path=/)
     expect(generatedImage.type).toBe('imageView')
     expect(generatedImage.path).toEqual(expect.any(String))
+    expect(generatedImage).not.toHaveProperty('result')
+    expect(JSON.stringify(generatedImage).length).toBeLessThan(512)
     expect(toolOutput.result).toMatch(/^\/codex-local-image\?path=/)
 
     expect(existsSync(localImagePathFromProxyUrl(content[0].url as string))).toBe(true)
     expect(existsSync(localImagePathFromProxyUrl(images[0]))).toBe(true)
     expect(existsSync(generatedImage.path as string)).toBe(true)
     expect(existsSync(localImagePathFromProxyUrl(toolOutput.result as string))).toBe(true)
+  })
+
+  it('removes duplicate generated-image payload fields when an image view already has a valid local path', async () => {
+    const generated = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{ id: 'generated-1', type: 'imageGeneration', result: pngBase64 }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+    const imagePath = generated.thread.turns[0].items[0].path
+
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'generated-1',
+            type: 'imageView',
+            path: imagePath,
+            result: pngBase64,
+            b64_json: pngBase64,
+            image: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toBe(imagePath)
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('b64_json')
+    expect(imageView).not.toHaveProperty('image')
+    expect(JSON.stringify(imageView).length).toBeLessThan(512)
+  })
+
+  it('keeps generated-image fallback data when an image view path is unavailable', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'generated-1',
+            type: 'imageView',
+            path: '/tmp/codex-web-inline-media/missing-image.png',
+            result: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    expect(result.thread.turns[0].items[0].result).toMatch(/^\/codex-local-image\?path=/)
   })
 
   it('leaves non-image result strings untouched', async () => {
