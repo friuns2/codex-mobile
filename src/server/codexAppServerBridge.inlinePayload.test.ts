@@ -9,6 +9,7 @@ import {
   BackendQueueProcessor,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
+  sanitizeCapturedItemsForMerge,
   sanitizeThreadTurnsInlinePayloads,
   sanitizeThreadItemsForTurn,
   toAutomationApiRecord,
@@ -36,6 +37,25 @@ function localImagePathFromProxyUrl(value: string): string {
 }
 
 describe('thread inline media sanitization', () => {
+  it('bounds captured-item sanitization to the request snapshot', async () => {
+    type Captured = { id: string; sanitized: boolean }
+    const original: Captured = { id: 'generated-1', sanitized: false }
+    const replacement: Captured = { id: 'generated-1', sanitized: false }
+    const capturedMap = new Map([[original.id, original]])
+    const sanitizedIds: string[] = []
+
+    const currentItems = await sanitizeCapturedItemsForMerge(capturedMap, async (captured) => {
+      sanitizedIds.push(captured.id)
+      capturedMap.set(replacement.id, replacement)
+      captured.sanitized = true
+    })
+
+    expect(sanitizedIds).toEqual(['generated-1'])
+    expect(currentItems).toEqual([])
+    expect(capturedMap.get(replacement.id)).toBe(replacement)
+    expect(replacement.sanitized).toBe(false)
+  })
+
   it('externalizes inline image data from common thread payload fields', async () => {
     const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {

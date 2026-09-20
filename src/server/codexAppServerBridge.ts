@@ -6005,6 +6005,17 @@ type CapturedItem = {
   sanitizePromise: Promise<void> | null
 }
 
+export async function sanitizeCapturedItemsForMerge<T extends { id: string; sanitized: boolean }>(
+  capturedMap: Map<string, T>,
+  sanitize: (captured: T) => Promise<void>,
+): Promise<T[]> {
+  const snapshot = Array.from(capturedMap.values())
+  for (const captured of snapshot) {
+    await sanitize(captured)
+  }
+  return snapshot.filter((captured) => captured.sanitized && capturedMap.get(captured.id) === captured)
+}
+
 const MERGEABLE_ITEM_TYPES = new Set([
   'commandExecution',
   'fileChange',
@@ -6362,16 +6373,13 @@ class AppServerProcess {
       return turns
     }
 
-    while (true) {
-      const unsanitizedItems = Array.from(capturedMap.values()).filter((captured) => !captured.sanitized)
-      if (unsanitizedItems.length === 0) break
-      for (const captured of unsanitizedItems) {
-        await this.ensureCapturedItemSanitized(captured)
-      }
-    }
+    const capturedSnapshot = await sanitizeCapturedItemsForMerge(
+      capturedMap,
+      (captured) => this.ensureCapturedItemSanitized(captured),
+    )
 
     const itemsByTurnId = new Map<string, CapturedItem[]>()
-    for (const captured of capturedMap.values()) {
+    for (const captured of capturedSnapshot) {
       let group = itemsByTurnId.get(captured.turnId)
       if (!group) {
         group = []
