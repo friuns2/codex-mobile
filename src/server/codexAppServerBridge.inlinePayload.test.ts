@@ -115,6 +115,7 @@ describe('thread inline media sanitization', () => {
     const internals = appServer as unknown as {
       emitNotification: (notification: { method: string; params: unknown }) => void
       capturedItemSanitizeQueue: unknown[]
+      activeCapturedItemSanitizations: number
     }
 
     for (let index = 0; index < 40; index += 1) {
@@ -134,9 +135,85 @@ describe('thread inline media sanitization', () => {
 
     appServer.dispose()
     expect(internals.capturedItemSanitizeQueue).toHaveLength(0)
+    expect(internals.activeCapturedItemSanitizations).toBe(0)
+
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-after-restart',
+        turnId: 'turn-live',
+        item: { id: 'image-after-restart', type: 'imageGeneration', result: pngBase64 },
+      },
+    })
+    expect(sanitizer).toHaveBeenCalledTimes(3)
     for (const release of releases) release()
     await vi.waitFor(() => expect(activeSanitizers).toBe(0))
+    expect(sanitizer).toHaveBeenCalledTimes(3)
+  })
+
+  it('waits for bounded queue capacity when a read needs an unqueued image', async () => {
+    let releaseSanitizers: (() => void) | undefined
+    const sanitizerGate = new Promise<void>((resolve) => {
+      releaseSanitizers = resolve
+    })
+    const sanitizer = vi.fn(async (turnId: string, items: unknown[]) => {
+      await sanitizerGate
+      return sanitizeThreadItemsForTurn(turnId, items)
+    })
+    const appServer = new AppServerProcess(sanitizer)
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemSanitizeQueue: unknown[]
+    }
+
+    for (let index = 0; index < 35; index += 1) {
+      internals.emitNotification({
+        method: 'item/completed',
+        params: {
+          threadId: `thread-image-${index}`,
+          turnId: 'turn-live',
+          item: { id: `image-${index}`, type: 'imageGeneration', result: pngBase64 },
+        },
+      })
+    }
     expect(sanitizer).toHaveBeenCalledTimes(2)
+    expect(internals.capturedItemSanitizeQueue).toHaveLength(32)
+
+    const mergedPromise = appServer.mergeItemsIntoTurns('thread-image-34', [{ id: 'turn-live', items: [] }])
+    await Promise.resolve()
+    expect(internals.capturedItemSanitizeQueue).toHaveLength(32)
+    releaseSanitizers?.()
+
+    const merged = await mergedPromise as Array<{ items: Array<Record<string, unknown>> }>
+    expect(merged[0].items[0].type).toBe('imageView')
+    expect(merged[0].items[0]).not.toHaveProperty('result')
+    expect(existsSync(merged[0].items[0].path as string)).toBe(true)
+    expect(internals.capturedItemSanitizeQueue.length).toBeLessThanOrEqual(32)
+    appServer.dispose()
+  })
+
+  it('can append captured images to a pending thread recovery with no materialized turns', async () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+    }
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-pending',
+        turnId: 'turn-pending',
+        item: { id: 'image-pending', type: 'imageGeneration', result: pngBase64 },
+      },
+    })
+
+    const merged = await mergeCapturedItemsIntoThreadResult(appServer, {
+      thread: { id: 'thread-pending', turns: [], status: { type: 'inProgress' } },
+    }, true) as { thread: { turns: Array<{ id: string; items: Array<Record<string, unknown>> }> } }
+
+    expect(merged.thread.turns).toHaveLength(1)
+    expect(merged.thread.turns[0].id).toBe('turn-pending')
+    expect(merged.thread.turns[0].items[0].type).toBe('imageView')
+    expect(merged.thread.turns[0].items[0]).not.toHaveProperty('result')
   })
 
   it('bounds notification generations and clears them on disposal', () => {
