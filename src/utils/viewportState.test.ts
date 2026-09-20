@@ -36,7 +36,7 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousHold: false,
       previousKeyboardOpen: true,
       widthChanged: true,
-      previousVisualHeight: 552,
+      holdStartVisualHeight: 0,
       currentVisualHeight: 200,
       hasKeyboardFocus: true,
     })).toBe(true)
@@ -47,7 +47,7 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousHold: false,
       previousKeyboardOpen: true,
       widthChanged: true,
-      previousVisualHeight: 552,
+      holdStartVisualHeight: 0,
       currentVisualHeight: 200,
       hasKeyboardFocus: false,
     })).toBe(false)
@@ -58,8 +58,27 @@ describe('resolveVirtualKeyboardRotationHold', () => {
       previousHold: true,
       previousKeyboardOpen: true,
       widthChanged: false,
-      previousVisualHeight: 200,
+      holdStartVisualHeight: 200,
       currentVisualHeight: 375,
+      hasKeyboardFocus: true,
+    })).toBe(false)
+  })
+
+  it('clears the hold after several small viewport increases cumulatively dismiss the keyboard', () => {
+    expect(resolveVirtualKeyboardRotationHold({
+      previousHold: true,
+      previousKeyboardOpen: true,
+      widthChanged: false,
+      holdStartVisualHeight: 200,
+      currentVisualHeight: 280,
+      hasKeyboardFocus: true,
+    })).toBe(true)
+    expect(resolveVirtualKeyboardRotationHold({
+      previousHold: true,
+      previousKeyboardOpen: true,
+      widthChanged: false,
+      holdStartVisualHeight: 200,
+      currentVisualHeight: 360,
       hasKeyboardFocus: true,
     })).toBe(false)
   })

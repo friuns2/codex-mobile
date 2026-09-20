@@ -1720,6 +1720,7 @@ const visualViewportHeight = ref(typeof window !== 'undefined' ? window.visualVi
 const visualViewportOffsetTop = ref(typeof window !== 'undefined' ? window.visualViewport?.offsetTop ?? 0 : 0)
 const layoutViewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
 const virtualKeyboardRotationHold = ref(false)
+let virtualKeyboardRotationHoldStartVisualHeight = 0
 let layoutViewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0
 const visualViewportStateCoalescer = createFrameCoalescer(
   applyVisualViewportState,
@@ -2195,7 +2196,7 @@ function scheduleVisualViewportStateUpdate(): void {
 function applyVisualViewportState(): void {
   if (typeof window === 'undefined') return
   const previousKeyboardOpen = isVirtualKeyboardOpen.value
-  const previousVisualHeight = visualViewportHeight.value
+  const previousRotationHold = virtualKeyboardRotationHold.value
   const widthChanged = layoutViewportWidth > 0 && window.innerWidth !== layoutViewportWidth
   const nextLayoutViewportHeight = resolveLayoutViewportHeight({
     previousHeight: layoutViewportHeight.value,
@@ -2205,14 +2206,20 @@ function applyVisualViewportState(): void {
   })
   const nextVisualViewportHeight = window.visualViewport?.height ?? window.innerHeight
   const nextVisualViewportOffsetTop = window.visualViewport?.offsetTop ?? 0
-  virtualKeyboardRotationHold.value = resolveVirtualKeyboardRotationHold({
-    previousHold: virtualKeyboardRotationHold.value,
+  const nextRotationHold = resolveVirtualKeyboardRotationHold({
+    previousHold: previousRotationHold,
     previousKeyboardOpen,
     widthChanged,
-    previousVisualHeight,
+    holdStartVisualHeight: virtualKeyboardRotationHoldStartVisualHeight,
     currentVisualHeight: nextVisualViewportHeight,
     hasKeyboardFocus: hasEditableKeyboardFocus(),
   })
+  if (!previousRotationHold && nextRotationHold) {
+    virtualKeyboardRotationHoldStartVisualHeight = nextVisualViewportHeight
+  } else if (previousRotationHold && !nextRotationHold) {
+    virtualKeyboardRotationHoldStartVisualHeight = 0
+  }
+  virtualKeyboardRotationHold.value = nextRotationHold
   layoutViewportWidth = window.innerWidth
   if (layoutViewportHeight.value !== nextLayoutViewportHeight) {
     layoutViewportHeight.value = nextLayoutViewportHeight

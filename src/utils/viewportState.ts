@@ -9,7 +9,7 @@ export type VirtualKeyboardRotationHoldMeasurement = {
   previousHold: boolean
   previousKeyboardOpen: boolean
   widthChanged: boolean
-  previousVisualHeight: number
+  holdStartVisualHeight: number
   currentVisualHeight: number
   hasKeyboardFocus: boolean
 }
@@ -29,5 +29,5 @@ export function resolveVirtualKeyboardRotationHold(
     return true
   }
   if (!measurement.previousHold || !measurement.hasKeyboardFocus) return false
-  return measurement.currentVisualHeight - measurement.previousVisualHeight <= 120
+  return measurement.currentVisualHeight - measurement.holdStartVisualHeight <= 120
 }
