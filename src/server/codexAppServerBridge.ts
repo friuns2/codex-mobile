@@ -575,12 +575,28 @@ function inferImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
   ) {
     return 'image/gif'
   }
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return 'image/bmp'
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70 &&
+    bytes[8] === 0x61 &&
+    bytes[9] === 0x76 &&
+    bytes[10] === 0x69 &&
+    (bytes[11] === 0x66 || bytes[11] === 0x73)
+  ) {
+    return 'image/avif'
+  }
   return null
 }
 
 function inferImageMimeTypeFromBase64(value: string): string | null {
   const compact = value.trim().replace(/\s+/gu, '')
-  if (compact.length < 32 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(compact)) return null
+  if (compact.length < 8 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(compact)) return null
   try {
     return inferImageMimeTypeFromBytes(Buffer.from(compact.slice(0, 64), 'base64'))
   } catch {
@@ -6454,6 +6470,7 @@ type CapturedItem = {
   turnId: string
   data: Record<string, unknown>
   completed: boolean
+  sanitized: boolean
 }
 
 const MERGEABLE_ITEM_TYPES = new Set([
@@ -6861,12 +6878,38 @@ export class AppServerProcess {
       turnId,
       data: item as Record<string, unknown>,
       completed: isCompleted,
+      sanitized: false,
     })
   }
 
   async mergeItemsIntoTurns(threadId: string, turns: unknown[]): Promise<unknown[]> {
     const capturedMap = this.capturedItemsByThreadId.get(threadId)
     if (!capturedMap || capturedMap.size === 0) return turns
+
+    const materializedItemIds = new Set<string>()
+    for (const turn of turns) {
+      const turnRecord = asRecord(turn)
+      const items = Array.isArray(turnRecord?.items) ? turnRecord.items : []
+      for (const item of items) {
+        const itemRecord = asRecord(item)
+        const itemId = typeof itemRecord?.id === 'string' ? itemRecord.id : ''
+        if (itemId) materializedItemIds.add(itemId)
+      }
+    }
+    for (const itemId of materializedItemIds) {
+      capturedMap.delete(itemId)
+    }
+    if (capturedMap.size === 0) {
+      this.capturedItemsByThreadId.delete(threadId)
+      return turns
+    }
+
+    for (const captured of capturedMap.values()) {
+      if (captured.sanitized) continue
+      const sanitizedItems = await sanitizeThreadItemsForTurn(captured.turnId, [captured.data])
+      captured.data = asRecord(sanitizedItems[0]) ?? captured.data
+      captured.sanitized = true
+    }
 
     const itemsByTurnId = new Map<string, CapturedItem[]>()
     for (const captured of capturedMap.values()) {
@@ -6878,7 +6921,7 @@ export class AppServerProcess {
       group.push(captured)
     }
 
-    return Promise.all(turns.map(async (turn) => {
+    return turns.map((turn) => {
       const turnRecord = asRecord(turn)
       if (!turnRecord) return turn
       const turnId = typeof turnRecord.id === 'string' ? turnRecord.id : ''
@@ -6895,13 +6938,12 @@ export class AppServerProcess {
         .map((c) => c.data)
 
       if (newItems.length === 0) return turn
-      const sanitizedNewItems = await sanitizeThreadItemsForTurn(turnId, newItems)
 
       return {
         ...turnRecord,
-        items: [...existingItems, ...sanitizedNewItems],
+        items: [...existingItems, ...newItems],
       }
-    }))
+    })
   }
 
   private sendServerRequestReply(requestId: number, reply: ServerRequestReply): void {

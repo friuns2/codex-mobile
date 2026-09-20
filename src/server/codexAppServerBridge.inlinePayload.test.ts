@@ -15,6 +15,8 @@ const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2w=='
 const webpBase64 = 'UklGRiIAAABXRUJQVlA4IC4AAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA='
+const avifBase64 = 'AAAAIGZ0eXBhdmlm'
+const bmpBase64 = 'Qk0AAAAA'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -225,14 +227,14 @@ describe('thread inline media sanitization', () => {
     expect(existsSync(items[0].path as string)).toBe(true)
   })
 
-  it('persists AVIF and BMP data URLs with extensions accepted by the image route', async () => {
+  it('persists raw AVIF and BMP fallbacks with extensions accepted by the image route', async () => {
     const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {
         turns: [{
           id: 'turn-1',
           items: [
-            { id: 'avif-1', type: 'imageView', path: '/missing.avif', result: 'data:image/avif;base64,AAAAIGZ0eXBhdmlm' },
-            { id: 'bmp-1', type: 'imageView', path: '/missing.bmp', result: 'data:image/bmp;base64,Qk0AAAAA' },
+            { id: 'avif-1', type: 'imageView', path: '/missing.avif', result: avifBase64 },
+            { id: 'bmp-1', type: 'imageView', path: '/missing.bmp', result: bmpBase64 },
           ],
         }],
       },
