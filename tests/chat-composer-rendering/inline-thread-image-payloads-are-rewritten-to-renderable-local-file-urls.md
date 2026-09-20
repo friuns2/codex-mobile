@@ -16,6 +16,7 @@
 6. While the active thread continues emitting notifications, confirm each live-state request finishes without waiting for notifications to stop; a replacement received during cleanup appears on a later poll without exposing raw image data.
 7. Reload the active thread before the generated image is materialized in the session file and inspect the ordinary `thread/read` response.
 8. Resume the same thread through `thread/resume`, then load the truncated-first-fallback fixture.
+9. Load an older turn through `/codex-api/thread-turn-page` while its image exists only in a completion notification, and simulate one temporary image-file write failure alongside another valid captured image.
 
 #### Expected Results
 - Inline `data:` image payload is not sent in RPC response.
@@ -24,6 +25,7 @@
 - Each live-state request processes a bounded snapshot; newer or replaced notification items remain available for the next poll.
 - The ordinary `thread/read` response merges the sanitized captured image, so reloading during the materialization window does not temporarily hide it.
 - `thread/resume` includes the same sanitized capture, and a header-only candidate does not mask a later complete image fallback.
+- A completed notification replaces an incomplete same-ID placeholder in normal and paged turns; one image cleanup failure is omitted for that response and retried later without blocking other images or the thread response.
 
 #### Rollback/Cleanup
 - Remove the fallback fixture and any temporary unsupported-extension file.

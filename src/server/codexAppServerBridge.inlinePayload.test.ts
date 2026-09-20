@@ -123,6 +123,76 @@ describe('thread inline media sanitization', () => {
     expect(internals.capturedItemsByThreadId.has('thread-live')).toBe(false)
   })
 
+  it('replaces a materialized image placeholder with its completed capture', async () => {
+    const [persistedPlaceholder] = await sanitizeThreadItemsForTurn('turn-placeholder', [{
+      id: 'placeholder-source',
+      type: 'imageGeneration',
+      result: pngBase64,
+    }]) as Array<Record<string, unknown>>
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemsByThreadId: Map<string, Map<string, unknown>>
+    }
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-live',
+        turnId: 'turn-live',
+        item: { id: 'generated-live', type: 'imageGeneration', result: pngBase64 },
+      },
+    })
+
+    const merged = await appServer.mergeItemsIntoTurns('thread-live', [{
+      id: 'turn-live',
+      items: [{
+        id: 'generated-live',
+        type: 'imageGeneration',
+        status: 'inProgress',
+        path: persistedPlaceholder.path,
+      }],
+    }]) as Array<{ items: Array<Record<string, unknown>> }>
+
+    expect(merged[0].items).toHaveLength(1)
+    expect(merged[0].items[0].type).toBe('imageView')
+    expect(merged[0].items[0]).not.toHaveProperty('result')
+    expect(existsSync(merged[0].items[0].path as string)).toBe(true)
+    expect(internals.capturedItemsByThreadId.has('thread-live')).toBe(true)
+  })
+
+  it('isolates captured-image cleanup failures and retries the failed item later', async () => {
+    const logSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const sanitizer = vi.fn(async (turnId: string, items: unknown[]) => {
+      const item = items[0] as { id?: string }
+      if (item.id === 'failed-image') throw new Error('temporary write failure')
+      return sanitizeThreadItemsForTurn(turnId, items)
+    })
+    const appServer = new AppServerProcess(sanitizer)
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+    }
+    for (const itemId of ['failed-image', 'valid-image']) {
+      internals.emitNotification({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread-live',
+          turnId: 'turn-live',
+          item: { id: itemId, type: 'imageGeneration', result: pngBase64 },
+        },
+      })
+    }
+
+    const first = await appServer.mergeItemsIntoTurns('thread-live', [{ id: 'turn-live', items: [] }]) as Array<{ items: Array<Record<string, unknown>> }>
+    expect(first[0].items.map((item) => item.id)).toEqual(['valid-image'])
+    expect(sanitizer).toHaveBeenCalledTimes(2)
+    expect(logSpy).toHaveBeenCalledTimes(1)
+
+    const second = await appServer.mergeItemsIntoTurns('thread-live', [{ id: 'turn-live', items: [] }]) as Array<{ items: Array<Record<string, unknown>> }>
+    expect(second[0].items.map((item) => item.id)).toEqual(['valid-image'])
+    expect(sanitizer).toHaveBeenCalledTimes(3)
+    expect(logSpy).toHaveBeenCalledTimes(2)
+  })
+
   it('externalizes inline image data from common thread payload fields', async () => {
     const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {
