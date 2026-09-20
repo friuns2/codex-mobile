@@ -1260,7 +1260,7 @@ import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
 import { createFrameCoalescer } from './utils/frameCoalescer'
-import { resolveLayoutViewportHeight } from './utils/viewportState'
+import { resolveLayoutViewportHeight, resolveVirtualKeyboardRotationHold } from './utils/viewportState'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -1748,6 +1748,7 @@ const mobileResumeSyncInProgress = ref(false)
 const visualViewportHeight = ref(typeof window !== 'undefined' ? window.visualViewport?.height ?? window.innerHeight : 0)
 const visualViewportOffsetTop = ref(typeof window !== 'undefined' ? window.visualViewport?.offsetTop ?? 0 : 0)
 const layoutViewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
+const virtualKeyboardRotationHold = ref(false)
 let layoutViewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0
 const visualViewportStateCoalescer = createFrameCoalescer(
   applyVisualViewportState,
@@ -1830,7 +1831,7 @@ const isComposerTerminalOpen = computed(() => (
 const isVirtualKeyboardOpen = computed(() => {
   if (!isMobile.value) return false
   if (visualViewportHeight.value <= 0 || layoutViewportHeight.value <= 0) return false
-  return layoutViewportHeight.value - visualViewportHeight.value > 120
+  return virtualKeyboardRotationHold.value || layoutViewportHeight.value - visualViewportHeight.value > 120
 })
 const isTerminalKeyboardLayoutActive = computed(() => (
   isVirtualKeyboardOpen.value ||
@@ -2291,6 +2292,9 @@ function scheduleVisualViewportStateUpdate(): void {
 
 function applyVisualViewportState(): void {
   if (typeof window === 'undefined') return
+  const previousKeyboardOpen = isVirtualKeyboardOpen.value
+  const previousVisualHeight = visualViewportHeight.value
+  const widthChanged = layoutViewportWidth > 0 && window.innerWidth !== layoutViewportWidth
   const nextLayoutViewportHeight = resolveLayoutViewportHeight({
     previousHeight: layoutViewportHeight.value,
     previousWidth: layoutViewportWidth,
@@ -2299,6 +2303,14 @@ function applyVisualViewportState(): void {
   })
   const nextVisualViewportHeight = window.visualViewport?.height ?? window.innerHeight
   const nextVisualViewportOffsetTop = window.visualViewport?.offsetTop ?? 0
+  virtualKeyboardRotationHold.value = resolveVirtualKeyboardRotationHold({
+    previousHold: virtualKeyboardRotationHold.value,
+    previousKeyboardOpen,
+    widthChanged,
+    previousVisualHeight,
+    currentVisualHeight: nextVisualViewportHeight,
+    hasKeyboardFocus: hasEditableKeyboardFocus(),
+  })
   layoutViewportWidth = window.innerWidth
   if (layoutViewportHeight.value !== nextLayoutViewportHeight) {
     layoutViewportHeight.value = nextLayoutViewportHeight
@@ -2309,6 +2321,14 @@ function applyVisualViewportState(): void {
   if (visualViewportOffsetTop.value !== nextVisualViewportOffsetTop) {
     visualViewportOffsetTop.value = nextVisualViewportOffsetTop
   }
+}
+
+function hasEditableKeyboardFocus(): boolean {
+  const activeElement = document.activeElement
+  return activeElement instanceof HTMLInputElement
+    || activeElement instanceof HTMLTextAreaElement
+    || activeElement instanceof HTMLSelectElement
+    || (activeElement instanceof HTMLElement && activeElement.isContentEditable)
 }
 
 watch(sidebarSearchQuery, (value) => {
