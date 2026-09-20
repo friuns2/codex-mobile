@@ -1,35 +1,55 @@
-import { describe, expect, it } from 'vitest'
-import { normalizeZenResponsesRequest } from './zenProxy'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { normalizeZenResponsesRequest, resolveZenWireApi } from './zenProxy'
+import { clearZenModelCatalogCache } from './zenModelCatalog'
+import { createZenToolAliasStream } from './zenToolAliases'
 
-describe('OpenCode Zen request normalization', () => {
-  it('adds the free-tier admission shape without dropping existing tools', () => {
-    const normalized = normalizeZenResponsesRequest({
-      model: 'muse-spark-1.3-contributor-free',
-      stream: false,
-      tools: [{ type: 'function', name: 'shell', parameters: { type: 'object' } }],
-      tool_choice: 'none',
-    })
-
+const shell = { type: 'function', name: 'exec_command', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } }
+afterEach(() => { vi.unstubAllGlobals(); clearZenModelCatalogCache() })
+describe('OpenCode Zen normalization', () => {
+  it('aliases required tools to an executable shell with its real schema, without mutating input', () => {
+    const tools = [shell]
+    const aliases = new Map<string, string>()
+    const normalized = normalizeZenResponsesRequest({ tools, stream: false, input: [{ type: 'function_call', name: 'exec_command', call_id: 'real', arguments: '{}' }] }, aliases)
     expect(normalized.stream).toBe(true)
     expect(normalized.store).toBe(false)
     expect(normalized.tool_choice).toBe('auto')
-    expect(normalized.tools).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'function', name: 'shell' }),
-      expect.objectContaining({ type: 'function', name: 'bash' }),
-      expect.objectContaining({ type: 'function', name: 'read' }),
-    ]))
+    expect(normalized.tools).toEqual(expect.arrayContaining(['bash', 'read'].map(name => expect.objectContaining({ name, parameters: shell.parameters }))))
+    expect(tools).toHaveLength(1)
+    expect(normalized.input).toEqual([expect.objectContaining({ name: 'exec_command' })])
+    expect([...aliases]).toEqual([['bash', 'exec_command'], ['read', 'exec_command']])
   })
-
-  it('does not duplicate required OpenCode tools', () => {
+  it('flattens executable namespace tools and maps portable history back to wire names', () => {
+    const aliases = new Map<string, string>()
     const normalized = normalizeZenResponsesRequest({
-      tools: [
-        { type: 'function', name: 'bash' },
-        { type: 'function', name: 'read' },
-      ],
-    })
-    const names = (normalized.tools as Array<{ name: string }>).map((tool) => tool.name)
-
-    expect(names.filter((name) => name === 'bash')).toHaveLength(1)
-    expect(names.filter((name) => name === 'read')).toHaveLength(1)
+      tools: [shell, { type: 'namespace', name: 'agents', tools: [{ type: 'function', name: 'wait', parameters: { type: 'object' } }] }],
+      input: [{ type: 'function_call', name: 'agents.wait', call_id: 'call_1', arguments: '{}' }],
+    }, aliases)
+    expect(aliases.get('agents__wait')).toBe('agents.wait')
+    expect(normalized.tools).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'function', name: 'agents__wait' })]))
+    expect(normalized.input).toEqual([expect.objectContaining({ name: 'agents__wait' })])
+    expect(() => normalizeZenResponsesRequest({ tools: [shell, { type: 'web_search' }] })).toThrow('Disable hosted web search')
+  })
+  it('does not duplicate supplied tools and rejects dummy tools', () => {
+    expect((normalizeZenResponsesRequest({ tools: [{ type: 'function', name: 'bash' }, { type: 'function', name: 'read' }] }).tools as unknown[])).toHaveLength(2)
+    expect(() => normalizeZenResponsesRequest({})).toThrow('No dummy tools')
+  })
+  it('restores executable names in both protocol streams', async () => {
+    const stream = createZenToolAliasStream(new Map([['read', 'exec_command']]))
+    stream.end('data: {"item":{"type":"function_call","name":"read"}}\n\ndata: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"read"}}]}}]}\n\n')
+    let text = ''
+    for await (const chunk of stream) text += chunk
+    expect(text.match(/exec_command/g)).toHaveLength(2)
+  })
+  it('routes by model and rejects unknown routes, incompatible tools and nonportable response IDs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('models.dev') ? {
+      opencode: { npm: '@ai-sdk/openai-compatible', models: { muse: { provider: { npm: '@ai-sdk/openai' }, tool_call: true }, pickle: { tool_call: true }, jev: { tool_call: false } } },
+    } : { data: [{ id: 'muse' }, { id: 'pickle' }, { id: 'jev' }] }))))
+    expect(await resolveZenWireApi({ model: 'muse', input: 'hi' })).toBe('responses')
+    expect(await resolveZenWireApi({ model: 'muse', input: [{ type: 'reasoning', encrypted_content: 'opaque' } as never] })).toBe('responses')
+    expect(await resolveZenWireApi({ model: 'pickle', input: 'hi' })).toBe('chat')
+    await expect(resolveZenWireApi({ model: 'missing', input: 'hi' })).rejects.toThrow('No supported')
+    await expect(resolveZenWireApi({ model: 'jev', input: 'hi' })).rejects.toThrow('does not support')
+    await expect(resolveZenWireApi({ model: 'muse', input: 'hi', previous_response_id: 'resp_old' })).rejects.toThrow('full conversation')
+    await expect(resolveZenWireApi({ model: 'pickle', input: [{ type: 'message', role: 'user', content: [{ type: 'input_audio' }] }] })).rejects.toThrow('Content type')
   })
 })

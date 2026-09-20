@@ -741,6 +741,40 @@ describe('live error overlay', () => {
 })
 
 describe('provider model selection', () => {
+  it('does not overwrite a model chosen while catalog refresh is pending', async () => {
+    installTestWindow()
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({ model: 'muse-spark-1.3-contributor-free', providerId: 'opencode_zen', reasoningEffort: 'medium', speedMode: 'standard' })
+    let release!: (models: string[]) => void
+    gatewayMocks.getAvailableModelIds.mockImplementation(() => new Promise<string[]>(resolve => { release = resolve }))
+    const state = useDesktopState()
+    state.primeSelectedThread('zen-race')
+    state.setSelectedModelId('muse-spark-1.3-contributor-free')
+    const refreshing = state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    state.setSelectedModelId('mimo-v2.5-free')
+    release(['muse-spark-1.3-contributor-free', 'mimo-v2.5-free'])
+    await refreshing
+    expect(state.selectedModelId.value).toBe('mimo-v2.5-free')
+  })
+
+  it('preserves an explicitly selected next-turn model across thread resume and reload', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockResolvedValue({ model: 'muse-spark-1.3-contributor-free', modelProvider: 'opencode_zen', messages: [], inProgress: false, activeTurnId: '', hasMoreOlder: false, turnIndexByTurnId: {} })
+    const state = useDesktopState()
+    state.primeSelectedThread('zen-persist')
+    state.setSelectedModelId('mimo-v2.5-free')
+    await state.loadMessages('zen-persist')
+    expect(state.selectedModelId.value).toBe('mimo-v2.5-free')
+    const reloaded = useDesktopState()
+    reloaded.primeSelectedThread('zen-persist')
+    await reloaded.loadMessages('zen-persist')
+    expect(reloaded.selectedModelId.value).toBe('mimo-v2.5-free')
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({ model: 'muse-spark-1.3-contributor-free', providerId: 'opencode_zen', reasoningEffort: 'medium', speedMode: 'standard' })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['muse-spark-1.3-contributor-free', 'mimo-v2.5-free'])
+    await reloaded.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true, providerChanged: true })
+    expect(reloaded.selectedModelId.value).toBe('mimo-v2.5-free')
+  })
+
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
     installTestWindow({
       'codex-web-local.selected-model-by-context.v1': JSON.stringify({
@@ -770,6 +804,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      onMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual([
@@ -929,6 +964,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenLastCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      onMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual([
@@ -986,6 +1022,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenLastCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      onMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual(['big-pickle', 'ring-2.6-1t-free'])

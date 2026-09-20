@@ -20,7 +20,7 @@ This file is the manual test index. Detailed regression and feature verification
 | [Skills, Plugins, and Integrations](tests/skills-plugins-integrations/index.md) | 27 | Skills Hub, plugin/app directory surfaces, prompts, Telegram, and installed skill behavior. |
 | [Chat Composer and Message Rendering](tests/chat-composer-rendering/index.md) | 33 | Composer controls, queued messages, plan mode, markdown parsing, file links, attachments, generated images, and visible message rows. |
 | [Thread Loading, Streaming, and State](tests/thread-loading-state/index.md) | 26 | Thread list/detail loading, pagination, selected-thread stability, streaming scroll behavior, live-state reads, and missing-thread handling. |
-| [Providers and Models](tests/providers-models/index.md) | 24 | Provider selectors, model menus, OpenRouter, OpenCode Zen, custom endpoints, Responses/Completions format, and model refresh behavior. |
+| [Providers and Models](tests/providers-models/index.md) | 25 | Provider selectors, model menus, OpenRouter, OpenCode Zen, custom endpoints, Responses/Completions format, and model refresh behavior. |
 | [Auth and Docker Runtime](tests/auth-docker-runtime/index.md) | 12 | Codex auth, Docker-packaged runtime cases, copied auth behavior, invalid auth errors, and auth-aware provider fallback. |
 | [CLI, Network, and Platform](tests/cli-network-platform/index.md) | 17 | CLI startup, dev scripts, npx, Tailscale, Cloudflare tunnels, Windows, Android, Termux, and platform packaging behavior. |
 | [Git, Worktrees, and Rollback](tests/git-worktrees-rollback/index.md) | 25 | Branch controls, worktree creation, rollback commits, changed-files panels, file browser links, and rollback debug behavior. |

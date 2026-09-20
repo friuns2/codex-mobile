@@ -273,6 +273,7 @@ export function getFreeModeConfigArgs(state: FreeModeState, serverPort?: number)
       '-c', `model="${model}"`,
       '-c', `model_provider="${OPENCODE_ZEN_RUNTIME_PROVIDER_ID}"`,
       ...getOpenCodeZenProviderConfigArgs(serverPort),
+      '-c', 'web_search="disabled"',
     ]
   }
 

@@ -38,6 +38,8 @@ import {
   type FreeModeState,
 } from './freeMode.js'
 import { handleOpenRouterProxyRequest } from './openRouterProxy.js'
+import { getZenModelCatalog } from './zenModelCatalog.js'
+import type { ZenModelMetadata } from '../types/zenModels.js'
 import { handleZenProxyRequest } from './zenProxy.js'
 import { handleCustomEndpointProxyRequest } from './customEndpointProxy.js'
 import { ThreadTerminalManager } from './terminalManager.js'
@@ -128,6 +130,7 @@ type ThreadSearchIndex = {
 }
 
 type ProviderModelsResponse = {
+  models?: ZenModelMetadata[]
   data: string[]
   providerId: string
   source: 'provider' | 'custom'
@@ -2189,16 +2192,8 @@ async function fetchCustomEndpointModelIds(baseUrl: string, apiKey: string): Pro
 }
 
 async function fetchOpenCodeZenModelIds(apiKey: string | null | undefined): Promise<string[]> {
-  const headers: Record<string, string> = {}
-  if (apiKey && apiKey !== 'dummy') {
-    headers.Authorization = `Bearer ${apiKey}`
-  }
-  const response = await fetch('https://opencode.ai/zen/v1/models', {
-    headers,
-    signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
-  })
-  if (!response.ok) return []
-  return normalizeProviderModelsData(await response.json() as unknown)
+  const catalog = await getZenModelCatalog(apiKey ?? '')
+  return catalog.filter(model => apiKey?.trim() && apiKey !== 'dummy' || model.free).map(model => model.id)
 }
 
 function sortOpenCodeZenModelIds(modelIds: string[]): string[] {
@@ -2332,12 +2327,9 @@ async function readProviderModelIdsForProvider(
   const fmState = ensureDefaultFreeModeStateForMissingAuthSync(join(getCodexHomeDir(), FREE_MODE_STATE_FILE))
   if (normalizedProviderId === 'opencode-zen') {
     try {
-      const modelIds = filterOpenCodeZenModelsForAuthState(
-        sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(fmState?.provider === 'opencode-zen' ? fmState.apiKey : null)),
-        fmState?.provider === 'opencode-zen' ? fmState.apiKey : null,
-      )
+      const modelIds = sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(fmState?.provider === 'opencode-zen' ? fmState.apiKey : null))
       if (modelIds.length > 0) {
-        return { data: modelIds, providerId: 'opencode-zen', source: 'provider' }
+        return { data: modelIds, models: (await getZenModelCatalog(fmState?.provider === 'opencode-zen' ? fmState.apiKey ?? '' : '')).filter(model => modelIds.includes(model.id)), providerId: 'opencode-zen', source: 'provider' }
       }
     } catch {
       // Fall through to the offline Zen defaults.
@@ -7179,10 +7171,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             if (state.provider === OPENCODE_ZEN_PROVIDER_ID) {
               currentModel = state.enabled ? (state.model?.trim() || OPENCODE_ZEN_DEFAULT_MODEL) : null
               try {
-                const zenModels = filterOpenCodeZenModelsForAuthState(
-                  sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(state.apiKey)),
-                  state.apiKey,
-                )
+                const zenModels = sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(state.apiKey))
                 if (zenModels.length > 0) {
                   models = zenModels
                 } else {
@@ -7896,12 +7885,9 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           if (fmState?.enabled) {
             if (fmState.provider === 'opencode-zen') {
               try {
-                const modelIds = filterOpenCodeZenModelsForAuthState(
-                  sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(fmState.apiKey)),
-                  fmState.apiKey,
-                )
+                const modelIds = sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(fmState.apiKey))
                 if (modelIds.length > 0) {
-                  setJson(res, 200, { data: modelIds, exclusive: true, source: 'opencode-zen' })
+                  setJson(res, 200, { data: modelIds, models: (await getZenModelCatalog(fmState.apiKey ?? '')).filter(model => modelIds.includes(model.id)), exclusive: true, source: 'opencode-zen' })
                   return
                 }
               } catch {

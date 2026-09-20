@@ -116,3 +116,7 @@
 - Never create or maintain separate wiki logging/changelog files or logging sections anywhere in the repo. Git commit messages are the main and only chronological log for wiki work and related documentation changes.
 - For query: read `llm-wiki/wiki/index.md` first, then relevant pages.
 - For lint: check orphans and stale/contradictory claims; put follow-up questions in the relevant wiki topic page or a tracked issue, not any log/changelog file.
+
+## Wiki index
+
+- Read [Zen hybrid routing](wiki/zen-hybrid-routing.md) before changing Zen model discovery, per-model protocol dispatch, or tool-stream translation.

@@ -1,3 +1,4 @@
+import type { ZenModelMetadata } from '../types/zenModels'
 import {
   fetchRpcMethodCatalog,
   fetchRpcNotificationCatalog,
@@ -166,6 +167,7 @@ export type ComposerPromptInfo = {
 }
 
 type ProviderModelsResponse = {
+  models?: ZenModelMetadata[]
   data?: unknown
   exclusive?: unknown
 }
@@ -2022,7 +2024,7 @@ export async function setCustomProvider(
   return await response.json() as { ok: boolean }
 }
 
-async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string[], exclusive: boolean } | null> {
+async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string[], exclusive: boolean; models?: ZenModelMetadata[] } | null> {
   try {
     const normalizedProviderId = providerId?.trim() ?? ''
     const url = normalizedProviderId
@@ -2045,6 +2047,7 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
           .filter((candidate, index, candidates): candidate is string =>
             candidate.length > 0 && candidates.indexOf(candidate) === index),
         exclusive: providerPayload.exclusive === true,
+        models: providerPayload.models,
       }
     }
   } catch {
@@ -2053,9 +2056,11 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
   return null
 }
 
-export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
+export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string; onMetadata?: (models: ZenModelMetadata[]) => void } = {}): Promise<string[]> {
   const shouldIncludeProviderModels = options.includeProviderModels !== false
   const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
+
+  options.onMetadata?.(providerModels?.models ?? [])
 
   if (providerModels?.exclusive || options.requireProviderModels) {
     return providerModels?.ids ?? []

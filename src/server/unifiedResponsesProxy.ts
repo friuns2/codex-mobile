@@ -1,4 +1,6 @@
+import type { Transform } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { forwardChatResponsesStream } from './chatResponsesStream.js'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 
@@ -6,7 +8,7 @@ type ResponsesApiInput = {
   id?: string
   type: string
   role?: string
-  content?: string | Array<{ type?: string; text?: string }>
+  content?: string | Array<{ type?: string; text?: string; image_url?: string; detail?: string }>
   summary?: Array<{ type?: string; text?: string }>
   text?: string
   name?: string
@@ -15,7 +17,7 @@ type ResponsesApiInput = {
   output?: unknown
 }
 
-type ResponsesApiRequest = {
+export type ResponsesApiRequest = {
   model: string
   input: string | ResponsesApiInput[]
   instructions?: string
@@ -30,7 +32,7 @@ type ResponsesApiRequest = {
 
 type ChatMessage = {
   role: string
-  content?: string
+  content?: string | Array<{ type: string; text?: string; image_url?: { url: string; detail?: string } }>
   reasoning_content?: string
   tool_call_id?: string
   tool_calls?: Array<{
@@ -58,6 +60,10 @@ export type UnifiedProxyOptions = {
   bearerToken: string
   requireBearerToken?: boolean
   wireApi: 'responses' | 'chat'
+  resolveWireApi?: (payload: ResponsesApiRequest) => Promise<'responses' | 'chat'>
+  prepareRequest?: (payload: ResponsesApiRequest) => ResponsesApiRequest
+  streamToolCalls?: boolean
+  createResponseTransform?: () => Transform
   responsesEndpoint: string
   chatCompletionsEndpoint: string
   missingKeyMessage: string
@@ -179,7 +185,7 @@ export function responsesInputToMessages(input: string | ResponsesApiInput[], in
       continue
     }
 
-    if (item.type === 'message' && item.role) {
+    if ((item.type === 'message' || !item.type) && item.role) {
       const content = item.content
       const text = typeof content === 'string'
         ? content
@@ -194,7 +200,12 @@ export function responsesInputToMessages(input: string | ResponsesApiInput[], in
         appendAssistantText(messages, text, pendingReasoningContent)
         pendingReasoningContent = ''
       } else {
-        messages.push({ role, content: text })
+        const parts = Array.isArray(content) && content.some(part => part.type === 'input_image')
+          ? content.map(part => part.type === 'input_image'
+            ? { type: 'image_url', image_url: { url: part.image_url ?? '', ...(part.detail ? { detail: part.detail } : {}) } }
+            : { type: 'text', text: part.text ?? '' })
+          : text
+        messages.push({ role, content: parts })
       }
       continue
     }
@@ -484,14 +495,17 @@ export function handleUnifiedResponsesProxyRequest(
       }
 
       const rawBody = await readRequestBody(req)
-      const parsedBody = JSON.parse(rawBody.toString()) as ResponsesApiRequest
+      let parsedBody = JSON.parse(rawBody.toString()) as ResponsesApiRequest
+      const wireApi = options.resolveWireApi ? await options.resolveWireApi(parsedBody) : options.wireApi
+      if (options.prepareRequest) parsedBody = options.prepareRequest(parsedBody)
+      if (res.destroyed) return
       const hasTools = Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0
       const hasToolOutputs = hasToolOutputsInInput(parsedBody.input)
       const useResponsesFallback = options.allowToolFallbackToResponses && (hasTools || hasToolOutputs)
-      const useChatCompletions = options.wireApi === 'chat' && !useResponsesFallback
+      const useChatCompletions = wireApi === 'chat' && !useResponsesFallback
       const useChatPayload = useChatCompletions || options.responsesPayloadFormat === 'chat'
       const isStreaming = parsedBody.stream === true
-      const effectiveStreaming = useChatPayload && isStreaming && !(hasTools || hasToolOutputs)
+      const effectiveStreaming = useChatPayload && isStreaming && (options.streamToolCalls === true || !(hasTools || hasToolOutputs))
 
       let payload = ''
       let upstreamUrl: URL
@@ -546,11 +560,23 @@ export function handleUnifiedResponsesProxyRequest(
         },
       }, (upstreamRes) => {
         const status = upstreamRes.statusCode ?? 502
+        const transform = status >= 200 && status < 300 ? options.createResponseTransform?.() : undefined
+        const stream = transform ? upstreamRes.pipe(transform) : upstreamRes
+        upstreamRes.on('error', error => { if (transform) transform.destroy(error); else res.destroy(error) })
+        res.once('close', () => { if (!res.writableEnded) { upstreamRes.destroy(); transform?.destroy() } })
         if (useChatPayload && effectiveStreaming && status >= 200 && status < 300) {
-          forwardStreamingTextResponse(upstreamRes, res, parsedBody.model)
+          if (options.streamToolCalls) void forwardChatResponsesStream(stream, res, parsedBody.model)
+          else forwardStreamingTextResponse(upstreamRes, res, parsedBody.model)
           return
         }
 
+        if (!useChatPayload && status >= 200 && status < 300) {
+          res.writeHead(status, copyProxyHeaders(upstreamRes.headers))
+          upstreamRes.on('error', error => res.destroy(error))
+          stream.on('error', error => res.destroy(error))
+          stream.pipe(res)
+          return
+        }
         const chunks: Buffer[] = []
         upstreamRes.on('data', (chunk: Buffer) => chunks.push(chunk))
         upstreamRes.on('end', () => {
@@ -591,13 +617,15 @@ export function handleUnifiedResponsesProxyRequest(
         })
       })
 
+      res.once('close', () => { if (!res.writableEnded) proxyReq.destroy() })
       proxyReq.on('error', (error) => {
         if (!res.headersSent) {
           res.writeHead(502, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: { message: `Proxy error: ${error.message}` } }))
-        }
+        } else if (!res.writableEnded) res.destroy(error)
       })
 
+      proxyReq.setTimeout(120_000, () => proxyReq.destroy(new Error('Upstream idle timeout')))
       proxyReq.write(payload)
       proxyReq.end()
     } catch (error) {

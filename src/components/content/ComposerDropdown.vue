@@ -39,11 +39,15 @@
           <li v-for="option in filteredOptions" :key="option.value">
             <button
               class="composer-dropdown-option"
-              :class="{ 'is-selected': option.value === modelValue }"
+              :class="{ 'is-selected': option.value === modelValue, 'composer-dropdown-option--detailed': Boolean(option.badge) }"
+              :disabled="option.disabled"
+              :title="option.description"
               type="button"
               @click="onSelect(option.value)"
             >
-              {{ option.label }}
+              <span class="composer-dropdown-option-label">{{ option.label }}</span>
+              <span v-if="option.badge" class="composer-dropdown-api-badge">{{ option.badge }}</span>
+              <small v-if="option.disabled" class="composer-dropdown-option-reason">{{ option.description }}</small>
             </button>
           </li>
           <li v-if="filteredOptions.length === 0" class="composer-dropdown-empty">
@@ -63,6 +67,9 @@ import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 type DropdownOption = {
   value: string
   label: string
+  badge?: string
+  description?: string
+  disabled?: boolean
 }
 
 const props = defineProps<{
@@ -133,7 +140,7 @@ function updateMenuPosition(): void {
   const viewportPadding = 8
   const gap = 8
   const maxMenuWidth = Math.max(0, viewportWidth - viewportPadding * 2)
-  const measuredWidth = menuRef.value?.offsetWidth ?? menuWrapRef.value?.offsetWidth ?? 224
+  const measuredWidth = props.options.some(option => option.badge) ? 360 : (menuRef.value?.offsetWidth ?? menuWrapRef.value?.offsetWidth ?? 224)
   const measuredHeight = menuRef.value?.offsetHeight ?? menuWrapRef.value?.offsetHeight ?? 0
   const menuWidth = Math.min(measuredWidth, maxMenuWidth)
   const maxLeft = Math.max(viewportPadding, viewportWidth - menuWidth - viewportPadding)
@@ -173,6 +180,7 @@ function removeLayoutListeners(): void {
 }
 
 function onSelect(value: string): void {
+  if (props.options.find(option => option.value === value)?.disabled) return
   emit('update:modelValue', value)
   isOpen.value = false
   searchQuery.value = ''
