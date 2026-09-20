@@ -137,6 +137,42 @@ describe('thread inline media sanitization', () => {
     expect(existsSync(imageView.path as string)).toBe(true)
   })
 
+  it('uses the first valid image fallback when an earlier payload field is malformed', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [
+            {
+              id: 'generated-1',
+              type: 'imageView',
+              path: '/tmp/codex-web-inline-media/missing-image.png',
+              result: 'stale-image-result',
+              b64_json: pngBase64,
+            },
+            {
+              id: 'generated-2',
+              type: 'imageView',
+              path: '/tmp/codex-web-inline-media/also-missing.png',
+              result: 'stale-image-result',
+              b64_json: 'also-stale',
+              image: pngBase64,
+            },
+          ],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageViews = result.thread.turns[0].items
+    for (const imageView of imageViews) {
+      expect(imageView).not.toHaveProperty('result')
+      expect(imageView).not.toHaveProperty('b64_json')
+      expect(imageView).not.toHaveProperty('image')
+      expect(imageView.path).toEqual(expect.any(String))
+      expect(existsSync(imageView.path as string)).toBe(true)
+    }
+  })
+
   it('normalizes a local image proxy path before returning an image view', async () => {
     const generated = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {

@@ -755,22 +755,23 @@ async function sanitizeInlineUserContentBlock(
       }
     }
 
-    const rawResult = asNonEmptyString(record.result)
-      ?? asNonEmptyString(record.b64_json)
-      ?? asNonEmptyString(record.image)
-    const existingFallbackPath = await resolveExistingLocalImagePath(rawResult)
-    if (existingFallbackPath) {
-      return {
-        ...omitGeneratedImagePayloadFields(record),
-        path: existingFallbackPath,
-      }
-    }
-
     const mimeType = asNonEmptyString(record.mime_type)
       ?? asNonEmptyString(record.mimeType)
       ?? 'image/png'
-    const dataUrl = rawResult ? normalizeBase64ImageDataUrl(rawResult, mimeType) : null
-    if (dataUrl) {
+    const fallbackCandidates = [record.result, record.b64_json, record.image]
+      .map(asNonEmptyString)
+      .filter((candidate): candidate is string => candidate !== null)
+    for (const candidate of fallbackCandidates) {
+      const existingFallbackPath = await resolveExistingLocalImagePath(candidate)
+      if (existingFallbackPath) {
+        return {
+          ...omitGeneratedImagePayloadFields(record),
+          path: existingFallbackPath,
+        }
+      }
+
+      const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
+      if (!dataUrl) continue
       const localUrl = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
       if (localUrl) {
         return {
