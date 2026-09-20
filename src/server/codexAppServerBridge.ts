@@ -621,14 +621,16 @@ function isStructurallyCompletePng(bytes: Uint8Array): boolean {
   if (inferImageMimeTypeFromHeader(bytes) !== 'image/png') return false
   let offset = 8
   let firstChunk = true
+  let hasImageData = false
   while (offset + 12 <= bytes.length) {
     const payloadSize = readUint32BigEndian(bytes, offset)
     const chunkEnd = offset + 12 + payloadSize
     if (!Number.isSafeInteger(chunkEnd) || chunkEnd > bytes.length) return false
     const typeOffset = offset + 4
     if (firstChunk && (!matchesAscii(bytes, typeOffset, 'IHDR') || payloadSize !== 13)) return false
+    if (matchesAscii(bytes, typeOffset, 'IDAT') && payloadSize > 0) hasImageData = true
     if (matchesAscii(bytes, typeOffset, 'IEND')) {
-      return payloadSize === 0 && chunkEnd === bytes.length
+      return hasImageData && payloadSize === 0 && chunkEnd === bytes.length
     }
     firstChunk = false
     offset = chunkEnd
@@ -640,13 +642,39 @@ function isStructurallyCompleteWebp(bytes: Uint8Array): boolean {
   if (inferImageMimeTypeFromHeader(bytes) !== 'image/webp' || bytes.length < 20) return false
   const declaredLength = readUint32LittleEndian(bytes, 4) + 8
   if (declaredLength !== bytes.length) return false
-  const hasImageChunk = matchesAscii(bytes, 12, 'VP8 ')
-    || matchesAscii(bytes, 12, 'VP8L')
-    || matchesAscii(bytes, 12, 'VP8X')
-  if (!hasImageChunk) return false
-  const firstChunkLength = readUint32LittleEndian(bytes, 16)
-  const paddedChunkLength = firstChunkLength + (firstChunkLength % 2)
-  return 20 + paddedChunkLength <= bytes.length
+
+  const inspectChunkRange = (start: number, end: number): { valid: boolean; hasImagePayload: boolean } => {
+    let nestedOffset = start
+    let hasImagePayload = false
+    while (nestedOffset + 8 <= end) {
+      const nestedLength = readUint32LittleEndian(bytes, nestedOffset + 4)
+      const nestedPaddedLength = nestedLength + (nestedLength % 2)
+      if (nestedOffset + 8 + nestedPaddedLength > end) return { valid: false, hasImagePayload: false }
+      if ((matchesAscii(bytes, nestedOffset, 'VP8 ') || matchesAscii(bytes, nestedOffset, 'VP8L'))
+        && nestedLength > 0) {
+        hasImagePayload = true
+      }
+      nestedOffset += 8 + nestedPaddedLength
+    }
+    return { valid: nestedOffset === end, hasImagePayload }
+  }
+
+  let offset = 12
+  let hasImagePayload = false
+  while (offset + 8 <= bytes.length) {
+    const chunkLength = readUint32LittleEndian(bytes, offset + 4)
+    const paddedChunkLength = chunkLength + (chunkLength % 2)
+    if (offset + 8 + paddedChunkLength > bytes.length) return false
+    if ((matchesAscii(bytes, offset, 'VP8 ') || matchesAscii(bytes, offset, 'VP8L')) && chunkLength > 0) {
+      hasImagePayload = true
+    } else if (matchesAscii(bytes, offset, 'ANMF') && chunkLength > 16) {
+      const frame = inspectChunkRange(offset + 8 + 16, offset + 8 + chunkLength)
+      if (!frame.valid) return false
+      hasImagePayload ||= frame.hasImagePayload
+    }
+    offset += 8 + paddedChunkLength
+  }
+  return offset === bytes.length && hasImagePayload
 }
 
 function isStructurallyCompleteJpeg(bytes: Uint8Array): boolean {
@@ -691,6 +719,14 @@ function isStructurallyCompleteBmp(bytes: Uint8Array): boolean {
     && pixelOffset < bytes.length
     && dibHeaderLength >= 12
     && 14 + dibHeaderLength <= bytes.length
+    && bytes.length - pixelOffset > 0
+}
+
+function containsAscii(bytes: Uint8Array, start: number, end: number, value: string): boolean {
+  for (let offset = start; offset + value.length <= end; offset += 1) {
+    if (matchesAscii(bytes, offset, value)) return true
+  }
+  return false
 }
 
 function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
@@ -720,13 +756,62 @@ function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
         }
       }
     } else if (matchesAscii(bytes, offset + 4, 'meta')) {
-      hasMeta = true
+      const payloadStart = offset + headerLength
+      const payloadEnd = offset + boxLength
+      hasMeta = boxLength >= headerLength + 4
+        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'pitm')
+        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'iloc')
+        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'iinf')
+        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'iprp')
     } else if (matchesAscii(bytes, offset + 4, 'mdat')) {
-      hasMediaData = true
+      hasMediaData = boxLength > headerLength
     }
     offset += boxLength
   }
   return offset === bytes.length && hasFtyp && hasMeta && hasMediaData
+}
+
+function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/gif' || bytes.length < 14) return false
+  let offset = 13
+  const packedFields = bytes[10]
+  if ((packedFields & 0x80) !== 0) {
+    offset += 3 * 2 ** ((packedFields & 0x07) + 1)
+  }
+  let hasImageData = false
+  const skipSubBlocks = (): boolean => {
+    while (offset < bytes.length) {
+      const blockLength = bytes[offset]
+      offset += 1
+      if (blockLength === 0) return true
+      if (offset + blockLength > bytes.length) return false
+      offset += blockLength
+    }
+    return false
+  }
+  while (offset < bytes.length) {
+    const marker = bytes[offset]
+    offset += 1
+    if (marker === 0x3b) return hasImageData && offset === bytes.length
+    if (marker === 0x21) {
+      if (offset >= bytes.length) return false
+      offset += 1
+      if (!skipSubBlocks()) return false
+      continue
+    }
+    if (marker !== 0x2c || offset + 9 > bytes.length) return false
+    const imagePackedFields = bytes[offset + 8]
+    offset += 9
+    if ((imagePackedFields & 0x80) !== 0) {
+      offset += 3 * 2 ** ((imagePackedFields & 0x07) + 1)
+    }
+    if (offset >= bytes.length) return false
+    offset += 1
+    const imageDataStart = offset
+    if (!skipSubBlocks() || offset <= imageDataStart + 1) return false
+    hasImageData = true
+  }
+  return false
 }
 
 function inferCompleteImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
@@ -734,13 +819,7 @@ function inferCompleteImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
   if (mimeType === 'image/png') return isStructurallyCompletePng(bytes) ? mimeType : null
   if (mimeType === 'image/jpeg') return isStructurallyCompleteJpeg(bytes) ? mimeType : null
   if (mimeType === 'image/webp') return isStructurallyCompleteWebp(bytes) ? mimeType : null
-  if (mimeType === 'image/gif') {
-    return bytes.length >= 14
-      && bytes.subarray(13, -1).includes(0x2c)
-      && bytes[bytes.length - 1] === 0x3b
-      ? mimeType
-      : null
-  }
+  if (mimeType === 'image/gif') return isStructurallyCompleteGif(bytes) ? mimeType : null
   if (mimeType === 'image/bmp') return isStructurallyCompleteBmp(bytes) ? mimeType : null
   if (mimeType === 'image/avif') return isStructurallyCompleteAvif(bytes) ? mimeType : null
   return null
@@ -851,7 +930,10 @@ const INLINE_IMAGE_FIELD_NAMES = new Set([
 const INLINE_GENERATED_IMAGE_PAYLOAD_FIELD_NAMES = new Set([
   'b64_json',
   'image',
+  'image_url',
+  'images',
   'result',
+  'url',
 ])
 
 type InlinePayloadSanitizeContext = {
@@ -6625,6 +6707,33 @@ type CapturedItem = {
   completed: boolean
   sanitized: boolean
   sanitizePromise: Promise<void> | null
+  capturedAtMs: number
+  estimatedBytes: number
+}
+
+const CAPTURED_ITEM_MAX_COUNT_PER_THREAD = 100
+const CAPTURED_ITEM_MAX_BYTES_PER_THREAD = 64 * 1024 * 1024
+const CAPTURED_ITEM_TTL_MS = 5 * 60 * 1000
+
+function estimateCapturedItemBytes(value: unknown): number {
+  const pending: unknown[] = [value]
+  const seen = new Set<object>()
+  let total = 0
+  while (pending.length > 0 && total <= CAPTURED_ITEM_MAX_BYTES_PER_THREAD) {
+    const current = pending.pop()
+    if (typeof current === 'string') {
+      total += Buffer.byteLength(current, 'utf8')
+      continue
+    }
+    if (!current || typeof current !== 'object' || seen.has(current)) continue
+    seen.add(current)
+    if (Array.isArray(current)) {
+      pending.push(...current)
+    } else {
+      pending.push(...Object.values(current as Record<string, unknown>))
+    }
+  }
+  return total
 }
 
 export async function sanitizeCapturedItemsForMerge<T extends { id: string; sanitized: boolean }>(
@@ -6663,6 +6772,7 @@ export class AppServerProcess {
   private readonly threadTurnPageReadCacheByThreadId = new Map<string, { result: unknown; expiresAt: number }>()
   private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
+  private readonly capturedItemCleanupTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private readonly notificationGenerationByThreadId = new Map<string, number>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
@@ -6851,6 +6961,7 @@ export class AppServerProcess {
     this.initialized = false
     this.initializePromise = null
     this.readBuffer = ''
+    this.clearCapturedItemState()
   }
 
   private sendLine(payload: Record<string, unknown>): void {
@@ -7068,7 +7179,7 @@ export class AppServerProcess {
 
     if (existing && existing.completed && !isCompleted) return
 
-    threadItems.set(itemId, {
+    const captured: CapturedItem = {
       id: itemId,
       type: itemType,
       turnId,
@@ -7076,7 +7187,72 @@ export class AppServerProcess {
       completed: isCompleted,
       sanitized: false,
       sanitizePromise: null,
-    })
+      capturedAtMs: Date.now(),
+      estimatedBytes: estimateCapturedItemBytes(item),
+    }
+    if (existing) threadItems.delete(itemId)
+    threadItems.set(itemId, captured)
+    this.pruneCapturedItemsForThread(threadId)
+
+    const isGeneratedImage = itemType === 'imageGeneration'
+      || itemType === 'image_generation'
+      || itemType === 'imageView'
+    if (isGeneratedImage && threadItems.get(itemId) === captured) {
+      void this.ensureCapturedItemSanitized(captured).then(() => {
+        if (threadItems?.get(itemId) !== captured) return
+        captured.estimatedBytes = estimateCapturedItemBytes(captured.data)
+        this.pruneCapturedItemsForThread(threadId)
+      })
+    }
+  }
+
+  private clearCapturedItemCleanupTimer(threadId: string): void {
+    const timer = this.capturedItemCleanupTimersByThreadId.get(threadId)
+    if (timer) clearTimeout(timer)
+    this.capturedItemCleanupTimersByThreadId.delete(threadId)
+  }
+
+  private scheduleCapturedItemCleanup(threadId: string, threadItems: Map<string, CapturedItem>): void {
+    this.clearCapturedItemCleanupTimer(threadId)
+    if (threadItems.size === 0) return
+    const now = Date.now()
+    const earliestExpiry = Math.min(...Array.from(threadItems.values(), (item) => item.capturedAtMs + CAPTURED_ITEM_TTL_MS))
+    const timer = setTimeout(() => {
+      this.capturedItemCleanupTimersByThreadId.delete(threadId)
+      this.pruneCapturedItemsForThread(threadId)
+    }, Math.max(1, earliestExpiry - now))
+    timer.unref()
+    this.capturedItemCleanupTimersByThreadId.set(threadId, timer)
+  }
+
+  private pruneCapturedItemsForThread(threadId: string, now = Date.now()): void {
+    const threadItems = this.capturedItemsByThreadId.get(threadId)
+    if (!threadItems) {
+      this.clearCapturedItemCleanupTimer(threadId)
+      return
+    }
+    for (const [itemId, captured] of threadItems) {
+      if (now - captured.capturedAtMs >= CAPTURED_ITEM_TTL_MS) threadItems.delete(itemId)
+    }
+    let totalBytes = Array.from(threadItems.values()).reduce((sum, item) => sum + item.estimatedBytes, 0)
+    while (threadItems.size > CAPTURED_ITEM_MAX_COUNT_PER_THREAD || totalBytes > CAPTURED_ITEM_MAX_BYTES_PER_THREAD) {
+      const oldest = threadItems.entries().next().value as [string, CapturedItem] | undefined
+      if (!oldest) break
+      threadItems.delete(oldest[0])
+      totalBytes -= oldest[1].estimatedBytes
+    }
+    if (threadItems.size === 0) {
+      this.capturedItemsByThreadId.delete(threadId)
+      this.clearCapturedItemCleanupTimer(threadId)
+      return
+    }
+    this.scheduleCapturedItemCleanup(threadId, threadItems)
+  }
+
+  private clearCapturedItemState(): void {
+    for (const timer of this.capturedItemCleanupTimersByThreadId.values()) clearTimeout(timer)
+    this.capturedItemCleanupTimersByThreadId.clear()
+    this.capturedItemsByThreadId.clear()
   }
 
   private async ensureCapturedItemSanitized(captured: CapturedItem): Promise<void> {
@@ -7127,6 +7303,7 @@ export class AppServerProcess {
     }
     if (capturedMap.size === 0) {
       this.capturedItemsByThreadId.delete(threadId)
+      this.clearCapturedItemCleanupTimer(threadId)
       return turns
     }
 
@@ -7379,6 +7556,7 @@ export class AppServerProcess {
   }
 
   dispose(): void {
+    this.clearCapturedItemState()
     if (!this.process && !this.webSocket) return
 
     const proc = this.process
