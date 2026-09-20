@@ -6309,11 +6309,15 @@ type CapturedItemSanitizeTask = {
 }
 
 function estimateCapturedItemBytes(value: unknown): number {
+  const maxVisitedNodes = 10_000
   const pending: unknown[] = [value]
   const seen = new Set<object>()
   let total = 0
+  let visitedNodes = 0
   while (pending.length > 0 && total <= CAPTURED_ITEM_MAX_BYTES_PER_THREAD) {
+    if (visitedNodes >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
     const current = pending.pop()
+    visitedNodes += 1
     if (typeof current === 'string') {
       total += Buffer.byteLength(current, 'utf8')
       continue
@@ -6321,9 +6325,16 @@ function estimateCapturedItemBytes(value: unknown): number {
     if (!current || typeof current !== 'object' || seen.has(current)) continue
     seen.add(current)
     if (Array.isArray(current)) {
-      pending.push(...current)
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        if (visitedNodes + pending.length >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
+        pending.push(current[index])
+      }
     } else {
-      pending.push(...Object.values(current as Record<string, unknown>))
+      for (const key in current as Record<string, unknown>) {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) continue
+        if (visitedNodes + pending.length >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
+        pending.push((current as Record<string, unknown>)[key])
+      }
     }
   }
   return total

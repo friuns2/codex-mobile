@@ -123,6 +123,29 @@ describe('thread inline media sanitization', () => {
     expect(internals.capturedItemEstimatedBytesTotal).toBe(0)
   })
 
+  it('rejects an over-wide captured notification without variadic traversal', () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemsByThreadId: Map<string, Map<string, unknown>>
+    }
+
+    expect(() => internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-wide',
+        turnId: 'turn-live',
+        item: {
+          id: 'command-wide',
+          type: 'commandExecution',
+          output: Array.from({ length: 200_000 }, () => 0),
+        },
+      },
+    })).not.toThrow()
+    expect(internals.capturedItemsByThreadId.has('thread-wide')).toBe(false)
+    appServer.dispose()
+  })
+
   it('bounds eager image sanitization concurrency and queued work', async () => {
     let activeSanitizers = 0
     let maxActiveSanitizers = 0
