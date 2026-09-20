@@ -6471,6 +6471,7 @@ type CapturedItem = {
   data: Record<string, unknown>
   completed: boolean
   sanitized: boolean
+  sanitizePromise: Promise<void> | null
 }
 
 const MERGEABLE_ITEM_TYPES = new Set([
@@ -6879,7 +6880,22 @@ export class AppServerProcess {
       data: item as Record<string, unknown>,
       completed: isCompleted,
       sanitized: false,
+      sanitizePromise: null,
     })
+  }
+
+  private async ensureCapturedItemSanitized(captured: CapturedItem): Promise<void> {
+    if (captured.sanitized) return
+    if (!captured.sanitizePromise) {
+      captured.sanitizePromise = (async () => {
+        const sanitizedItems = await sanitizeThreadItemsForTurn(captured.turnId, [captured.data])
+        captured.data = asRecord(sanitizedItems[0]) ?? captured.data
+        captured.sanitized = true
+      })().finally(() => {
+        captured.sanitizePromise = null
+      })
+    }
+    await captured.sanitizePromise
   }
 
   async mergeItemsIntoTurns(threadId: string, turns: unknown[]): Promise<unknown[]> {
@@ -6904,11 +6920,12 @@ export class AppServerProcess {
       return turns
     }
 
-    for (const captured of capturedMap.values()) {
-      if (captured.sanitized) continue
-      const sanitizedItems = await sanitizeThreadItemsForTurn(captured.turnId, [captured.data])
-      captured.data = asRecord(sanitizedItems[0]) ?? captured.data
-      captured.sanitized = true
+    while (true) {
+      const unsanitizedItems = Array.from(capturedMap.values()).filter((captured) => !captured.sanitized)
+      if (unsanitizedItems.length === 0) break
+      for (const captured of unsanitizedItems) {
+        await this.ensureCapturedItemSanitized(captured)
+      }
     }
 
     const itemsByTurnId = new Map<string, CapturedItem[]>()
