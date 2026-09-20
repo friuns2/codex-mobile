@@ -96,6 +96,33 @@ describe('thread inline media sanitization', () => {
     expect(internals.capturedItemsByThreadId.has('thread-bounded')).toBe(false)
   })
 
+  it('bounds captured notification state across active thread ids', () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemsByThreadId: Map<string, Map<string, unknown>>
+      capturedItemEstimatedBytesTotal: number
+    }
+
+    for (let index = 0; index < 105; index += 1) {
+      internals.emitNotification({
+        method: 'item/completed',
+        params: {
+          threadId: `thread-global-${index}`,
+          turnId: 'turn-live',
+          item: { id: `command-${index}`, type: 'commandExecution', command: `echo ${index}` },
+        },
+      })
+    }
+
+    expect(internals.capturedItemsByThreadId.size).toBe(100)
+    expect(internals.capturedItemsByThreadId.has('thread-global-0')).toBe(false)
+    expect(internals.capturedItemsByThreadId.has('thread-global-104')).toBe(true)
+    expect(internals.capturedItemEstimatedBytesTotal).toBeGreaterThan(0)
+    appServer.dispose()
+    expect(internals.capturedItemEstimatedBytesTotal).toBe(0)
+  })
+
   it('bounds eager image sanitization concurrency and queued work', async () => {
     let activeSanitizers = 0
     let maxActiveSanitizers = 0
@@ -179,15 +206,21 @@ describe('thread inline media sanitization', () => {
     expect(sanitizer).toHaveBeenCalledTimes(2)
     expect(internals.capturedItemSanitizeQueue).toHaveLength(32)
 
-    const mergedPromise = appServer.mergeItemsIntoTurns('thread-image-34', [{ id: 'turn-live', items: [] }])
+    const mergedPromises = [
+      appServer.mergeItemsIntoTurns('thread-image-34', [{ id: 'turn-live', items: [] }]),
+      appServer.mergeItemsIntoTurns('thread-image-34', [{ id: 'turn-live', items: [] }]),
+    ]
     await Promise.resolve()
     expect(internals.capturedItemSanitizeQueue).toHaveLength(32)
     releaseSanitizers?.()
 
-    const merged = await mergedPromise as Array<{ items: Array<Record<string, unknown>> }>
-    expect(merged[0].items[0].type).toBe('imageView')
-    expect(merged[0].items[0]).not.toHaveProperty('result')
-    expect(existsSync(merged[0].items[0].path as string)).toBe(true)
+    const mergedResults = await Promise.all(mergedPromises) as Array<Array<{ items: Array<Record<string, unknown>> }>>
+    for (const merged of mergedResults) {
+      expect(merged[0].items[0].type).toBe('imageView')
+      expect(merged[0].items[0]).not.toHaveProperty('result')
+      expect(existsSync(merged[0].items[0].path as string)).toBe(true)
+    }
+    expect(sanitizer).toHaveBeenCalledTimes(35)
     expect(internals.capturedItemSanitizeQueue.length).toBeLessThanOrEqual(32)
     appServer.dispose()
   })
@@ -223,6 +256,8 @@ describe('thread inline media sanitization', () => {
       notificationGenerationByThreadId: Map<string, number>
     }
 
+    const staleGeneration = appServer.getNotificationGeneration('thread-stale')
+    internals.emitNotification({ method: 'turn/started', params: { threadId: 'thread-stale' } })
     for (let index = 0; index < 1005; index += 1) {
       internals.emitNotification({
         method: 'turn/started',
@@ -231,8 +266,11 @@ describe('thread inline media sanitization', () => {
     }
 
     expect(internals.notificationGenerationByThreadId.size).toBe(1000)
+    expect(internals.notificationGenerationByThreadId.has('thread-stale')).toBe(false)
     expect(internals.notificationGenerationByThreadId.has('thread-generation-0')).toBe(false)
-    expect(internals.notificationGenerationByThreadId.get('thread-generation-1004')).toBe(1)
+    expect(internals.notificationGenerationByThreadId.get('thread-generation-1004')).toBe(1006)
+    expect(appServer.cacheLiveStateIfCurrent('thread-stale', staleGeneration, { stale: true }, 1, 1)).toBe(false)
+    expect(appServer.storeThreadReadSnapshotIfCurrent('thread-stale', staleGeneration, { stale: true })).toBe(false)
     appServer.dispose()
     expect(internals.notificationGenerationByThreadId.size).toBe(0)
   })
@@ -552,6 +590,33 @@ describe('thread inline media sanitization', () => {
     }
     expect(jpegView.path).toMatch(/\.jpg$/u)
     expect(gifView.path).toMatch(/\.gif$/u)
+  })
+
+  it('recovers generated images whose only fallback is in URL or image-list fields', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'url-only', type: 'imageGeneration', url: pngDataUrl },
+            { id: 'image-url-only', type: 'imageGeneration', image_url: jpegBase64 },
+            { id: 'images-only', type: 'imageGeneration', images: ['invalid', { url: `data:image/gif;base64,${gifBase64}` }] },
+          ],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const [pngView, jpegView, gifView] = result.thread.turns[0].items
+    expect(pngView.path).toMatch(/\.png$/u)
+    expect(jpegView.path).toMatch(/\.jpg$/u)
+    expect(gifView.path).toMatch(/\.gif$/u)
+    for (const imageView of [pngView, jpegView, gifView]) {
+      expect(imageView.type).toBe('imageView')
+      expect(existsSync(imageView.path as string)).toBe(true)
+      expect(imageView).not.toHaveProperty('url')
+      expect(imageView).not.toHaveProperty('image_url')
+      expect(imageView).not.toHaveProperty('images')
+    }
   })
 
   it('skips a truncated image header before a complete fallback', async () => {

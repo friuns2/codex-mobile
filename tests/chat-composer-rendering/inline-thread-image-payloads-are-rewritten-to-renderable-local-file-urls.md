@@ -30,11 +30,13 @@
 - `thread/resume` includes the same sanitized capture, and a header-only candidate does not mask a later complete image fallback.
 - A completed notification replaces an incomplete same-ID placeholder in normal and paged turns; one image cleanup failure is omitted for that response and retried later without blocking other images or the thread response.
 - Active notification state retains at most 100 items or 64 MiB per thread, expires after five minutes without a read, and is cleared when the app-server process is disposed.
+- Across threads, captured notification state retains at most 100 active thread IDs or 128 MiB in aggregate, evicting the least recently updated thread and its queued jobs first.
 - A container header without raster data does not suppress a later valid fallback, and normalized image views omit duplicate `url`, `image_url`, and `images` payload fields.
 - Background image persistence runs at most two jobs concurrently, retains at most 32 queued jobs, skips captures that have already been replaced or pruned, and clears queued work during disposal.
 - Notification generation state retains at most 1,000 recently active thread IDs and is cleared during full process-state cleanup.
 - A read that needs an image waits for space in the bounded sanitation queue instead of omitting the preview; a full state reset releases old-generation slots so restarted processing can continue immediately.
 - Empty or materialization-pending `thread/read` recovery responses merge current captured images, including a synthetic pending turn when no materialized turn exists yet.
+- Generated images recover scalar `url` and `image_url` fallbacks plus string or object entries in `images`; concurrent reads share the same job even after waiting for capacity, and evicted generation entries cannot make stale responses current again.
 
 #### Rollback/Cleanup
 - Remove the fallback fixture and any temporary unsupported-extension file.

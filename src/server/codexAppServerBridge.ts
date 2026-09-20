@@ -897,7 +897,32 @@ async function resolveGeneratedImageFallbackPath(
   const mimeType = asNonEmptyString(record.mime_type)
     ?? asNonEmptyString(record.mimeType)
     ?? 'image/png'
-  for (const rawCandidate of [record.result, record.b64_json, record.image]) {
+  const rawCandidates: unknown[] = [
+    record.result,
+    record.b64_json,
+    record.image,
+    record.url,
+    record.image_url,
+  ]
+  if (Array.isArray(record.images)) {
+    for (const entry of record.images) {
+      const entryRecord = asRecord(entry)
+      if (entryRecord) {
+        rawCandidates.push(
+          entryRecord.result,
+          entryRecord.b64_json,
+          entryRecord.image,
+          entryRecord.url,
+          entryRecord.image_url,
+        )
+      } else {
+        rawCandidates.push(entry)
+      }
+    }
+  } else {
+    rawCandidates.push(record.images)
+  }
+  for (const rawCandidate of rawCandidates) {
     const candidate = asNonEmptyString(rawCandidate)
     if (!candidate) continue
     const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
@@ -972,6 +997,17 @@ async function sanitizeInlineUserContentBlock(
     }
   }
 
+  if (type === 'imageGeneration' || type === 'image_generation') {
+    const fallbackPath = await resolveGeneratedImageFallbackPath(record, context)
+    if (fallbackPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        type: 'imageView',
+        path: fallbackPath,
+      }
+    }
+  }
+
   const imageUrl = asNonEmptyString(record.url) ?? asNonEmptyString(record.image_url)
   if (imageUrl && isInlineDataUrl(imageUrl)) {
     const localUrl = await persistInlineDataUrlToLocalFile(imageUrl, `inline-image-${context.turnId}-${context.itemId}-${String(context.blockIndex)}`)
@@ -992,17 +1028,6 @@ async function sanitizeInlineUserContentBlock(
     return {
       type: 'text',
       text: `Image attachment: ${target}`,
-    }
-  }
-
-  if (type === 'imageGeneration' || type === 'image_generation') {
-    const fallbackPath = await resolveGeneratedImageFallbackPath(record, context)
-    if (fallbackPath) {
-      return {
-        ...omitGeneratedImagePayloadFields(record),
-        type: 'imageView',
-        path: fallbackPath,
-      }
     }
   }
 
@@ -6243,6 +6268,8 @@ type CapturedItem = {
 
 const CAPTURED_ITEM_MAX_COUNT_PER_THREAD = 100
 const CAPTURED_ITEM_MAX_BYTES_PER_THREAD = 64 * 1024 * 1024
+const CAPTURED_ITEM_MAX_THREADS = 100
+const CAPTURED_ITEM_MAX_BYTES_TOTAL = 128 * 1024 * 1024
 const CAPTURED_ITEM_TTL_MS = 5 * 60 * 1000
 const CAPTURED_ITEM_SANITIZE_CONCURRENCY = 2
 const CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT = 32
@@ -6311,6 +6338,7 @@ export class AppServerProcess {
   private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
   private readonly capturedItemCleanupTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
+  private capturedItemEstimatedBytesTotal = 0
   private readonly capturedItemSanitizeQueue: CapturedItemSanitizeTask[] = []
   private activeCapturedItemSanitizations = 0
   private capturedItemSanitizeGeneration = 0
@@ -6318,6 +6346,7 @@ export class AppServerProcess {
   private resolveCapturedItemSanitizeCapacity: (() => void) | null = null
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private readonly notificationGenerationByThreadId = new Map<string, number>()
+  private nextNotificationGeneration = 0
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private activeConfigSignature = ''
 
@@ -6473,9 +6502,9 @@ export class AppServerProcess {
     this.captureItemFromNotification(notification)
     const nThreadId = this.extractThreadIdFromParams(notification.params)
     if (nThreadId) {
-      const nextGeneration = (this.notificationGenerationByThreadId.get(nThreadId) ?? 0) + 1
+      this.nextNotificationGeneration += 1
       this.notificationGenerationByThreadId.delete(nThreadId)
-      this.notificationGenerationByThreadId.set(nThreadId, nextGeneration)
+      this.notificationGenerationByThreadId.set(nThreadId, this.nextNotificationGeneration)
       while (this.notificationGenerationByThreadId.size > NOTIFICATION_GENERATION_THREAD_LIMIT) {
         const oldestThreadId = this.notificationGenerationByThreadId.keys().next().value as string | undefined
         if (!oldestThreadId) break
@@ -6541,7 +6570,7 @@ export class AppServerProcess {
   }
 
   getNotificationGeneration(threadId: string): number {
-    return this.notificationGenerationByThreadId.get(threadId) ?? 0
+    return this.notificationGenerationByThreadId.get(threadId) ?? this.nextNotificationGeneration
   }
 
   storeThreadReadSnapshotIfCurrent(threadId: string, generation: number, snapshot: unknown): boolean {
@@ -6651,9 +6680,17 @@ export class AppServerProcess {
       capturedAtMs: Date.now(),
       estimatedBytes: estimateCapturedItemBytes(item),
     }
-    if (existing) threadItems.delete(itemId)
+    if (existing) {
+      threadItems.delete(itemId)
+      this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - existing.estimatedBytes)
+      this.cancelQueuedCapturedItemSanitization(existing)
+    }
     threadItems.set(itemId, captured)
+    this.capturedItemEstimatedBytesTotal += captured.estimatedBytes
+    this.capturedItemsByThreadId.delete(threadId)
+    this.capturedItemsByThreadId.set(threadId, threadItems)
     this.pruneCapturedItemsForThread(threadId)
+    this.pruneCapturedItemsGlobally()
 
     const isGeneratedImage = itemType === 'imageGeneration'
       || itemType === 'image_generation'
@@ -6661,8 +6698,14 @@ export class AppServerProcess {
     if (isGeneratedImage && threadItems.get(itemId) === captured) {
       void this.ensureCapturedItemSanitized(captured, false).then(() => {
         if (threadItems?.get(itemId) !== captured) return
+        const previousEstimatedBytes = captured.estimatedBytes
         captured.estimatedBytes = estimateCapturedItemBytes(captured.data)
+        this.capturedItemEstimatedBytesTotal = Math.max(
+          0,
+          this.capturedItemEstimatedBytesTotal + captured.estimatedBytes - previousEstimatedBytes,
+        )
         this.pruneCapturedItemsForThread(threadId)
+        this.pruneCapturedItemsGlobally()
       })
     }
   }
@@ -6693,13 +6736,19 @@ export class AppServerProcess {
       return
     }
     for (const [itemId, captured] of threadItems) {
-      if (now - captured.capturedAtMs >= CAPTURED_ITEM_TTL_MS) threadItems.delete(itemId)
+      if (now - captured.capturedAtMs >= CAPTURED_ITEM_TTL_MS) {
+        threadItems.delete(itemId)
+        this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - captured.estimatedBytes)
+        this.cancelQueuedCapturedItemSanitization(captured)
+      }
     }
     let totalBytes = Array.from(threadItems.values()).reduce((sum, item) => sum + item.estimatedBytes, 0)
     while (threadItems.size > CAPTURED_ITEM_MAX_COUNT_PER_THREAD || totalBytes > CAPTURED_ITEM_MAX_BYTES_PER_THREAD) {
       const oldest = threadItems.entries().next().value as [string, CapturedItem] | undefined
       if (!oldest) break
       threadItems.delete(oldest[0])
+      this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - oldest[1].estimatedBytes)
+      this.cancelQueuedCapturedItemSanitization(oldest[1])
       totalBytes -= oldest[1].estimatedBytes
     }
     if (threadItems.size === 0) {
@@ -6710,13 +6759,45 @@ export class AppServerProcess {
     this.scheduleCapturedItemCleanup(threadId, threadItems)
   }
 
+  private cancelQueuedCapturedItemSanitization(captured: CapturedItem): void {
+    const taskIndex = this.capturedItemSanitizeQueue.findIndex((task) => task.captured === captured)
+    if (taskIndex < 0) return
+    const task = this.capturedItemSanitizeQueue.splice(taskIndex, 1)[0]
+    if (!task) return
+    if (captured.sanitizePromise === task.promise) captured.sanitizePromise = null
+    task.resolve()
+    this.signalCapturedItemSanitizeCapacity()
+  }
+
+  private evictCapturedThread(threadId: string): void {
+    const threadItems = this.capturedItemsByThreadId.get(threadId)
+    if (!threadItems) return
+    const estimatedBytes = Array.from(threadItems.values()).reduce((sum, item) => sum + item.estimatedBytes, 0)
+    for (const captured of threadItems.values()) this.cancelQueuedCapturedItemSanitization(captured)
+    threadItems.clear()
+    this.capturedItemsByThreadId.delete(threadId)
+    this.clearCapturedItemCleanupTimer(threadId)
+    this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - estimatedBytes)
+  }
+
+  private pruneCapturedItemsGlobally(): void {
+    while (this.capturedItemsByThreadId.size > CAPTURED_ITEM_MAX_THREADS
+      || this.capturedItemEstimatedBytesTotal > CAPTURED_ITEM_MAX_BYTES_TOTAL) {
+      const oldestThreadId = this.capturedItemsByThreadId.keys().next().value as string | undefined
+      if (!oldestThreadId) break
+      this.evictCapturedThread(oldestThreadId)
+    }
+  }
+
   private clearCapturedItemState(): void {
+    this.nextNotificationGeneration += 1
     this.capturedItemSanitizeGeneration += 1
     this.activeCapturedItemSanitizations = 0
     for (const timer of this.capturedItemCleanupTimersByThreadId.values()) clearTimeout(timer)
     this.capturedItemCleanupTimersByThreadId.clear()
     for (const threadItems of this.capturedItemsByThreadId.values()) threadItems.clear()
     this.capturedItemsByThreadId.clear()
+    this.capturedItemEstimatedBytesTotal = 0
     for (const task of this.capturedItemSanitizeQueue.splice(0)) {
       if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
       task.resolve()
@@ -6782,6 +6863,11 @@ export class AppServerProcess {
         if (!waitForCapacity) return
         await this.waitForCapturedItemSanitizeCapacity()
         if (captured.sanitized || !this.isCapturedItemCurrent(captured)) return
+        if (captured.sanitizePromise) break
+      }
+      if (captured.sanitizePromise) {
+        await captured.sanitizePromise
+        return
       }
       let resolveTask: (() => void) | undefined
       const promise = new Promise<void>((resolve) => {
@@ -6825,6 +6911,8 @@ export class AppServerProcess {
         && Boolean(await resolveExistingLocalImagePath(materializedItem.path))
       if (!isGeneratedImage || hasRenderableMaterializedImage) {
         capturedMap.delete(itemId)
+        this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - captured.estimatedBytes)
+        this.cancelQueuedCapturedItemSanitization(captured)
       }
     }
     if (capturedMap.size === 0) {
