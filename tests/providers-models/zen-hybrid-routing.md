@@ -25,3 +25,11 @@
 - Remove only the test containers printed by the Docker script.
 - Remove their named volumes only when discarding test conversations.
 - Restore the previous provider/model when testing outside an isolated home.
+
+## Hosted image generation compatibility
+
+- Use Codex CLI 0.142.5 or newer with Zen selected.
+- Start the server; inspect the child arguments for `features.image_generation=false`.
+- Send a greeting and a shell-tool request; require successful replies without unsupported image-generation errors.
+- Switch to OpenRouter; require the Zen-only image-generation override to be absent.
+- Restore the previous provider after testing.

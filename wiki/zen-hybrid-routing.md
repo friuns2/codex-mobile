@@ -6,7 +6,7 @@
 - Show inferred API badges in the existing searchable composer dropdown. Disable models with no agent-tool support or an unknown route. Preserve existing selected-model persistence.
 - Stream Responses directly. Translate Chat Completions text, reasoning, function arguments, finish state, and usage to Responses events. Preserve stable item/call IDs. Fail truncated streams instead of claiming success. Bound translated stream size to 32 MiB and individual Zen event frames to 4 MiB.
 - Alias required Zen `bash` and `read` tools only to an existing shell function with its real schema. Restore executable names in upstream events. Reject requests without executable admission tools; never append dummy tools.
-- Flatten executable namespace tools to reversible function names. Disable hosted web search in Zen runtime configuration; reject other unsupported hosted/custom tools explicitly.
+- Flatten executable namespace tools to reversible function names. Disable hosted web search and image generation in Zen runtime configuration; reject other unsupported hosted/custom tools explicitly.
 - Preserve a locally selected next-turn model when thread resume returns the previous turn's model.
 - Translate image parts when the selected model advertises image input. Reject unsupported attachment types, unsupported tools and provider response IDs explicitly. Preserve native Responses reasoning on its native path; replay only readable reasoning summaries on Chat. Disclose that private reasoning does not transfer between API families in Zen settings. Replay portable history rather than forwarding response IDs.
 - Keep routing SDK-inferred until completion tests prove access. Do not retry a different API after errors or a partial response.
