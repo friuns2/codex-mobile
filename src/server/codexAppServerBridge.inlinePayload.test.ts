@@ -1,4 +1,8 @@
 import { existsSync } from 'node:fs'
+import { writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -305,6 +309,35 @@ describe('thread inline media sanitization', () => {
     const imageView = result.thread.turns[0].items[0]
     expect(imageView.path).toBe(imagePath)
     expect(imageView).not.toHaveProperty('result')
+  })
+
+  it('uses an inline fallback when an existing image path cannot be served', async () => {
+    const unsupportedPath = join(tmpdir(), `codex-image-${randomUUID()}.bin`)
+    await writeFile(unsupportedPath, Buffer.from(pngBase64, 'base64'))
+
+    try {
+      const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+        thread: {
+          turns: [{
+            id: 'turn-1',
+            items: [{
+              id: 'generated-1',
+              type: 'imageView',
+              path: unsupportedPath,
+              result: pngBase64,
+            }],
+          }],
+        },
+      }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+      const imageView = result.thread.turns[0].items[0]
+      expect(imageView.path).not.toBe(unsupportedPath)
+      expect(imageView.path).toMatch(/\.png$/u)
+      expect(existsSync(imageView.path as string)).toBe(true)
+      expect(imageView).not.toHaveProperty('result')
+    } finally {
+      await rm(unsupportedPath, { force: true })
+    }
   })
 
   it('leaves non-image result strings untouched', async () => {
