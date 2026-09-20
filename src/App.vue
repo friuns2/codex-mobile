@@ -1231,6 +1231,7 @@ import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, Telegra
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
+import { createFrameCoalescer } from './utils/frameCoalescer'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -1717,6 +1718,11 @@ const mobileResumeSyncInProgress = ref(false)
 const visualViewportHeight = ref(typeof window !== 'undefined' ? window.visualViewport?.height ?? window.innerHeight : 0)
 const visualViewportOffsetTop = ref(typeof window !== 'undefined' ? window.visualViewport?.offsetTop ?? 0 : 0)
 const layoutViewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
+const visualViewportStateCoalescer = createFrameCoalescer(
+  applyVisualViewportState,
+  (callback) => window.requestAnimationFrame(callback),
+  (frameId) => window.cancelAnimationFrame(frameId),
+)
 let accountStatePollTimer: number | null = null
 let isAccountStatePollInFlight = false
 let externalCodexAuthAvailable = false
@@ -2128,10 +2134,10 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onDocumentVisibilityChange)
   window.addEventListener('pageshow', onWindowPageShow)
   window.addEventListener('focus', onWindowFocus)
-  window.addEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.addEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.addEventListener('scroll', updateVisualViewportState)
-  updateVisualViewportState()
+  window.addEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.addEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.addEventListener('scroll', scheduleVisualViewportStateUpdate)
+  applyVisualViewportState()
   applyDarkMode()
   darkModeMediaQuery?.addEventListener('change', applyDarkMode)
   void initialize()
@@ -2162,9 +2168,10 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   window.removeEventListener('pageshow', onWindowPageShow)
   window.removeEventListener('focus', onWindowFocus)
-  window.removeEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.removeEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.removeEventListener('scroll', updateVisualViewportState)
+  window.removeEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.removeEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.removeEventListener('scroll', scheduleVisualViewportStateUpdate)
+  visualViewportStateCoalescer.cancel()
   darkModeMediaQuery?.removeEventListener('change', applyDarkMode)
   if (accountStatePollTimer !== null) {
     window.clearInterval(accountStatePollTimer)
@@ -2178,11 +2185,24 @@ onUnmounted(() => {
   stopPolling()
 })
 
-function updateVisualViewportState(): void {
+function scheduleVisualViewportStateUpdate(): void {
+  visualViewportStateCoalescer.schedule()
+}
+
+function applyVisualViewportState(): void {
   if (typeof window === 'undefined') return
-  layoutViewportHeight.value = Math.max(layoutViewportHeight.value, window.innerHeight)
-  visualViewportHeight.value = window.visualViewport?.height ?? window.innerHeight
-  visualViewportOffsetTop.value = window.visualViewport?.offsetTop ?? 0
+  const nextLayoutViewportHeight = Math.max(layoutViewportHeight.value, window.innerHeight)
+  const nextVisualViewportHeight = window.visualViewport?.height ?? window.innerHeight
+  const nextVisualViewportOffsetTop = window.visualViewport?.offsetTop ?? 0
+  if (layoutViewportHeight.value !== nextLayoutViewportHeight) {
+    layoutViewportHeight.value = nextLayoutViewportHeight
+  }
+  if (visualViewportHeight.value !== nextVisualViewportHeight) {
+    visualViewportHeight.value = nextVisualViewportHeight
+  }
+  if (visualViewportOffsetTop.value !== nextVisualViewportOffsetTop) {
+    visualViewportOffsetTop.value = nextVisualViewportOffsetTop
+  }
 }
 
 watch(sidebarSearchQuery, (value) => {
