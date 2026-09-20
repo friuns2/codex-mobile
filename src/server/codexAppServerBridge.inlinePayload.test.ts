@@ -96,6 +96,70 @@ describe('thread inline media sanitization', () => {
     expect(internals.capturedItemsByThreadId.has('thread-bounded')).toBe(false)
   })
 
+  it('bounds eager image sanitization concurrency and queued work', async () => {
+    let activeSanitizers = 0
+    let maxActiveSanitizers = 0
+    const releases: Array<() => void> = []
+    const sanitizer = vi.fn(async (_turnId: string, items: unknown[]) => {
+      activeSanitizers += 1
+      maxActiveSanitizers = Math.max(maxActiveSanitizers, activeSanitizers)
+      await new Promise<void>((resolve) => {
+        releases.push(() => {
+          activeSanitizers -= 1
+          resolve()
+        })
+      })
+      return items
+    })
+    const appServer = new AppServerProcess(sanitizer)
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemSanitizeQueue: unknown[]
+    }
+
+    for (let index = 0; index < 40; index += 1) {
+      internals.emitNotification({
+        method: 'item/completed',
+        params: {
+          threadId: `thread-image-${index}`,
+          turnId: 'turn-live',
+          item: { id: `image-${index}`, type: 'imageGeneration', result: pngBase64 },
+        },
+      })
+    }
+
+    expect(sanitizer).toHaveBeenCalledTimes(2)
+    expect(internals.capturedItemSanitizeQueue).toHaveLength(32)
+    expect(maxActiveSanitizers).toBe(2)
+
+    appServer.dispose()
+    expect(internals.capturedItemSanitizeQueue).toHaveLength(0)
+    for (const release of releases) release()
+    await vi.waitFor(() => expect(activeSanitizers).toBe(0))
+    expect(sanitizer).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds notification generations and clears them on disposal', () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+      notificationGenerationByThreadId: Map<string, number>
+    }
+
+    for (let index = 0; index < 1005; index += 1) {
+      internals.emitNotification({
+        method: 'turn/started',
+        params: { threadId: `thread-generation-${index}` },
+      })
+    }
+
+    expect(internals.notificationGenerationByThreadId.size).toBe(1000)
+    expect(internals.notificationGenerationByThreadId.has('thread-generation-0')).toBe(false)
+    expect(internals.notificationGenerationByThreadId.get('thread-generation-1004')).toBe(1)
+    appServer.dispose()
+    expect(internals.notificationGenerationByThreadId.size).toBe(0)
+  })
+
   it('shares live image cleanup, defers replacements, and merges them into thread reads', async () => {
     let releaseSanitizer: (() => void) | undefined
     const sanitizerGate = new Promise<void>((resolve) => {

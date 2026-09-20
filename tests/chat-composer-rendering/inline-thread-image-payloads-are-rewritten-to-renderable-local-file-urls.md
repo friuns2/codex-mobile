@@ -18,6 +18,7 @@
 8. Resume the same thread through `thread/resume`, then load the truncated-first-fallback fixture.
 9. Load an older turn through `/codex-api/thread-turn-page` while its image exists only in a completion notification, and simulate one temporary image-file write failure alongside another valid captured image.
 10. Keep an active thread emitting more than 100 unmaterialized items without reading it, then leave it idle for more than five minutes.
+11. Emit a burst of generated-image notifications across many threads while image persistence is deliberately blocked.
 
 #### Expected Results
 - Inline `data:` image payload is not sent in RPC response.
@@ -29,6 +30,8 @@
 - A completed notification replaces an incomplete same-ID placeholder in normal and paged turns; one image cleanup failure is omitted for that response and retried later without blocking other images or the thread response.
 - Active notification state retains at most 100 items or 64 MiB per thread, expires after five minutes without a read, and is cleared when the app-server process is disposed.
 - A container header without raster data does not suppress a later valid fallback, and normalized image views omit duplicate `url`, `image_url`, and `images` payload fields.
+- Background image persistence runs at most two jobs concurrently, retains at most 32 queued jobs, skips captures that have already been replaced or pruned, and clears queued work during disposal.
+- Notification generation state retains at most 1,000 recently active thread IDs and is cleared during full process-state cleanup.
 
 #### Rollback/Cleanup
 - Remove the fallback fixture and any temporary unsupported-extension file.
