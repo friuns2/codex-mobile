@@ -6516,6 +6516,10 @@ export class AppServerProcess {
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private activeConfigSignature = ''
 
+  constructor(
+    private readonly capturedItemSanitizer: typeof sanitizeThreadItemsForTurn = sanitizeThreadItemsForTurn,
+  ) {}
+
 
   private getCodexCommand(): string {
     const codexCommand = resolveCodexCommand()
@@ -6901,7 +6905,7 @@ export class AppServerProcess {
     if (captured.sanitized) return
     if (!captured.sanitizePromise) {
       captured.sanitizePromise = (async () => {
-        const sanitizedItems = await sanitizeThreadItemsForTurn(captured.turnId, [captured.data])
+        const sanitizedItems = await this.capturedItemSanitizer(captured.turnId, [captured.data])
         captured.data = asRecord(sanitizedItems[0]) ?? captured.data
         captured.sanitized = true
       })().finally(() => {
@@ -7229,6 +7233,27 @@ export class AppServerProcess {
       }, 1500)
       forceKillTimer.unref()
     }
+  }
+}
+
+export async function mergeCapturedItemsIntoThreadResult(
+  appServer: Pick<AppServerProcess, 'mergeItemsIntoTurns'>,
+  result: unknown,
+): Promise<unknown> {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const threadId = typeof thread?.id === 'string' ? thread.id : ''
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !threadId || !turns) return result
+
+  const mergedTurns = await appServer.mergeItemsIntoTurns(threadId, turns)
+  if (mergedTurns === turns) return result
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: mergedTurns,
+    },
   }
 }
 
@@ -8262,9 +8287,13 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           ? mergeImportedThreadsIntoThreadListResult(errorMergedResult)
           : errorMergedResult
         const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, listMergedResult)
-        const result = THREAD_METHODS_WITH_TURNS.has(body.method)
+        let result = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
           : sanitizedResult
+
+        if (body.method === 'thread/read') {
+          result = await mergeCapturedItemsIntoThreadResult(appServer, result)
+        }
 
 	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
 	          const rpcRecord = asRecord(result)
@@ -8395,9 +8424,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             includeTurns: true,
           }))
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', threadReadResult)
-          appServer.storeThreadReadSnapshot(threadId, sanitized)
+          const mergedSanitized = await mergeCapturedItemsIntoThreadResult(appServer, sanitized)
+          appServer.storeThreadReadSnapshot(threadId, mergedSanitized)
 
-          const record = asRecord(sanitized)
+          const record = asRecord(mergedSanitized)
           const thread = asRecord(record?.thread)
           const rawTurns = Array.isArray(thread?.turns) ? thread.turns : []
 
@@ -8416,7 +8446,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             return
           }
 
-          let turns = await appServer.mergeItemsIntoTurns(threadId, rawTurns)
+          let turns = rawTurns
 
           if (sessionPath && isAbsolute(sessionPath) && sessionSize > 0) {
             try {

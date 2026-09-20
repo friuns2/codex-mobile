@@ -15,6 +15,7 @@
 6. Repeat the rotation while the on-screen keyboard remains open and the composer retains focus, then dismiss the keyboard through several gradual viewport-height increases.
 7. Navigate away immediately after dispatching another burst to exercise pending-frame cancellation.
 8. Repeat the flow in both themes and at both required viewport sizes.
+9. After the conversation and composer stabilize in each case, save screenshots as `output/playwright/mobile-viewport-375x812-light.png`, `output/playwright/mobile-viewport-375x812-dark.png`, `output/playwright/mobile-viewport-768x1024-light.png`, and `output/playwright/mobile-viewport-768x1024-dark.png`.
 
 #### Expected Results
 - A same-frame event burst schedules only one viewport-state application.
@@ -24,6 +25,7 @@
 - Rotation while an editor remains focused keeps the keyboard-specific layout until cumulative visual-viewport expansion shows that dismissal has completed.
 - Navigating away with a pending update produces no error or late layout mutation.
 - Light and dark themes remain readable at both viewport sizes.
+- The four retained screenshots show the stable conversation and composer at the required phone/tablet sizes in both themes.
 - Events delivered once per animation frame can still cause one layout per frame; this change does not debounce across keyboard-animation frames.
 
 #### Rollback/Cleanup

@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
+  AppServerProcess,
+  mergeCapturedItemsIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeCapturedItemsForMerge,
@@ -54,6 +56,66 @@ describe('thread inline media sanitization', () => {
     expect(currentItems).toEqual([])
     expect(capturedMap.get(replacement.id)).toBe(replacement)
     expect(replacement.sanitized).toBe(false)
+  })
+
+  it('shares live image cleanup, defers replacements, and merges them into thread reads', async () => {
+    let releaseSanitizer: (() => void) | undefined
+    const sanitizerGate = new Promise<void>((resolve) => {
+      releaseSanitizer = resolve
+    })
+    const sanitizer = vi.fn(async (turnId: string, items: unknown[]) => {
+      await sanitizerGate
+      return sanitizeThreadItemsForTurn(turnId, items)
+    })
+    const appServer = new AppServerProcess(sanitizer)
+    const internals = appServer as unknown as {
+      captureItemFromNotification: (notification: { method: string; params: unknown }) => void
+      capturedItemsByThreadId: Map<string, Map<string, { data: Record<string, unknown>; sanitized: boolean }>>
+    }
+    const turns = [{ id: 'turn-live', items: [] }]
+
+    internals.captureItemFromNotification({
+      method: 'item/started',
+      params: {
+        threadId: 'thread-live',
+        turnId: 'turn-live',
+        item: { id: 'generated-live', type: 'imageGeneration', result: pngBase64 },
+      },
+    })
+    const firstRead = appServer.mergeItemsIntoTurns('thread-live', turns)
+    const concurrentRead = appServer.mergeItemsIntoTurns('thread-live', turns)
+    expect(sanitizer).toHaveBeenCalledTimes(1)
+
+    internals.captureItemFromNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-live',
+        turnId: 'turn-live',
+        item: { id: 'generated-live', type: 'imageGeneration', result: pngBase64 },
+      },
+    })
+    releaseSanitizer?.()
+
+    for (const mergedTurns of await Promise.all([firstRead, concurrentRead])) {
+      expect((mergedTurns[0] as { items: unknown[] }).items).toEqual([])
+    }
+    expect(sanitizer).toHaveBeenCalledTimes(1)
+
+    const mergedResult = await mergeCapturedItemsIntoThreadResult(appServer, {
+      thread: { id: 'thread-live', turns },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+    const imageView = mergedResult.thread.turns[0].items[0]
+    expect(sanitizer).toHaveBeenCalledTimes(2)
+    expect(imageView.type).toBe('imageView')
+    expect(imageView).not.toHaveProperty('result')
+    expect(existsSync(imageView.path as string)).toBe(true)
+
+    const cachedCapture = internals.capturedItemsByThreadId.get('thread-live')?.get('generated-live')
+    expect(cachedCapture?.sanitized).toBe(true)
+    expect(cachedCapture?.data).not.toHaveProperty('result')
+
+    await mergeCapturedItemsIntoThreadResult(appServer, mergedResult)
+    expect(internals.capturedItemsByThreadId.has('thread-live')).toBe(false)
   })
 
   it('externalizes inline image data from common thread payload fields', async () => {
