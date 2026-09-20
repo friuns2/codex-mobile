@@ -9,6 +9,7 @@ import { homedir } from 'node:os'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
+import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
 import WebSocket, { type RawData } from 'ws'
@@ -597,7 +598,7 @@ function normalizeBase64ImageDataUrl(value: string, mimeType: string): string | 
   const inferredMimeType = inferImageMimeTypeFromBase64(compact)
   if (!inferredMimeType) return null
   const normalizedMimeType = mimeType.trim().toLowerCase()
-  const finalMimeType = normalizedMimeType.startsWith('image/') && normalizedMimeType !== 'image/*'
+  const finalMimeType = normalizedMimeType === inferredMimeType
     ? normalizedMimeType
     : inferredMimeType
   return `data:${finalMimeType};base64,${compact}`
@@ -648,7 +649,10 @@ async function persistInlineDataUrlToLocalFile(dataUrl: string, baseName: string
   if (bytes.length === 0) return null
 
   const hash = createHash('sha1').update(bytes).digest('hex')
-  const ext = extensionFromMimeType(mimeType)
+  const persistedMimeType = mimeType.startsWith('image/')
+    ? inferImageMimeTypeFromBytes(bytes) ?? mimeType
+    : mimeType
+  const ext = extensionFromMimeType(persistedMimeType)
   const mediaDir = join(tmpdir(), 'codex-web-inline-media')
   await mkdir(mediaDir, { recursive: true })
   const fileName = `${baseName}-${hash}${ext}`
@@ -708,6 +712,12 @@ async function resolveExistingLocalImagePath(value: unknown): Promise<string | n
     } catch {
       return null
     }
+  } else if (rawPath.startsWith('file://')) {
+    try {
+      imagePath = fileURLToPath(rawPath)
+    } catch {
+      return null
+    }
   }
   if (!isAbsolute(imagePath)) return null
 
@@ -716,6 +726,28 @@ async function resolveExistingLocalImagePath(value: unknown): Promise<string | n
   } catch {
     return null
   }
+}
+
+async function resolveGeneratedImageFallbackPath(
+  record: Record<string, unknown>,
+  context: InlinePayloadSanitizeContext,
+): Promise<string | null> {
+  const mimeType = asNonEmptyString(record.mime_type)
+    ?? asNonEmptyString(record.mimeType)
+    ?? 'image/png'
+  const fallbackCandidates = [record.result, record.b64_json, record.image]
+    .map(asNonEmptyString)
+    .filter((candidate): candidate is string => candidate !== null)
+  for (const candidate of fallbackCandidates) {
+    const existingFallbackPath = await resolveExistingLocalImagePath(candidate)
+    if (existingFallbackPath) return existingFallbackPath
+
+    const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
+    if (!dataUrl) continue
+    const localPath = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
+    if (localPath) return localPath
+  }
+  return null
 }
 
 async function sanitizeInlineImageString(
@@ -755,29 +787,11 @@ async function sanitizeInlineUserContentBlock(
       }
     }
 
-    const mimeType = asNonEmptyString(record.mime_type)
-      ?? asNonEmptyString(record.mimeType)
-      ?? 'image/png'
-    const fallbackCandidates = [record.result, record.b64_json, record.image]
-      .map(asNonEmptyString)
-      .filter((candidate): candidate is string => candidate !== null)
-    for (const candidate of fallbackCandidates) {
-      const existingFallbackPath = await resolveExistingLocalImagePath(candidate)
-      if (existingFallbackPath) {
-        return {
-          ...omitGeneratedImagePayloadFields(record),
-          path: existingFallbackPath,
-        }
-      }
-
-      const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
-      if (!dataUrl) continue
-      const localUrl = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
-      if (localUrl) {
-        return {
-          ...omitGeneratedImagePayloadFields(record),
-          path: localUrl,
-        }
+    const fallbackPath = await resolveGeneratedImageFallbackPath(record, context)
+    if (fallbackPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        path: fallbackPath,
       }
     }
   }
@@ -806,21 +820,12 @@ async function sanitizeInlineUserContentBlock(
   }
 
   if (type === 'imageGeneration' || type === 'image_generation') {
-    const rawResult = asNonEmptyString(record.result)
-      ?? asNonEmptyString(record.b64_json)
-      ?? asNonEmptyString(record.image)
-    const mimeType = asNonEmptyString(record.mime_type)
-      ?? asNonEmptyString(record.mimeType)
-      ?? 'image/png'
-    const dataUrl = rawResult ? normalizeBase64ImageDataUrl(rawResult, mimeType) : null
-    if (dataUrl) {
-      const localUrl = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
-      if (localUrl) {
-        return {
-          ...omitGeneratedImagePayloadFields(record),
-          type: 'imageView',
-          path: localUrl,
-        }
+    const fallbackPath = await resolveGeneratedImageFallbackPath(record, context)
+    if (fallbackPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        type: 'imageView',
+        path: fallbackPath,
       }
     }
   }

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
@@ -173,6 +174,43 @@ describe('thread inline media sanitization', () => {
     }
   })
 
+  it('uses the first valid fallback for an unnormalized image generation item', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [
+            {
+              id: 'generated-1',
+              type: 'imageGeneration',
+              result: 'stale-image-result',
+              b64_json: jpegBase64,
+              mime_type: 'image/png',
+            },
+            {
+              id: 'generated-2',
+              type: 'image_generation',
+              result: 'stale-image-result',
+              b64_json: 'also-stale',
+              image: gifBase64,
+            },
+          ],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const [jpegView, gifView] = result.thread.turns[0].items
+    for (const imageView of [jpegView, gifView]) {
+      expect(imageView.type).toBe('imageView')
+      expect(imageView).not.toHaveProperty('result')
+      expect(imageView).not.toHaveProperty('b64_json')
+      expect(imageView).not.toHaveProperty('image')
+      expect(existsSync(imageView.path as string)).toBe(true)
+    }
+    expect(jpegView.path).toMatch(/\.jpg$/u)
+    expect(gifView.path).toMatch(/\.gif$/u)
+  })
+
   it('normalizes a local image proxy path before returning an image view', async () => {
     const generated = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {
@@ -192,6 +230,36 @@ describe('thread inline media sanitization', () => {
             id: 'generated-1',
             type: 'imageView',
             path: `/codex-local-image?path=${encodeURIComponent(imagePath)}`,
+            result: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toBe(imagePath)
+    expect(imageView).not.toHaveProperty('result')
+  })
+
+  it('normalizes a local file URL before removing duplicate image payloads', async () => {
+    const generated = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{ id: 'generated-1', type: 'imageGeneration', result: pngBase64 }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+    const imagePath = generated.thread.turns[0].items[0].path as string
+
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'generated-1',
+            type: 'imageView',
+            path: pathToFileURL(imagePath).href,
             result: pngBase64,
           }],
         }],
