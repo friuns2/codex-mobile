@@ -116,7 +116,7 @@ describe('thread inline media sanitization', () => {
     expect(JSON.stringify(imageView).length).toBeLessThan(512)
   })
 
-  it('keeps generated-image fallback data when an image view path is unavailable', async () => {
+  it('restores an image view from inline fallback data when its path is unavailable', async () => {
     const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {
         turns: [{
@@ -131,7 +131,40 @@ describe('thread inline media sanitization', () => {
       },
     }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
 
-    expect(result.thread.turns[0].items[0].result).toMatch(/^\/codex-local-image\?path=/)
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView.path).toEqual(expect.any(String))
+    expect(existsSync(imageView.path as string)).toBe(true)
+  })
+
+  it('normalizes a local image proxy path before returning an image view', async () => {
+    const generated = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{ id: 'generated-1', type: 'imageGeneration', result: pngBase64 }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+    const imagePath = generated.thread.turns[0].items[0].path as string
+
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'generated-1',
+            type: 'imageView',
+            path: `/codex-local-image?path=${encodeURIComponent(imagePath)}`,
+            result: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toBe(imagePath)
+    expect(imageView).not.toHaveProperty('result')
   })
 
   it('leaves non-image result strings untouched', async () => {

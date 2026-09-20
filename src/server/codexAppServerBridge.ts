@@ -606,24 +606,24 @@ function omitGeneratedImagePayloadFields(record: Record<string, unknown>): Recor
   )
 }
 
-async function hasExistingLocalImagePath(value: unknown): Promise<boolean> {
+async function resolveExistingLocalImagePath(value: unknown): Promise<string | null> {
   const rawPath = asNonEmptyString(value)
-  if (!rawPath) return false
+  if (!rawPath) return null
 
   let imagePath = rawPath
   if (rawPath.startsWith('/codex-local-image?')) {
     try {
       imagePath = new URL(rawPath, 'http://localhost').searchParams.get('path') ?? ''
     } catch {
-      return false
+      return null
     }
   }
-  if (!isAbsolute(imagePath)) return false
+  if (!isAbsolute(imagePath)) return null
 
   try {
-    return (await stat(imagePath)).isFile()
+    return (await stat(imagePath)).isFile() ? imagePath : null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -655,9 +655,39 @@ async function sanitizeInlineUserContentBlock(
   if (!record) return block
 
   const type = asNonEmptyString(record.type) ?? ''
-  if (type === 'imageView' && await hasExistingLocalImagePath(record.path)) {
-    const nextRecord = omitGeneratedImagePayloadFields(record)
-    return Object.keys(nextRecord).length === Object.keys(record).length ? block : nextRecord
+  if (type === 'imageView') {
+    const existingPath = await resolveExistingLocalImagePath(record.path)
+    if (existingPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        path: existingPath,
+      }
+    }
+
+    const rawResult = asNonEmptyString(record.result)
+      ?? asNonEmptyString(record.b64_json)
+      ?? asNonEmptyString(record.image)
+    const existingFallbackPath = await resolveExistingLocalImagePath(rawResult)
+    if (existingFallbackPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        path: existingFallbackPath,
+      }
+    }
+
+    const mimeType = asNonEmptyString(record.mime_type)
+      ?? asNonEmptyString(record.mimeType)
+      ?? 'image/png'
+    const dataUrl = rawResult ? normalizeBase64ImageDataUrl(rawResult, mimeType) : null
+    if (dataUrl) {
+      const localUrl = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
+      if (localUrl) {
+        return {
+          ...omitGeneratedImagePayloadFields(record),
+          path: localUrl,
+        }
+      }
+    }
   }
 
   const imageUrl = asNonEmptyString(record.url) ?? asNonEmptyString(record.image_url)
