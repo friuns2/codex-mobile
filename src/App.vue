@@ -1260,6 +1260,7 @@ import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
 import { createFrameCoalescer } from './utils/frameCoalescer'
+import { resolveLayoutViewportHeight } from './utils/viewportState'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -1747,6 +1748,7 @@ const mobileResumeSyncInProgress = ref(false)
 const visualViewportHeight = ref(typeof window !== 'undefined' ? window.visualViewport?.height ?? window.innerHeight : 0)
 const visualViewportOffsetTop = ref(typeof window !== 'undefined' ? window.visualViewport?.offsetTop ?? 0 : 0)
 const layoutViewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
+let layoutViewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0
 const visualViewportStateCoalescer = createFrameCoalescer(
   applyVisualViewportState,
   (callback) => window.requestAnimationFrame(callback),
@@ -2289,9 +2291,15 @@ function scheduleVisualViewportStateUpdate(): void {
 
 function applyVisualViewportState(): void {
   if (typeof window === 'undefined') return
-  const nextLayoutViewportHeight = Math.max(layoutViewportHeight.value, window.innerHeight)
+  const nextLayoutViewportHeight = resolveLayoutViewportHeight({
+    previousHeight: layoutViewportHeight.value,
+    previousWidth: layoutViewportWidth,
+    currentHeight: window.innerHeight,
+    currentWidth: window.innerWidth,
+  })
   const nextVisualViewportHeight = window.visualViewport?.height ?? window.innerHeight
   const nextVisualViewportOffsetTop = window.visualViewport?.offsetTop ?? 0
+  layoutViewportWidth = window.innerWidth
   if (layoutViewportHeight.value !== nextLayoutViewportHeight) {
     layoutViewportHeight.value = nextLayoutViewportHeight
   }
