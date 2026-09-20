@@ -6,6 +6,7 @@ import {
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
+  sanitizeThreadItemsForTurn,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
 
@@ -209,6 +210,39 @@ describe('thread inline media sanitization', () => {
     }
     expect(jpegView.path).toMatch(/\.jpg$/u)
     expect(gifView.path).toMatch(/\.gif$/u)
+  })
+
+  it('sanitizes generated images captured after the materialized thread read', async () => {
+    const items = await sanitizeThreadItemsForTurn('turn-live', [{
+      id: 'generated-live',
+      type: 'imageGeneration',
+      result: pngBase64,
+    }]) as Array<Record<string, unknown>>
+
+    expect(items[0].type).toBe('imageView')
+    expect(items[0]).not.toHaveProperty('result')
+    expect(items[0].path).toEqual(expect.any(String))
+    expect(existsSync(items[0].path as string)).toBe(true)
+  })
+
+  it('persists AVIF and BMP data URLs with extensions accepted by the image route', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'avif-1', type: 'imageView', path: '/missing.avif', result: 'data:image/avif;base64,AAAAIGZ0eXBhdmlm' },
+            { id: 'bmp-1', type: 'imageView', path: '/missing.bmp', result: 'data:image/bmp;base64,Qk0AAAAA' },
+          ],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const [avifView, bmpView] = result.thread.turns[0].items
+    expect(avifView.path).toMatch(/\.avif$/u)
+    expect(bmpView.path).toMatch(/\.bmp$/u)
+    expect(existsSync(avifView.path as string)).toBe(true)
+    expect(existsSync(bmpView.path as string)).toBe(true)
   })
 
   it('normalizes a local image proxy path before returning an image view', async () => {
