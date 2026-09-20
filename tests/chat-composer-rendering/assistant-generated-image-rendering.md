@@ -17,6 +17,7 @@ Codex app-server generated image items render as assistant image previews.
 7. Click the generated image preview
 8. Repeat with an `imageView` whose `path` does not exist and confirm its inline fallback is persisted and promoted to a valid absolute `path`
 9. Repeat with a stale `result` followed by a valid `b64_json` or `image` field on both `imageView` and `imageGeneration`, and with an existing `file://` path
+10. While an image generation turn is active, inspect `/codex-api/thread-live-state` after an `item/completed` image notification, including AVIF or BMP fallback fixtures
 
 #### Expected Results
 - The generated image item appears as an assistant image preview instead of disappearing from the conversation
@@ -26,6 +27,7 @@ Codex app-server generated image items render as assistant image previews.
 - Once the local image file exists, the thread response contains the local `path` without duplicate Base64 payload fields
 - A missing local path is recovered from the remaining image payload, and the recovered image renders through the local image route
 - Stale earlier payload fields do not mask a later valid image, byte signatures determine the persisted image extension, and an existing `file://` path is normalized before duplicate payload fields are removed
+- Images merged from live notifications are sanitized before caching or returning, and AVIF/BMP fallbacks receive extensions accepted by the local image route
 
 #### Rollback/Cleanup
 - Delete any temporary generated image files and missing-path fixtures created only for this test

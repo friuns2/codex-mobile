@@ -610,6 +610,8 @@ function extensionFromMimeType(mimeType: string): string {
   if (normalized === 'image/jpeg') return '.jpg'
   if (normalized === 'image/webp') return '.webp'
   if (normalized === 'image/gif') return '.gif'
+  if (normalized === 'image/avif') return '.avif'
+  if (normalized === 'image/bmp') return '.bmp'
   if (normalized === 'image/svg+xml') return '.svg'
   if (normalized === 'application/pdf') return '.pdf'
   return ''
@@ -735,19 +737,33 @@ async function resolveGeneratedImageFallbackPath(
   const mimeType = asNonEmptyString(record.mime_type)
     ?? asNonEmptyString(record.mimeType)
     ?? 'image/png'
-  const fallbackCandidates = [record.result, record.b64_json, record.image]
-    .map(asNonEmptyString)
-    .filter((candidate): candidate is string => candidate !== null)
-  for (const candidate of fallbackCandidates) {
+  for (const rawCandidate of [record.result, record.b64_json, record.image]) {
+    const candidate = asNonEmptyString(rawCandidate)
+    if (!candidate) continue
+    const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
+    if (dataUrl) {
+      const localPath = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
+      if (localPath) return localPath
+      continue
+    }
+
     const existingFallbackPath = await resolveExistingLocalImagePath(candidate)
     if (existingFallbackPath) return existingFallbackPath
-
-    const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
-    if (!dataUrl) continue
-    const localPath = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
-    if (localPath) return localPath
   }
   return null
+}
+
+export async function sanitizeThreadItemsForTurn(turnId: string, items: unknown[]): Promise<unknown[]> {
+  const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+    thread: {
+      turns: [{ id: turnId, items }],
+    },
+  })
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : []
+  const turn = asRecord(turns[0])
+  return Array.isArray(turn?.items) ? turn.items : items
 }
 
 async function sanitizeInlineImageString(
@@ -6443,6 +6459,9 @@ type CapturedItem = {
 const MERGEABLE_ITEM_TYPES = new Set([
   'commandExecution',
   'fileChange',
+  'imageGeneration',
+  'image_generation',
+  'imageView',
 ])
 
 export class AppServerProcess {
@@ -6845,7 +6864,7 @@ export class AppServerProcess {
     })
   }
 
-  mergeItemsIntoTurns(threadId: string, turns: unknown[]): unknown[] {
+  async mergeItemsIntoTurns(threadId: string, turns: unknown[]): Promise<unknown[]> {
     const capturedMap = this.capturedItemsByThreadId.get(threadId)
     if (!capturedMap || capturedMap.size === 0) return turns
 
@@ -6859,7 +6878,7 @@ export class AppServerProcess {
       group.push(captured)
     }
 
-    return turns.map((turn) => {
+    return Promise.all(turns.map(async (turn) => {
       const turnRecord = asRecord(turn)
       if (!turnRecord) return turn
       const turnId = typeof turnRecord.id === 'string' ? turnRecord.id : ''
@@ -6876,12 +6895,13 @@ export class AppServerProcess {
         .map((c) => c.data)
 
       if (newItems.length === 0) return turn
+      const sanitizedNewItems = await sanitizeThreadItemsForTurn(turnId, newItems)
 
       return {
         ...turnRecord,
-        items: [...existingItems, ...newItems],
+        items: [...existingItems, ...sanitizedNewItems],
       }
-    })
+    }))
   }
 
   private sendServerRequestReply(requestId: number, reply: ServerRequestReply): void {
@@ -8327,7 +8347,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             return
           }
 
-          let turns = appServer.mergeItemsIntoTurns(threadId, rawTurns)
+          let turns = await appServer.mergeItemsIntoTurns(threadId, rawTurns)
 
           if (sessionPath && isAbsolute(sessionPath) && sessionSize > 0) {
             try {
@@ -8373,7 +8393,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const record = asRecord(snapshot)
             const thread = asRecord(record?.thread)
             const rawTurns = Array.isArray(thread?.turns) ? thread.turns : []
-            const turns = appServer.mergeItemsIntoTurns(threadId, rawTurns)
+            const turns = await appServer.mergeItemsIntoTurns(threadId, rawTurns)
             setJson(res, 200, {
               threadId,
               conversationState: { turns },
