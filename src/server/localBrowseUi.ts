@@ -69,13 +69,23 @@ export function normalizeLocalPath(rawPath: string): string {
   return trimmed
 }
 
-export function decodeBrowsePath(rawPath: string): string {
+export function decodeBrowsePath(rawPath: string, platform: NodeJS.Platform = process.platform): string {
   if (!rawPath) return ''
+  let decoded: string
   try {
-    return decodeURIComponent(rawPath)
+    decoded = decodeURIComponent(rawPath)
   } catch {
-    return rawPath
+    decoded = rawPath
   }
+
+  // Browse URLs keep an absolute-path slash after the route prefix. On Windows,
+  // that turns `C:/path` into `/C:/path`, which Node resolves as `C:\C:\path`.
+  // Remove only that synthetic slash; Unix and UNC absolute paths stay intact.
+  if (platform === 'win32' && /^\/[A-Za-z]:[\\/]/u.test(decoded)) {
+    return decoded.slice(1)
+  }
+
+  return decoded
 }
 
 export function isTextEditablePath(pathValue: string): boolean {
@@ -131,16 +141,21 @@ function normalizeNewProjectName(value: string): string {
   return value.trim().replace(/[\\/]+/gu, '').trim()
 }
 
-function toBrowseHref(pathValue: string, newProjectName = ''): string {
-  const normalizedName = normalizeNewProjectName(newProjectName)
-  const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
-  return `/codex-local-browse${encodeURI(pathValue)}${query}`
+function normalizeLocalRoutePath(pathValue: string): string {
+  const normalized = pathValue.replace(/\\/gu, '/')
+  return normalized.startsWith('/') ? normalized : `/${normalized}`
 }
 
-function toEditHref(pathValue: string, newProjectName = ''): string {
+export function toBrowseHref(pathValue: string, newProjectName = ''): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
-  return `/codex-local-edit${encodeURI(pathValue)}${query}`
+  return `/codex-local-browse${encodeURI(normalizeLocalRoutePath(pathValue))}${query}`
+}
+
+export function toEditHref(pathValue: string, newProjectName = ''): string {
+  const normalizedName = normalizeNewProjectName(newProjectName)
+  const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
+  return `/codex-local-edit${encodeURI(normalizeLocalRoutePath(pathValue))}${query}`
 }
 
 function escapeForInlineScriptString(value: string): string {
