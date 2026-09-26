@@ -1,8 +1,8 @@
 export function jumpConversationToLatestOnMobile(
   isMobile: boolean,
   isHomeRoute: boolean,
-  jumpToLatest: () => void,
-): void {
-  if (!isMobile || isHomeRoute) return
-  jumpToLatest()
+  jumpToLatest: () => boolean,
+): boolean {
+  if (!isMobile || isHomeRoute) return false
+  return jumpToLatest()
 }

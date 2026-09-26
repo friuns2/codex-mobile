@@ -3512,10 +3512,19 @@ function onEditQueuedMessage(messageId: string): void {
 }
 
 
-function jumpMobileConversationToLatest(): void {
-  jumpConversationToLatestOnMobile(isMobile.value, isHomeRoute.value, () => {
-    threadConversationRef.value?.jumpToLatest()
+function jumpMobileConversationToLatest(): boolean {
+  return jumpConversationToLatestOnMobile(isMobile.value, isHomeRoute.value, () => {
+    const conversation = threadConversationRef.value
+    if (!conversation) return false
+    conversation.jumpToLatest()
+    return true
   })
+}
+
+async function jumpMobileConversationToLatestAfterNavigation(): Promise<void> {
+  if (jumpMobileConversationToLatest()) return
+  await nextTick()
+  jumpMobileConversationToLatest()
 }
 
 function onSelectNewThreadFolder(cwd: string): void {
@@ -4950,7 +4959,7 @@ async function submitFirstMessageForNewThread(
     const threadId = await sendMessageToNewThread(text, targetCwd, imageUrls, skills, fileAttachments)
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
-    jumpMobileConversationToLatest()
+    await jumpMobileConversationToLatestAfterNavigation()
   } catch {
     // Error is already reflected in state.
   }
@@ -4987,7 +4996,7 @@ async function onTryDirectoryItem(payload: DirectoryTryItemPayload): Promise<voi
     const threadId = await sendMessageToNewThread(text, targetCwd, [], skills, [])
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
-    jumpMobileConversationToLatest()
+    await jumpMobileConversationToLatestAfterNavigation()
   } catch {
     // Error is already reflected in shared thread state.
   } finally {

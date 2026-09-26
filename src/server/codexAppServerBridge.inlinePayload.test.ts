@@ -14,6 +14,7 @@ import {
   sanitizeCapturedItemsForMerge,
   sanitizeThreadTurnsInlinePayloads,
   sanitizeThreadItemsForTurn,
+  shouldAppendMissingCapturedTurns,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
 
@@ -23,6 +24,7 @@ const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATAABAQAAAAAAAAAAAAAAAAAAAAYBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAAgACAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiwBRf3//2Q=='
 const webpBase64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA='
 const avifBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAALG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMbWRhdAECAwQ='
+const avifIdatBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAAOG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMaWRhdAECAwQ='
 const webpExtendedHeaderOnlyBase64 = 'UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAAAAAAAAA'
 const animatedWebpContainerBase64 = 'UklGRk4AAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GIgAAAAAAAAAAAAAAAAAAAAAAAABWUDggCgAAABAAAJ0BKgEAAQA='
 const malformedWebpRasterBase64 = 'UklGRg4AAABXRUJQVlA4IAEAAAAAAA=='
@@ -249,7 +251,7 @@ describe('thread inline media sanitization', () => {
 
     appServer.dispose()
     expect(internals.capturedItemSanitizeQueue).toHaveLength(0)
-    expect(internals.activeCapturedItemSanitizations).toBe(0)
+    expect(internals.activeCapturedItemSanitizations).toBe(2)
 
     internals.emitNotification({
       method: 'item/completed',
@@ -259,10 +261,17 @@ describe('thread inline media sanitization', () => {
         item: { id: 'image-after-restart', type: 'imageGeneration', result: pngBase64 },
       },
     })
+    expect(sanitizer).toHaveBeenCalledTimes(2)
+    expect(maxActiveSanitizers).toBe(2)
+    for (const release of releases.splice(0)) release()
+    await vi.waitFor(() => expect(sanitizer).toHaveBeenCalledTimes(3))
+    for (const release of releases.splice(0)) release()
+    await vi.waitFor(() => {
+      expect(activeSanitizers).toBe(0)
+      expect(internals.activeCapturedItemSanitizations).toBe(0)
+    })
     expect(sanitizer).toHaveBeenCalledTimes(3)
-    for (const release of releases) release()
-    await vi.waitFor(() => expect(activeSanitizers).toBe(0))
-    expect(sanitizer).toHaveBeenCalledTimes(3)
+    expect(maxActiveSanitizers).toBe(2)
   })
 
   it('waits for bounded queue capacity when a read needs an unqueued image', async () => {
@@ -334,6 +343,67 @@ describe('thread inline media sanitization', () => {
     expect(merged.thread.turns[0].id).toBe('turn-pending')
     expect(merged.thread.turns[0].items[0].type).toBe('imageView')
     expect(merged.thread.turns[0].items[0]).not.toHaveProperty('result')
+  })
+
+  it('appends a captured image to a successful response before its turn materializes', async () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+    }
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-success',
+        turnId: 'turn-not-materialized',
+        item: { id: 'image-success', type: 'imageGeneration', result: pngBase64 },
+      },
+    })
+
+    const merged = await mergeCapturedItemsIntoThreadResult(appServer, {
+      thread: { id: 'thread-success', turns: [], status: { type: 'inProgress' } },
+    }, shouldAppendMissingCapturedTurns('thread/read', { includeTurns: true })) as {
+      thread: { turns: Array<{ id: string; items: Array<Record<string, unknown>> }> }
+    }
+
+    expect(merged.thread.turns[0].id).toBe('turn-not-materialized')
+    expect(merged.thread.turns[0].items[0].type).toBe('imageView')
+    expect(merged.thread.turns[0].items[0]).not.toHaveProperty('result')
+    expect(shouldAppendMissingCapturedTurns('thread/read', { includeTurns: false })).toBe(false)
+    expect(shouldAppendMissingCapturedTurns('thread/resume', null)).toBe(true)
+    appServer.dispose()
+  })
+
+  it('preserves notification start order when items complete out of order', async () => {
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+    }
+    for (const itemId of ['command-first', 'command-second']) {
+      internals.emitNotification({
+        method: 'item/started',
+        params: {
+          threadId: 'thread-order',
+          turnId: 'turn-live',
+          item: { id: itemId, type: 'commandExecution', command: itemId },
+        },
+      })
+    }
+    for (const itemId of ['command-second', 'command-first']) {
+      internals.emitNotification({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread-order',
+          turnId: 'turn-live',
+          item: { id: itemId, type: 'commandExecution', command: itemId, status: 'completed' },
+        },
+      })
+    }
+
+    const merged = await appServer.mergeItemsIntoTurns('thread-order', [{ id: 'turn-live', items: [] }]) as Array<{
+      items: Array<Record<string, unknown>>
+    }>
+    expect(merged[0].items.map((item) => item.id)).toEqual(['command-first', 'command-second'])
+    appServer.dispose()
   })
 
   it('bounds notification generations and clears them on disposal', () => {
@@ -482,6 +552,48 @@ describe('thread inline media sanitization', () => {
     expect(merged[0].items[0]).not.toHaveProperty('result')
     expect(existsSync(merged[0].items[0].path as string)).toBe(true)
     expect(internals.capturedItemsByThreadId.has('thread-live')).toBe(true)
+  })
+
+  it('does not delete a same-id image notification that arrives during path validation', async () => {
+    const [materializedImage] = await sanitizeThreadItemsForTurn('turn-race', [{
+      id: 'image-race-source',
+      type: 'imageGeneration',
+      result: pngBase64,
+    }]) as Array<Record<string, unknown>>
+    const appServer = new AppServerProcess()
+    const internals = appServer as unknown as {
+      emitNotification: (notification: { method: string; params: unknown }) => void
+    }
+    internals.emitNotification({
+      method: 'item/started',
+      params: {
+        threadId: 'thread-race',
+        turnId: 'turn-race',
+        item: { id: 'image-race', type: 'imageGeneration', result: pngBase64 },
+      },
+    })
+
+    const firstMerge = appServer.mergeItemsIntoTurns('thread-race', [{
+      id: 'turn-race',
+      items: [{ ...materializedImage, id: 'image-race' }],
+    }])
+    internals.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-race',
+        turnId: 'turn-race',
+        item: { id: 'image-race', type: 'imageGeneration', result: gifBase64 },
+      },
+    })
+    await firstMerge
+
+    const secondMerge = await appServer.mergeItemsIntoTurns('thread-race', [{
+      id: 'turn-race',
+      items: [],
+    }]) as Array<{ items: Array<Record<string, unknown>> }>
+    expect(secondMerge[0].items).toHaveLength(1)
+    expect(secondMerge[0].items[0].path).toMatch(/\.gif$/u)
+    appServer.dispose()
   })
 
   it('isolates captured-image cleanup failures and retries the failed item later', async () => {
@@ -863,23 +975,26 @@ describe('thread inline media sanitization', () => {
     expect(existsSync(items[0].path as string)).toBe(true)
   })
 
-  it('persists raw AVIF and BMP fallbacks with extensions accepted by the image route', async () => {
+  it('persists mdat and idat AVIF plus BMP fallbacks with extensions accepted by the image route', async () => {
     const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {
         turns: [{
           id: 'turn-1',
           items: [
             { id: 'avif-1', type: 'imageView', path: '/missing.avif', result: avifBase64 },
+            { id: 'avif-idat-1', type: 'imageView', path: '/missing-idat.avif', result: avifIdatBase64 },
             { id: 'bmp-1', type: 'imageView', path: '/missing.bmp', result: bmpBase64 },
           ],
         }],
       },
     }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
 
-    const [avifView, bmpView] = result.thread.turns[0].items
+    const [avifView, avifIdatView, bmpView] = result.thread.turns[0].items
     expect(avifView.path).toMatch(/\.avif$/u)
+    expect(avifIdatView.path).toMatch(/\.avif$/u)
     expect(bmpView.path).toMatch(/\.bmp$/u)
     expect(existsSync(avifView.path as string)).toBe(true)
+    expect(existsSync(avifIdatView.path as string)).toBe(true)
     expect(existsSync(bmpView.path as string)).toBe(true)
   })
 
