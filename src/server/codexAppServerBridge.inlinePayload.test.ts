@@ -22,6 +22,7 @@ const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/
 const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATAABAQAAAAAAAAAAAAAAAAAAAAYBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAAgACAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiwBRf3//2Q=='
+const jpegWithoutScanDataBase64 = '/9j/wAALCAABAAEBAREA/9oACAEBAAA/AP/Z'
 const webpBase64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA='
 const avifBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAALG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMbWRhdAECAwQ='
 const avifIdatBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAAOG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMaWRhdAECAwQ='
@@ -29,6 +30,7 @@ const webpExtendedHeaderOnlyBase64 = 'UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAAAAAAAAA'
 const animatedWebpContainerBase64 = 'UklGRk4AAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GIgAAAAAAAAAAAAAAAAAAAAAAAABWUDggCgAAABAAAJ0BKgEAAQA='
 const malformedWebpRasterBase64 = 'UklGRg4AAABXRUJQVlA4IAEAAAAAAA=='
 const bmpBase64 = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9AAD9AAAAAP0AAP0AAA=='
+const truncatedBmpBase64 = 'Qk04AAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 afterEach(() => {
   vi.useRealTimers()
@@ -893,6 +895,50 @@ describe('thread inline media sanitization', () => {
             id: 'generated-1',
             type: 'imageGeneration',
             result: 'Qk0AAAAA',
+            b64_json: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toMatch(/\.png$/u)
+    expect(existsSync(imageView.path as string)).toBe(true)
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('b64_json')
+  })
+
+  it('skips a JPEG with no entropy-coded scan data before a complete fallback', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-jpeg-fallback',
+          items: [{
+            id: 'generated-jpeg-fallback',
+            type: 'imageGeneration',
+            result: jpegWithoutScanDataBase64,
+            b64_json: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toMatch(/\.png$/u)
+    expect(existsSync(imageView.path as string)).toBe(true)
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('b64_json')
+  })
+
+  it('skips a BMP with an incomplete raster before a complete fallback', async () => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-bmp-fallback',
+          items: [{
+            id: 'generated-bmp-fallback',
+            type: 'imageGeneration',
+            result: truncatedBmpBase64,
             b64_json: pngBase64,
           }],
         }],

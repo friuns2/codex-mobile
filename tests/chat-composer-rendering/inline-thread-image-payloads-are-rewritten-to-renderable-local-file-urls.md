@@ -3,23 +3,19 @@
 #### Prerequisites
 - Start app from this repository (`pnpm run dev`).
 - Have a thread that includes a user inline image block originally stored as a `data:` payload.
-- For fallback coverage, prepare an `imageView` fixture whose `path` points to an existing extensionless or unsupported-extension file and whose `result` contains valid image Base64.
-- Prepare a generated-image fixture whose first fallback contains only a valid image header and whose later fallback contains a complete image.
-- For live-state coverage, use an active thread that continues emitting item notifications while `/codex-api/thread-live-state` is polled.
+- Install repository dependencies so Vitest can run the deterministic server fixtures in `src/server/codexAppServerBridge.inlinePayload.test.ts`.
+- The automated fixture file contains exact PNG, JPEG, WebP, GIF, AVIF, and BMP payloads. It injects notifications through `emitNotification`, uses promise gates to block persistence, and supplies a throwing sanitizer to simulate a temporary write failure; no external fixture files are required.
 
 #### Steps
 1. Open the thread in the chat UI.
 2. Confirm the message area where the inline image appears.
 3. Open Network tab and inspect `POST /codex-api/rpc` `thread/read` response.
 4. Verify the image block now has `type: "image"` and a `/codex-local-image?path=...` URL instead of a `data:` URL.
-5. Load the fallback fixture and confirm its response replaces the unsupported `path` with a supported generated-image path, removes `result`, and still renders the image.
-6. While the active thread continues emitting notifications, confirm each live-state request finishes without waiting for notifications to stop; a replacement received during cleanup appears on a later poll without exposing raw image data.
-7. Reload the active thread before the generated image is materialized in the session file and inspect the ordinary `thread/read` response.
-8. Resume the same thread through `thread/resume`, then load the truncated-first-fallback fixture.
-9. Load an older turn through `/codex-api/thread-turn-page` while its image exists only in a completion notification, and simulate one temporary image-file write failure alongside another valid captured image.
-10. Keep an active thread emitting more than 100 unmaterialized items without reading it, then leave it idle for more than five minutes.
-11. Emit a burst of generated-image notifications across many threads while image persistence is deliberately blocked.
-12. Trigger empty-thread and materialization-pending recovery responses after a generated-image notification arrives.
+5. Run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts` from the repository root. The command must report every test in that file as passed.
+6. To reproduce fallback selection alone, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "fallback"`. Confirm the output includes the malformed-first-candidate cases for generic headers, JPEG scan data, BMP raster data, and unavailable local paths.
+7. To reproduce live replacement and write-failure behavior, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "shares live image cleanup|same-id image notification|cleanup failures"`. Confirm all three named cases pass.
+8. To reproduce bounded retention and queue resets, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "bounds captured|bounds eager image|bounded queue capacity"`. Confirm the queue never exceeds 32 waiting jobs, physical sanitation concurrency never exceeds two, and captured state reaches the asserted count/byte limits.
+9. To reproduce pre-materialization response recovery, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "pending thread recovery|successful response before its turn materializes"`. Confirm the returned synthetic turn contains a payload-free `imageView`.
 
 #### Expected Results
 - Inline `data:` image payload is not sent in RPC response.
@@ -34,11 +30,11 @@
 - A container header without raster data does not suppress a later valid fallback, and normalized image views omit duplicate `url`, `image_url`, and `images` payload fields.
 - Background image persistence runs at most two jobs concurrently, retains at most 32 queued jobs, skips captures that have already been replaced or pruned, and clears queued work during disposal.
 - Notification generation state retains at most 1,000 recently active thread IDs and is cleared during full process-state cleanup.
-- A read that needs an image waits for space in the bounded sanitation queue instead of omitting the preview; a full state reset releases old-generation slots so restarted processing can continue immediately.
+- A read that needs an image waits for space in the bounded sanitation queue instead of omitting the preview; a full state reset preserves slots held by physically running work so restarted processing never exceeds two concurrent jobs.
 - Empty or materialization-pending `thread/read` recovery responses merge current captured images, including a synthetic pending turn when no materialized turn exists yet.
 - Generated images recover scalar `url` and `image_url` fallbacks plus string or object entries in `images`; concurrent reads share the same job even after waiting for capacity, and evicted generation entries cannot make stale responses current again.
 - Generated fallback recovery examines at most 32 candidates and 32 MiB of candidate text, accepts parameterized Base64 image data URLs, and strips unusable payloads from normal responses. Captured images are marked sanitized only after producing a payload-free `imageView` with a renderable path; failed cleanup is omitted and retried.
 - Captured-item size estimation traverses at most 10,000 nodes without variadic array expansion; wider structures are treated as over-limit and are not retained.
 
 #### Rollback/Cleanup
-- Remove the fallback fixture and any temporary unsupported-extension file.
+- Stop the disposable development server if one was started. Vitest writes image fixtures only under the system temporary directory.
