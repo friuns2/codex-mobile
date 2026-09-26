@@ -30,6 +30,8 @@
 - The four retained screenshots show the stable conversation and composer at the required phone/tablet sizes in both themes.
 - Events delivered once per animation frame can still cause one layout per frame; this change does not debounce across keyboard-animation frames.
 
+The retained light/dark phone/tablet artifacts are linked from [Mobile long-thread focus and submit performance](../chat-composer-rendering/mobile-long-thread-focus-and-submit-performance.md#latest-browser-evidence-2026-09-27).
+
 #### Rollback/Cleanup
 - Restore the original viewport dimensions and close the on-screen keyboard.
 - Stop only the disposable `4173` verification server if it was started for this test.

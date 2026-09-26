@@ -649,11 +649,24 @@ function isStructurallyCompleteBmp(bytes: Uint8Array): boolean {
     && bytes.length - pixelOffset > 0
 }
 
-function containsAscii(bytes: Uint8Array, start: number, end: number, value: string): boolean {
-  for (let offset = start; offset + value.length <= end; offset += 1) {
-    if (matchesAscii(bytes, offset, value)) return true
+function readIsoBox(
+  bytes: Uint8Array,
+  offset: number,
+  rangeEnd: number,
+): { headerLength: number; boxLength: number } | null {
+  if (offset + 8 > rangeEnd) return null
+  const size32 = readUint32BigEndian(bytes, offset)
+  let headerLength = 8
+  let boxLength = size32
+  if (size32 === 1) {
+    if (offset + 16 > rangeEnd || readUint32BigEndian(bytes, offset + 8) !== 0) return null
+    headerLength = 16
+    boxLength = readUint32BigEndian(bytes, offset + 12)
+  } else if (size32 === 0) {
+    boxLength = rangeEnd - offset
   }
-  return false
+  if (boxLength < headerLength || offset + boxLength > rangeEnd) return null
+  return { headerLength, boxLength }
 }
 
 function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
@@ -663,17 +676,9 @@ function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
   let hasMeta = false
   let hasMediaData = false
   while (offset + 8 <= bytes.length) {
-    const size32 = readUint32BigEndian(bytes, offset)
-    let headerLength = 8
-    let boxLength = size32
-    if (size32 === 1) {
-      if (offset + 16 > bytes.length || readUint32BigEndian(bytes, offset + 8) !== 0) return false
-      headerLength = 16
-      boxLength = readUint32BigEndian(bytes, offset + 12)
-    } else if (size32 === 0) {
-      boxLength = bytes.length - offset
-    }
-    if (boxLength < headerLength || offset + boxLength > bytes.length) return false
+    const box = readIsoBox(bytes, offset, bytes.length)
+    if (!box) return false
+    const { headerLength, boxLength } = box
     if (matchesAscii(bytes, offset + 4, 'ftyp')) {
       if (offset !== 0 || boxLength < headerLength + 8) return false
       for (let brandOffset = offset + headerLength; brandOffset + 4 <= offset + boxLength; brandOffset += 4) {
@@ -685,11 +690,26 @@ function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
     } else if (matchesAscii(bytes, offset + 4, 'meta')) {
       const payloadStart = offset + headerLength
       const payloadEnd = offset + boxLength
-      hasMeta = boxLength >= headerLength + 4
-        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'pitm')
-        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'iloc')
-        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'iinf')
-        && containsAscii(bytes, payloadStart + 4, payloadEnd, 'iprp')
+      if (boxLength < headerLength + 4) return false
+      let childOffset = payloadStart + 4
+      let hasPrimaryItem = false
+      let hasItemLocation = false
+      let hasItemInfo = false
+      let hasItemProperties = false
+      while (childOffset + 8 <= payloadEnd) {
+        const child = readIsoBox(bytes, childOffset, payloadEnd)
+        if (!child) return false
+        if (matchesAscii(bytes, childOffset + 4, 'pitm')) hasPrimaryItem = true
+        else if (matchesAscii(bytes, childOffset + 4, 'iloc')) hasItemLocation = true
+        else if (matchesAscii(bytes, childOffset + 4, 'iinf')) hasItemInfo = true
+        else if (matchesAscii(bytes, childOffset + 4, 'iprp')) hasItemProperties = true
+        else if (matchesAscii(bytes, childOffset + 4, 'idat')) {
+          hasMediaData ||= child.boxLength > child.headerLength
+        }
+        childOffset += child.boxLength
+      }
+      if (childOffset !== payloadEnd) return false
+      hasMeta = hasPrimaryItem && hasItemLocation && hasItemInfo && hasItemProperties
     } else if (matchesAscii(bytes, offset + 4, 'mdat')) {
       hasMediaData = boxLength > headerLength
     }
@@ -6321,7 +6341,6 @@ const NOTIFICATION_GENERATION_THREAD_LIMIT = 1000
 
 type CapturedItemSanitizeTask = {
   captured: CapturedItem
-  generation: number
   promise: Promise<void>
   resolve: () => void
 }
@@ -6425,7 +6444,6 @@ export class AppServerProcess {
   private capturedItemEstimatedBytesTotal = 0
   private readonly capturedItemSanitizeQueue: CapturedItemSanitizeTask[] = []
   private activeCapturedItemSanitizations = 0
-  private capturedItemSanitizeGeneration = 0
   private capturedItemSanitizeCapacityPromise: Promise<void> | null = null
   private resolveCapturedItemSanitizeCapacity: (() => void) | null = null
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
@@ -6778,7 +6796,6 @@ export class AppServerProcess {
       estimatedBytes: estimateCapturedItemBytes(item),
     }
     if (existing) {
-      threadItems.delete(itemId)
       this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - existing.estimatedBytes)
       this.cancelQueuedCapturedItemSanitization(existing)
     }
@@ -6888,8 +6905,6 @@ export class AppServerProcess {
 
   private clearCapturedItemState(): void {
     this.nextNotificationGeneration += 1
-    this.capturedItemSanitizeGeneration += 1
-    this.activeCapturedItemSanitizations = 0
     for (const timer of this.capturedItemCleanupTimersByThreadId.values()) clearTimeout(timer)
     this.capturedItemCleanupTimersByThreadId.clear()
     for (const threadItems of this.capturedItemsByThreadId.values()) threadItems.clear()
@@ -6957,11 +6972,9 @@ export class AppServerProcess {
       }).finally(() => {
         if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
         task.resolve()
-        if (task.generation === this.capturedItemSanitizeGeneration) {
-          this.activeCapturedItemSanitizations -= 1
-          this.signalCapturedItemSanitizeCapacity()
-          this.pumpCapturedItemSanitizeQueue()
-        }
+        this.activeCapturedItemSanitizations -= 1
+        this.signalCapturedItemSanitizeCapacity()
+        this.pumpCapturedItemSanitizeQueue()
       })
     }
   }
@@ -6985,7 +6998,6 @@ export class AppServerProcess {
       })
       const task: CapturedItemSanitizeTask = {
         captured,
-        generation: this.capturedItemSanitizeGeneration,
         promise,
         resolve: () => resolveTask?.(),
       }
@@ -7020,6 +7032,7 @@ export class AppServerProcess {
       const hasRenderableMaterializedImage = materializedType === 'imageView'
         && Boolean(await resolveExistingLocalImagePath(materializedItem.path))
       if (!isGeneratedImage || hasRenderableMaterializedImage) {
+        if (capturedMap.get(itemId) !== captured) continue
         capturedMap.delete(itemId)
         this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - captured.estimatedBytes)
         this.cancelQueuedCapturedItemSanitization(captured)
@@ -7344,6 +7357,12 @@ export async function mergeCapturedItemsIntoThreadResult(
       turns: mergedTurns,
     },
   }
+}
+
+export function shouldAppendMissingCapturedTurns(method: string, params: unknown): boolean {
+  if (!THREAD_METHODS_WITH_TURNS.has(method)) return false
+  const requestParams = asRecord(params)
+  return !(method === 'thread/read' && requestParams?.includeTurns === false)
 }
 
 export class BackendQueueProcessor {
@@ -8388,7 +8407,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           : 0
 
         if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
-          result = await mergeCapturedItemsIntoThreadResult(appServer, result)
+          const appendMissingCapturedTurns = shouldAppendMissingCapturedTurns(body.method, body.params)
+          result = await mergeCapturedItemsIntoThreadResult(appServer, result, appendMissingCapturedTurns)
         }
 
 	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
