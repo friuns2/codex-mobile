@@ -1259,6 +1259,9 @@ import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, Telegra
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
+import { createFrameCoalescer } from './utils/frameCoalescer'
+import { jumpConversationToLatestOnMobile } from './utils/mobileConversationJump'
+import { resolveLayoutViewportHeight, resolveVirtualKeyboardRotationHold } from './utils/viewportState'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -1746,6 +1749,14 @@ const mobileResumeSyncInProgress = ref(false)
 const visualViewportHeight = ref(typeof window !== 'undefined' ? window.visualViewport?.height ?? window.innerHeight : 0)
 const visualViewportOffsetTop = ref(typeof window !== 'undefined' ? window.visualViewport?.offsetTop ?? 0 : 0)
 const layoutViewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
+const virtualKeyboardRotationHold = ref(false)
+let virtualKeyboardRotationHoldStartVisualHeight = 0
+let layoutViewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0
+const visualViewportStateCoalescer = createFrameCoalescer(
+  applyVisualViewportState,
+  (callback) => window.requestAnimationFrame(callback),
+  (frameId) => window.cancelAnimationFrame(frameId),
+)
 let accountStatePollTimer: number | null = null
 let isAccountStatePollInFlight = false
 let externalCodexAuthAvailable = false
@@ -1822,7 +1833,7 @@ const isComposerTerminalOpen = computed(() => (
 const isVirtualKeyboardOpen = computed(() => {
   if (!isMobile.value) return false
   if (visualViewportHeight.value <= 0 || layoutViewportHeight.value <= 0) return false
-  return layoutViewportHeight.value - visualViewportHeight.value > 120
+  return virtualKeyboardRotationHold.value || layoutViewportHeight.value - visualViewportHeight.value > 120
 })
 const isTerminalKeyboardLayoutActive = computed(() => (
   isVirtualKeyboardOpen.value ||
@@ -2226,10 +2237,10 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onDocumentVisibilityChange)
   window.addEventListener('pageshow', onWindowPageShow)
   window.addEventListener('focus', onWindowFocus)
-  window.addEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.addEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.addEventListener('scroll', updateVisualViewportState)
-  updateVisualViewportState()
+  window.addEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.addEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.addEventListener('scroll', scheduleVisualViewportStateUpdate)
+  applyVisualViewportState()
   applyDarkMode()
   darkModeMediaQuery?.addEventListener('change', applyDarkMode)
   void initialize()
@@ -2260,9 +2271,10 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   window.removeEventListener('pageshow', onWindowPageShow)
   window.removeEventListener('focus', onWindowFocus)
-  window.removeEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.removeEventListener('resize', updateVisualViewportState)
-  window.visualViewport?.removeEventListener('scroll', updateVisualViewportState)
+  window.removeEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.removeEventListener('resize', scheduleVisualViewportStateUpdate)
+  window.visualViewport?.removeEventListener('scroll', scheduleVisualViewportStateUpdate)
+  visualViewportStateCoalescer.cancel()
   darkModeMediaQuery?.removeEventListener('change', applyDarkMode)
   if (accountStatePollTimer !== null) {
     window.clearInterval(accountStatePollTimer)
@@ -2276,11 +2288,56 @@ onUnmounted(() => {
   stopPolling()
 })
 
-function updateVisualViewportState(): void {
+function scheduleVisualViewportStateUpdate(): void {
+  visualViewportStateCoalescer.schedule()
+}
+
+function applyVisualViewportState(): void {
   if (typeof window === 'undefined') return
-  layoutViewportHeight.value = Math.max(layoutViewportHeight.value, window.innerHeight)
-  visualViewportHeight.value = window.visualViewport?.height ?? window.innerHeight
-  visualViewportOffsetTop.value = window.visualViewport?.offsetTop ?? 0
+  const previousKeyboardOpen = isVirtualKeyboardOpen.value
+  const previousRotationHold = virtualKeyboardRotationHold.value
+  const widthChanged = layoutViewportWidth > 0 && window.innerWidth !== layoutViewportWidth
+  const nextLayoutViewportHeight = resolveLayoutViewportHeight({
+    previousHeight: layoutViewportHeight.value,
+    previousWidth: layoutViewportWidth,
+    currentHeight: window.innerHeight,
+    currentWidth: window.innerWidth,
+  })
+  const nextVisualViewportHeight = window.visualViewport?.height ?? window.innerHeight
+  const nextVisualViewportOffsetTop = window.visualViewport?.offsetTop ?? 0
+  const nextRotationHold = resolveVirtualKeyboardRotationHold({
+    previousHold: previousRotationHold,
+    previousKeyboardOpen,
+    widthChanged,
+    holdStartVisualHeight: virtualKeyboardRotationHoldStartVisualHeight,
+    currentLayoutHeight: nextLayoutViewportHeight,
+    currentVisualHeight: nextVisualViewportHeight,
+    hasKeyboardFocus: hasEditableKeyboardFocus(),
+  })
+  if (!previousRotationHold && nextRotationHold) {
+    virtualKeyboardRotationHoldStartVisualHeight = nextVisualViewportHeight
+  } else if (previousRotationHold && !nextRotationHold) {
+    virtualKeyboardRotationHoldStartVisualHeight = 0
+  }
+  virtualKeyboardRotationHold.value = nextRotationHold
+  layoutViewportWidth = window.innerWidth
+  if (layoutViewportHeight.value !== nextLayoutViewportHeight) {
+    layoutViewportHeight.value = nextLayoutViewportHeight
+  }
+  if (visualViewportHeight.value !== nextVisualViewportHeight) {
+    visualViewportHeight.value = nextVisualViewportHeight
+  }
+  if (visualViewportOffsetTop.value !== nextVisualViewportOffsetTop) {
+    visualViewportOffsetTop.value = nextVisualViewportOffsetTop
+  }
+}
+
+function hasEditableKeyboardFocus(): boolean {
+  const activeElement = document.activeElement
+  return activeElement instanceof HTMLInputElement
+    || activeElement instanceof HTMLTextAreaElement
+    || activeElement instanceof HTMLSelectElement
+    || (activeElement instanceof HTMLElement && activeElement.isContentEditable)
 }
 
 watch(sidebarSearchQuery, (value) => {
@@ -3512,7 +3569,7 @@ async function syncAfterMobileResume(): Promise<void> {
 
 function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fileAttachments: Array<{ label: string; path: string; fsPath: string }>; skills: Array<{ name: string; path: string }>; mode: 'steer' | 'queue' }): void {
   const text = payload.text
-  scheduleMobileConversationJumpToLatest()
+  jumpMobileConversationToLatest()
   const editingState = editingQueuedMessageState.value
   const queueInsertIndex =
     payload.mode === 'queue'
@@ -3553,22 +3610,19 @@ function onEditQueuedMessage(messageId: string): void {
 }
 
 
-function scheduleMobileConversationJumpToLatest(): void {
-  if (!isMobile.value || isHomeRoute.value) return
-
-  const jumpToLatest = () => {
-    threadConversationRef.value?.jumpToLatest()
-  }
-
-  jumpToLatest()
-  void nextTick(() => {
-    jumpToLatest()
-    if (typeof window === 'undefined') return
-    window.requestAnimationFrame(() => {
-      jumpToLatest()
-      window.requestAnimationFrame(jumpToLatest)
-    })
+function jumpMobileConversationToLatest(): boolean {
+  return jumpConversationToLatestOnMobile(isMobile.value, isHomeRoute.value, () => {
+    const conversation = threadConversationRef.value
+    if (!conversation) return false
+    conversation.jumpToLatest()
+    return true
   })
+}
+
+async function jumpMobileConversationToLatestAfterNavigation(): Promise<void> {
+  if (jumpMobileConversationToLatest()) return
+  await nextTick()
+  jumpMobileConversationToLatest()
 }
 
 function onSelectNewThreadFolder(cwd: string): void {
@@ -4292,7 +4346,7 @@ function onRollback(payload: { turnId: string }): void {
 function onImplementPlan(payload: { turnId: string }): void {
   if (isHomeRoute.value || !selectedThreadId.value) return
   setSelectedCollaborationMode('default')
-  scheduleMobileConversationJumpToLatest()
+  jumpMobileConversationToLatest()
   void sendMessageToSelectedThread('Implement', [], [], 'steer', [], undefined, 'default')
 }
 
@@ -5006,7 +5060,7 @@ async function submitFirstMessageForNewThread(
     const threadId = await sendMessageToNewThread(text, targetCwd, imageUrls, skills, fileAttachments)
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
-    scheduleMobileConversationJumpToLatest()
+    await jumpMobileConversationToLatestAfterNavigation()
   } catch {
     // Error is already reflected in state.
   }
@@ -5041,7 +5095,7 @@ async function onTryDirectoryItem(payload: DirectoryTryItemPayload): Promise<voi
     const threadId = await sendMessageToNewThread(text, targetCwd, [], skills, [])
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
-    scheduleMobileConversationJumpToLatest()
+    await jumpMobileConversationToLatestAfterNavigation()
   } catch {
     // Error is already reflected in shared thread state.
   } finally {

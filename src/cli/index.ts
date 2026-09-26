@@ -25,6 +25,7 @@ import {
 import { createServer as createApp } from '../server/httpServer.js'
 import { generatePassword } from '../server/password.js'
 import { spawnSyncCommand } from '../utils/commandInvocation.js'
+import { formatHttpUrl, getLocalServerUrl } from './listenHost.js'
 
 const program = new Command().name('codexui').description('Web interface for Codex app-server')
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -315,7 +316,10 @@ function parseCloudflaredUrl(chunk: string): string | null {
   return urlMatch[urlMatch.length - 1] ?? null
 }
 
-function getAccessibleUrls(port: number): string[] {
+function getAccessibleUrls(port: number, host: string): string[] {
+  if (host !== '0.0.0.0') {
+    return [getLocalServerUrl(host, port)]
+  }
   const urls = new Set<string>([`http://localhost:${String(port)}`])
   try {
     const interfaces = networkInterfaces()
@@ -364,12 +368,12 @@ function hasDetectedTailscaleIp(): boolean {
   return false
 }
 
-async function startCloudflaredTunnel(command: string, localPort: number): Promise<{
+async function startCloudflaredTunnel(command: string, localUrl: string): Promise<{
   process: ReturnType<typeof spawn>
   url: string
 }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, ['tunnel', '--url', `http://localhost:${String(localPort)}`], {
+    const child = spawn(command, ['tunnel', '--url', localUrl], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -409,7 +413,7 @@ async function startCloudflaredTunnel(command: string, localPort: number): Promi
   })
 }
 
-function listenWithFallback(server: ReturnType<typeof createServer>, startPort: number): Promise<number> {
+function listenWithFallback(server: ReturnType<typeof createServer>, startPort: number, host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const attempt = (port: number) => {
       const onError = (error: NodeJS.ErrnoException) => {
@@ -427,7 +431,7 @@ function listenWithFallback(server: ReturnType<typeof createServer>, startPort: 
 
       server.once('error', onError)
       server.once('listening', onListening)
-      server.listen(port, '0.0.0.0')
+      server.listen(port, host)
     }
 
     attempt(startPort)
@@ -494,12 +498,15 @@ async function addProjectOnly(projectPath: string): Promise<void> {
 }
 
 async function startServer(options: {
+  host: string
   port: string
   password: string | boolean
   tunnel: boolean
   open: boolean
   login: boolean
   memories: boolean
+  sharedAppServer: boolean
+  appServerSocket?: string
   sandboxMode?: string
   approvalPolicy?: string
   projectPath?: string
@@ -524,6 +531,12 @@ async function startServer(options: {
   if (options.approvalPolicy) {
     process.env.CODEXUI_APPROVAL_POLICY = options.approvalPolicy
   }
+  if (options.sharedAppServer || options.appServerSocket) {
+    process.env.CODEXUI_APP_SERVER_MODE = 'shared'
+  }
+  if (options.appServerSocket) {
+    process.env.CODEXUI_APP_SERVER_SOCKET = resolve(options.appServerSocket)
+  }
   const runtimeConfig = resolveAppServerRuntimeConfig()
   if (options.login && !hasCodexAuth()) {
     console.log('\nCodex is not logged in. You can log in later via settings or run `codexui login`.\n')
@@ -537,7 +550,8 @@ async function startServer(options: {
   const { app, dispose, attachWebSocket } = createApp({ password })
   const server = createServer(app)
   attachWebSocket(server)
-  const port = await listenWithFallback(server, requestedPort)
+  const port = await listenWithFallback(server, requestedPort, options.host)
+  const localUrl = getLocalServerUrl(options.host, port)
   process.env.CODEXUI_SERVER_PORT = String(port)
   let tunnelChild: ReturnType<typeof spawn> | null = null
   let tunnelUrl: string | null = null
@@ -548,7 +562,7 @@ async function startServer(options: {
       if (!cloudflaredCommand) {
         throw new Error('cloudflared is not installed')
       }
-      const tunnel = await startCloudflaredTunnel(cloudflaredCommand, port)
+      const tunnel = await startCloudflaredTunnel(cloudflaredCommand, localUrl)
       tunnelChild = tunnel.process
       tunnelUrl = tunnel.url
     } catch (error) {
@@ -563,11 +577,12 @@ async function startServer(options: {
     `  Version:  ${version}`,
     '  GitHub:   https://github.com/friuns2/codexui',
     '',
-    `  Bind:     http://0.0.0.0:${String(port)}`,
-    `  Codex sandbox: ${runtimeConfig.sandboxMode}`,
-    `  Approval policy: ${runtimeConfig.approvalPolicy}`,
+    `  Bind:     ${formatHttpUrl(options.host, port)}`,
+    `  Codex sandbox: ${runtimeConfig.transportMode === 'shared' ? 'controlled by shared app-server' : runtimeConfig.sandboxMode}`,
+    `  Approval policy: ${runtimeConfig.transportMode === 'shared' ? 'controlled by shared app-server' : runtimeConfig.approvalPolicy}`,
+    `  App server: ${runtimeConfig.transportMode === 'shared' ? `shared (${runtimeConfig.socketPath})` : 'spawned'}`,
   ]
-  const accessUrls = getAccessibleUrls(port)
+  const accessUrls = getAccessibleUrls(port, options.host)
   if (accessUrls.length > 0) {
     lines.push(`  Local:    ${accessUrls[0]}`)
     for (const accessUrl of accessUrls.slice(1)) {
@@ -597,7 +612,7 @@ async function startServer(options: {
     qrcode.generate(tunnelQrUrl, { small: true })
     console.log('')
   }
-  if (options.open) openBrowser(`http://localhost:${String(port)}`)
+  if (options.open) openBrowser(localUrl)
 
   function shutdown() {
     console.log('\nShutting down...')
@@ -629,6 +644,7 @@ async function runLogin() {
 program
   .argument('[projectPath]', 'project directory to open on launch')
   .option('--open-project <path>', 'open project directory on launch (Codex desktop parity)')
+  .option('--host <host>', 'host address to listen on', '0.0.0.0')
   .option('-p, --port <port>', 'port to listen on', '5900')
   .option('--password <pass>', 'set a specific password')
   .option('--no-password', 'disable password protection')
@@ -640,17 +656,22 @@ program
   .option('--no-login', 'skip automatic Codex login bootstrap')
   .option('--memories', 'enable Codex memories for spawned app-server processes', true)
   .option('--no-memories', 'disable Codex memories for spawned app-server processes')
+  .option('--shared-app-server', 'connect to the running Codex app-server control socket instead of spawning one', false)
+  .option('--app-server-socket <path>', 'path to a running Codex app-server control socket (implies --shared-app-server)')
   .option('--sandbox-mode <mode>', 'Codex sandbox mode: read-only, workspace-write, danger-full-access')
   .option('--approval-policy <policy>', 'Codex approval policy: untrusted, on-failure, on-request, never')
   .action(async (
     projectPath: string | undefined,
     opts: {
+      host: string
       port: string
       password: string | boolean
       tunnel: boolean
       open: boolean
       login: boolean
       memories: boolean
+      sharedAppServer: boolean
+      appServerSocket?: string
       sandboxMode?: string
       approvalPolicy?: string
       openProject?: string

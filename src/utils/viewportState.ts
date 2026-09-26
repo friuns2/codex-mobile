@@ -1,0 +1,34 @@
+export type LayoutViewportMeasurement = {
+  previousHeight: number
+  previousWidth: number
+  currentHeight: number
+  currentWidth: number
+}
+
+export type VirtualKeyboardRotationHoldMeasurement = {
+  previousHold: boolean
+  previousKeyboardOpen: boolean
+  widthChanged: boolean
+  holdStartVisualHeight: number
+  currentLayoutHeight: number
+  currentVisualHeight: number
+  hasKeyboardFocus: boolean
+}
+
+export function resolveLayoutViewportHeight(measurement: LayoutViewportMeasurement): number {
+  const widthChanged = measurement.previousWidth > 0
+    && measurement.currentWidth !== measurement.previousWidth
+  return widthChanged
+    ? measurement.currentHeight
+    : Math.max(measurement.previousHeight, measurement.currentHeight)
+}
+
+export function resolveVirtualKeyboardRotationHold(
+  measurement: VirtualKeyboardRotationHoldMeasurement,
+): boolean {
+  if (measurement.widthChanged && measurement.previousKeyboardOpen && measurement.hasKeyboardFocus) {
+    return measurement.currentLayoutHeight - measurement.currentVisualHeight > 120
+  }
+  if (!measurement.previousHold || !measurement.hasKeyboardFocus) return false
+  return measurement.currentVisualHeight - measurement.holdStartVisualHeight <= 120
+}

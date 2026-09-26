@@ -43,6 +43,7 @@ function isLocalhostRemote(remote: string): boolean {
 
 function isLocalhostHost(host: string): boolean {
   const normalized = host.toLowerCase()
+  if (/^\[::1\](?::\d+)?$/.test(normalized)) return true
   return normalized.startsWith('localhost:') || normalized === 'localhost' || normalized.startsWith('127.0.0.1:')
 }
 
