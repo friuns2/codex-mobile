@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import { dirname, extname, isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import { existsSync } from 'node:fs'
 import { writeFile, stat } from 'node:fs/promises'
@@ -7,6 +7,7 @@ import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
 import { createDirectoryListingHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from './localBrowseUi.js'
+import { getLocalImageContentType } from './localImageTypes.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -21,17 +22,6 @@ export type ServerInstance = {
   app: Express
   dispose: () => void
   attachWebSocket: (server: HttpServer) => void
-}
-
-const IMAGE_CONTENT_TYPES: Record<string, string> = {
-  '.avif': 'image/avif',
-  '.bmp': 'image/bmp',
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.webp': 'image/webp',
 }
 
 function renderFrontendMissingHtml(message: string, details?: string[]): string {
@@ -94,7 +84,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       return
     }
 
-    const contentType = IMAGE_CONTENT_TYPES[extname(localPath).toLowerCase()]
+    const contentType = getLocalImageContentType(localPath)
     if (!contentType) {
       res.status(415).json({ error: 'Unsupported image type.' })
       return

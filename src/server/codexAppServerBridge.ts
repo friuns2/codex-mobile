@@ -9,8 +9,10 @@ import { homedir } from 'node:os'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
+import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
+import { inflate } from 'node:zlib'
 import { handleAccountRoutes } from './accountRoutes.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
@@ -50,6 +52,7 @@ import {
 } from '../commandResolution.js'
 import type { CollaborationModeKind, ReasoningEffort } from '../types/codex.js'
 import { isAbsoluteLikePath } from '../pathUtils.js'
+import { isSupportedLocalImagePath } from './localImageTypes.js'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -442,7 +445,38 @@ function isInlineDataUrl(value: string): boolean {
   return /^data:/iu.test(value.trim())
 }
 
-function inferImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
+function readUint32BigEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] * 0x1000000
+    + bytes[offset + 1] * 0x10000
+    + bytes[offset + 2] * 0x100
+    + bytes[offset + 3]
+}
+
+function readUint32LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset]
+    + bytes[offset + 1] * 0x100
+    + bytes[offset + 2] * 0x10000
+    + bytes[offset + 3] * 0x1000000
+}
+
+function readUint16LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] + bytes[offset + 1] * 0x100
+}
+
+function readInt32LittleEndian(bytes: Uint8Array, offset: number): number {
+  const unsigned = readUint32LittleEndian(bytes, offset)
+  return unsigned > 0x7fffffff ? unsigned - 0x100000000 : unsigned
+}
+
+function matchesAscii(bytes: Uint8Array, offset: number, value: string): boolean {
+  if (offset < 0 || offset + value.length > bytes.length) return false
+  for (let index = 0; index < value.length; index += 1) {
+    if (bytes[offset + index] !== value.charCodeAt(index)) return false
+  }
+  return true
+}
+
+function inferImageMimeTypeFromHeader(bytes: Uint8Array): string | null {
   if (
     bytes.length >= 8 &&
     bytes[0] === 0x89 &&
@@ -483,14 +517,538 @@ function inferImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
   ) {
     return 'image/gif'
   }
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return 'image/bmp'
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70 &&
+    bytes[8] === 0x61 &&
+    bytes[9] === 0x76 &&
+    bytes[10] === 0x69 &&
+    (bytes[11] === 0x66 || bytes[11] === 0x73)
+  ) {
+    return 'image/avif'
+  }
+  return null
+}
+
+const PNG_CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
+  let crc = value
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) !== 0 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1
+  return crc >>> 0
+})
+
+function computeCrc32(bytes: Uint8Array, start: number, end: number): number {
+  let crc = 0xffffffff
+  for (let offset = start; offset < end; offset += 1) {
+    crc = PNG_CRC32_TABLE[(crc ^ bytes[offset]) & 0xff] ^ (crc >>> 8)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+const MAX_INLINE_IMAGE_BYTES = 24 * 1024 * 1024
+const MAX_DECODED_IMAGE_BYTES = 64 * 1024 * 1024
+
+function inflateImageData(bytes: Buffer, maxOutputLength: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    inflate(bytes, { maxOutputLength }, (error, result) => {
+      if (error) reject(error)
+      else resolve(result)
+    })
+  })
+}
+
+async function isStructurallyCompletePng(bytes: Uint8Array): Promise<boolean> {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/png') return false
+  let offset = 8
+  let firstChunk = true
+  let width = 0
+  let height = 0
+  let bitsPerPixel = 0
+  let colorType = -1
+  let interlaceMethod = 0
+  let hasPalette = false
+  let hasImageData = false
+  let imageDataEnded = false
+  const imageDataChunks: Uint8Array[] = []
+  while (offset + 12 <= bytes.length) {
+    const payloadSize = readUint32BigEndian(bytes, offset)
+    const chunkEnd = offset + 12 + payloadSize
+    if (!Number.isSafeInteger(chunkEnd) || chunkEnd > bytes.length) return false
+    const typeOffset = offset + 4
+    const payloadStart = offset + 8
+    const payloadEnd = payloadStart + payloadSize
+    if (computeCrc32(bytes, typeOffset, payloadEnd) !== readUint32BigEndian(bytes, payloadEnd)) return false
+    if (firstChunk) {
+      if (!matchesAscii(bytes, typeOffset, 'IHDR') || payloadSize !== 13) return false
+      width = readUint32BigEndian(bytes, payloadStart)
+      height = readUint32BigEndian(bytes, payloadStart + 4)
+      const bitDepth = bytes[payloadStart + 8]
+      colorType = bytes[payloadStart + 9]
+      const validDepthsByColorType: Record<number, number[]> = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16],
+      }
+      const channelsByColorType: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }
+      if (width === 0 || height === 0 || !validDepthsByColorType[colorType]?.includes(bitDepth)) return false
+      if (bytes[payloadStart + 10] !== 0 || bytes[payloadStart + 11] !== 0) return false
+      interlaceMethod = bytes[payloadStart + 12]
+      if (interlaceMethod !== 0 && interlaceMethod !== 1) return false
+      bitsPerPixel = bitDepth * channelsByColorType[colorType]
+    } else if (matchesAscii(bytes, typeOffset, 'IHDR')) {
+      return false
+    }
+    if (matchesAscii(bytes, typeOffset, 'PLTE')) {
+      if (hasImageData || payloadSize === 0 || payloadSize > 768 || payloadSize % 3 !== 0) return false
+      hasPalette = true
+    }
+    if (matchesAscii(bytes, typeOffset, 'IDAT')) {
+      if (imageDataEnded) return false
+      if (payloadSize > 0) {
+        hasImageData = true
+        imageDataChunks.push(bytes.subarray(payloadStart, payloadEnd))
+      }
+    } else if (hasImageData && !matchesAscii(bytes, typeOffset, 'IEND')) {
+      imageDataEnded = true
+    }
+    if (matchesAscii(bytes, typeOffset, 'IEND')) {
+      if (!hasImageData || payloadSize !== 0 || chunkEnd !== bytes.length) return false
+      if (colorType === 3 && !hasPalette) return false
+      const passes = interlaceMethod === 0
+        ? [[0, 0, 1, 1]]
+        : [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]]
+      let expectedBytes = 0
+      const passRows: Array<{ rows: number; rowBytes: number }> = []
+      for (const [startX, startY, stepX, stepY] of passes) {
+        const passWidth = width > startX ? Math.ceil((width - startX) / stepX) : 0
+        const rows = height > startY ? Math.ceil((height - startY) / stepY) : 0
+        if (passWidth === 0 || rows === 0) continue
+        const rowBytes = Math.ceil(passWidth * bitsPerPixel / 8)
+        expectedBytes += rows * (rowBytes + 1)
+        if (!Number.isSafeInteger(expectedBytes) || expectedBytes > MAX_DECODED_IMAGE_BYTES) return false
+        passRows.push({ rows, rowBytes })
+      }
+      try {
+        const compressedLength = imageDataChunks.reduce((total, chunk) => total + chunk.length, 0)
+        if (compressedLength <= 0 || compressedLength > MAX_INLINE_IMAGE_BYTES) return false
+        const inflated = await inflateImageData(
+          Buffer.concat(imageDataChunks, compressedLength),
+          Math.min(MAX_DECODED_IMAGE_BYTES, expectedBytes + 1),
+        )
+        if (inflated.length !== expectedBytes) return false
+        let inflatedOffset = 0
+        for (const pass of passRows) {
+          for (let row = 0; row < pass.rows; row += 1) {
+            if (inflated[inflatedOffset] > 4) return false
+            inflatedOffset += pass.rowBytes + 1
+          }
+        }
+        return inflatedOffset === inflated.length
+      } catch {
+        return false
+      }
+    }
+    firstChunk = false
+    offset = chunkEnd
+  }
+  return false
+}
+
+function isStructurallyCompleteWebp(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/webp' || bytes.length < 20) return false
+  const declaredLength = readUint32LittleEndian(bytes, 4) + 8
+  if (declaredLength !== bytes.length) return false
+
+  const isValidRasterChunk = (offset: number, chunkLength: number): boolean => {
+    const payloadOffset = offset + 8
+    if (matchesAscii(bytes, offset, 'VP8 ')) {
+      if (chunkLength < 10 || payloadOffset + 10 > bytes.length) return false
+      const frameTag = bytes[payloadOffset]
+        | (bytes[payloadOffset + 1] << 8)
+        | (bytes[payloadOffset + 2] << 16)
+      const isKeyFrame = (frameTag & 0x01) === 0
+      const firstPartitionLength = frameTag >>> 5
+      const hasStartCode = bytes[payloadOffset + 3] === 0x9d
+        && bytes[payloadOffset + 4] === 0x01
+        && bytes[payloadOffset + 5] === 0x2a
+      const width = (bytes[payloadOffset + 6] | (bytes[payloadOffset + 7] << 8)) & 0x3fff
+      const height = (bytes[payloadOffset + 8] | (bytes[payloadOffset + 9] << 8)) & 0x3fff
+      return isKeyFrame
+        && firstPartitionLength > 0
+        && firstPartitionLength <= chunkLength - 10
+        && hasStartCode
+        && width > 0
+        && height > 0
+    }
+    if (matchesAscii(bytes, offset, 'VP8L')) {
+      if (chunkLength <= 5 || payloadOffset + chunkLength > bytes.length || bytes[payloadOffset] !== 0x2f) return false
+      const dimensions = readUint32LittleEndian(bytes, payloadOffset + 1)
+      const width = (dimensions & 0x3fff) + 1
+      const height = ((dimensions >>> 14) & 0x3fff) + 1
+      return width > 0 && height > 0 && ((dimensions >>> 29) & 0x07) === 0
+    }
+    return false
+  }
+
+  const inspectChunkRange = (start: number, end: number): { valid: boolean; hasImagePayload: boolean } => {
+    let nestedOffset = start
+    let hasImagePayload = false
+    while (nestedOffset + 8 <= end) {
+      const nestedLength = readUint32LittleEndian(bytes, nestedOffset + 4)
+      const nestedPaddedLength = nestedLength + (nestedLength % 2)
+      if (nestedOffset + 8 + nestedPaddedLength > end) return { valid: false, hasImagePayload: false }
+      if (isValidRasterChunk(nestedOffset, nestedLength)) {
+        hasImagePayload = true
+      }
+      nestedOffset += 8 + nestedPaddedLength
+    }
+    return { valid: nestedOffset === end, hasImagePayload }
+  }
+
+  let offset = 12
+  let hasImagePayload = false
+  while (offset + 8 <= bytes.length) {
+    const chunkLength = readUint32LittleEndian(bytes, offset + 4)
+    const paddedChunkLength = chunkLength + (chunkLength % 2)
+    if (offset + 8 + paddedChunkLength > bytes.length) return false
+    if (isValidRasterChunk(offset, chunkLength)) {
+      hasImagePayload = true
+    } else if (matchesAscii(bytes, offset, 'ANMF') && chunkLength > 16) {
+      const frame = inspectChunkRange(offset + 8 + 16, offset + 8 + chunkLength)
+      if (!frame.valid) return false
+      hasImagePayload ||= frame.hasImagePayload
+    }
+    offset += 8 + paddedChunkLength
+  }
+  return offset === bytes.length && hasImagePayload
+}
+
+function isStructurallyCompleteJpeg(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/jpeg' || bytes.length < 8) return false
+  let offset = 2
+  let hasStartOfFrame = false
+  let hasStartOfScan = false
+  let scanDataBytes = 0
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      if (!hasStartOfScan) return false
+      scanDataBytes += 1
+      offset += 1
+      continue
+    }
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1
+    if (offset >= bytes.length) return false
+    const marker = bytes[offset]
+    offset += 1
+    if (marker === 0xd9) {
+      return hasStartOfFrame && hasStartOfScan && scanDataBytes > 0 && offset === bytes.length
+    }
+    if (marker === 0x00) {
+      if (!hasStartOfScan) return false
+      scanDataBytes += 1
+      continue
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
+    if (offset + 2 > bytes.length) return false
+    const segmentLength = bytes[offset] * 0x100 + bytes[offset + 1]
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) return false
+    if ((marker >= 0xc0 && marker <= 0xc3)
+      || (marker >= 0xc5 && marker <= 0xc7)
+      || (marker >= 0xc9 && marker <= 0xcb)
+      || (marker >= 0xcd && marker <= 0xcf)) {
+      if (segmentLength < 11) return false
+      const componentCount = bytes[offset + 7]
+      const precision = bytes[offset + 2]
+      const height = bytes[offset + 3] * 0x100 + bytes[offset + 4]
+      const width = bytes[offset + 5] * 0x100 + bytes[offset + 6]
+      if (precision === 0
+        || precision > 16
+        || componentCount === 0
+        || segmentLength !== 8 + componentCount * 3
+        || width === 0
+        || height === 0) return false
+      hasStartOfFrame = true
+    }
+    if (marker === 0xda) {
+      if (!hasStartOfFrame || segmentLength < 8) return false
+      const componentCount = bytes[offset + 2]
+      if (componentCount === 0 || componentCount > 4 || segmentLength !== 6 + componentCount * 2) return false
+      hasStartOfScan = true
+    }
+    offset += segmentLength
+  }
+  return false
+}
+
+function isStructurallyCompleteBmp(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/bmp' || bytes.length < 26) return false
+  const declaredLength = readUint32LittleEndian(bytes, 2)
+  const pixelOffset = readUint32LittleEndian(bytes, 10)
+  const dibHeaderLength = readUint32LittleEndian(bytes, 14)
+  if (declaredLength !== bytes.length || (dibHeaderLength !== 12 && dibHeaderLength < 40)) return false
+  if (14 + dibHeaderLength > bytes.length) return false
+
+  let width: number
+  let height: number
+  let planes: number
+  let bitsPerPixel: number
+  let compression = 0
+  let declaredImageBytes = 0
+  let minimumPixelOffset = 14 + dibHeaderLength
+  if (dibHeaderLength === 12) {
+    width = readUint16LittleEndian(bytes, 18)
+    height = readUint16LittleEndian(bytes, 20)
+    planes = readUint16LittleEndian(bytes, 22)
+    bitsPerPixel = readUint16LittleEndian(bytes, 24)
+    if (bitsPerPixel <= 8) minimumPixelOffset += 3 * 2 ** bitsPerPixel
+  } else {
+    width = readInt32LittleEndian(bytes, 18)
+    height = readInt32LittleEndian(bytes, 22)
+    planes = readUint16LittleEndian(bytes, 26)
+    bitsPerPixel = readUint16LittleEndian(bytes, 28)
+    compression = readUint32LittleEndian(bytes, 30)
+    declaredImageBytes = readUint32LittleEndian(bytes, 34)
+    const maximumPaletteEntries = bitsPerPixel <= 8 ? 2 ** bitsPerPixel : 0
+    const colorsUsed = readUint32LittleEndian(bytes, 46)
+    if (colorsUsed > maximumPaletteEntries && maximumPaletteEntries > 0) return false
+    minimumPixelOffset += 4 * (colorsUsed || maximumPaletteEntries)
+    if (dibHeaderLength === 40 && compression === 3) minimumPixelOffset += 12
+    if (dibHeaderLength === 40 && compression === 6) minimumPixelOffset += 16
+  }
+  if (width <= 0 || height === 0 || planes !== 1) return false
+  if (![1, 4, 8, 16, 24, 32].includes(bitsPerPixel)) return false
+  if (compression !== 0 && !((compression === 3 || compression === 6) && (bitsPerPixel === 16 || bitsPerPixel === 32))) {
+    return false
+  }
+  if (pixelOffset < minimumPixelOffset || pixelOffset >= bytes.length) return false
+  const absoluteHeight = Math.abs(height)
+  const rowBits = width * bitsPerPixel
+  const rowStride = Math.ceil(rowBits / 32) * 4
+  const requiredImageBytes = rowStride * absoluteHeight
+  if (!Number.isSafeInteger(requiredImageBytes) || requiredImageBytes <= 0) return false
+  if (declaredImageBytes > 0 && declaredImageBytes < requiredImageBytes) return false
+  return pixelOffset + requiredImageBytes <= bytes.length
+}
+
+function readIsoBox(
+  bytes: Uint8Array,
+  offset: number,
+  rangeEnd: number,
+): { headerLength: number; boxLength: number } | null {
+  if (offset + 8 > rangeEnd) return null
+  const size32 = readUint32BigEndian(bytes, offset)
+  let headerLength = 8
+  let boxLength = size32
+  if (size32 === 1) {
+    if (offset + 16 > rangeEnd || readUint32BigEndian(bytes, offset + 8) !== 0) return null
+    headerLength = 16
+    boxLength = readUint32BigEndian(bytes, offset + 12)
+  } else if (size32 === 0) {
+    boxLength = rangeEnd - offset
+  }
+  if (boxLength < headerLength || offset + boxLength > rangeEnd) return null
+  return { headerLength, boxLength }
+}
+
+function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/avif') return false
+  let offset = 0
+  let hasFtyp = false
+  let hasMeta = false
+  let hasMediaData = false
+  while (offset + 8 <= bytes.length) {
+    const box = readIsoBox(bytes, offset, bytes.length)
+    if (!box) return false
+    const { headerLength, boxLength } = box
+    if (matchesAscii(bytes, offset + 4, 'ftyp')) {
+      if (offset !== 0 || boxLength < headerLength + 8) return false
+      for (let brandOffset = offset + headerLength; brandOffset + 4 <= offset + boxLength; brandOffset += 4) {
+        if (matchesAscii(bytes, brandOffset, 'avif') || matchesAscii(bytes, brandOffset, 'avis')) {
+          hasFtyp = true
+          break
+        }
+      }
+    } else if (matchesAscii(bytes, offset + 4, 'meta')) {
+      const payloadStart = offset + headerLength
+      const payloadEnd = offset + boxLength
+      if (boxLength < headerLength + 4) return false
+      let childOffset = payloadStart + 4
+      let hasPrimaryItem = false
+      let hasItemLocation = false
+      let hasItemInfo = false
+      let hasItemProperties = false
+      while (childOffset + 8 <= payloadEnd) {
+        const child = readIsoBox(bytes, childOffset, payloadEnd)
+        if (!child) return false
+        if (matchesAscii(bytes, childOffset + 4, 'pitm')) hasPrimaryItem = true
+        else if (matchesAscii(bytes, childOffset + 4, 'iloc')) hasItemLocation = true
+        else if (matchesAscii(bytes, childOffset + 4, 'iinf')) hasItemInfo = true
+        else if (matchesAscii(bytes, childOffset + 4, 'iprp')) hasItemProperties = true
+        else if (matchesAscii(bytes, childOffset + 4, 'idat')) {
+          hasMediaData ||= child.boxLength > child.headerLength
+        }
+        childOffset += child.boxLength
+      }
+      if (childOffset !== payloadEnd) return false
+      hasMeta = hasPrimaryItem && hasItemLocation && hasItemInfo && hasItemProperties
+    } else if (matchesAscii(bytes, offset + 4, 'mdat')) {
+      hasMediaData = boxLength > headerLength
+    }
+    offset += boxLength
+  }
+  return offset === bytes.length && hasFtyp && hasMeta && hasMediaData
+}
+
+async function isStructurallyCompleteGif(bytes: Uint8Array): Promise<boolean> {
+  if (inferImageMimeTypeFromHeader(bytes) !== 'image/gif' || bytes.length < 14) return false
+  const logicalWidth = readUint16LittleEndian(bytes, 6)
+  const logicalHeight = readUint16LittleEndian(bytes, 8)
+  if (logicalWidth === 0 || logicalHeight === 0) return false
+  let offset = 13
+  const packedFields = bytes[10]
+  if ((packedFields & 0x80) !== 0) {
+    offset += 3 * 2 ** ((packedFields & 0x07) + 1)
+  }
+  if (offset > bytes.length) return false
+  let hasImageData = false
+  const readSubBlocks = (collect: boolean): Uint8Array | null => {
+    const chunks: Uint8Array[] = []
+    let totalLength = 0
+    while (offset < bytes.length) {
+      const blockLength = bytes[offset]
+      offset += 1
+      if (blockLength === 0) {
+        if (!collect) return new Uint8Array()
+        if (totalLength > MAX_INLINE_IMAGE_BYTES) return null
+        const combined = new Uint8Array(totalLength)
+        let writeOffset = 0
+        for (const chunk of chunks) {
+          combined.set(chunk, writeOffset)
+          writeOffset += chunk.length
+        }
+        return combined
+      }
+      if (offset + blockLength > bytes.length) return null
+      if (collect) {
+        chunks.push(bytes.subarray(offset, offset + blockLength))
+        totalLength += blockLength
+        if (totalLength > MAX_INLINE_IMAGE_BYTES) return null
+      }
+      offset += blockLength
+    }
+    return null
+  }
+  const hasCompleteLzwImage = async (
+    data: Uint8Array,
+    minimumCodeSize: number,
+    pixelCount: number,
+  ): Promise<boolean> => {
+    if (minimumCodeSize < 2
+      || minimumCodeSize > 8
+      || data.length === 0
+      || data.length > MAX_INLINE_IMAGE_BYTES
+      || pixelCount <= 0
+      || pixelCount > MAX_DECODED_IMAGE_BYTES) return false
+    const clearCode = 1 << minimumCodeSize
+    const endCode = clearCode + 1
+    const entryLengths = new Uint32Array(4096)
+    let codeSize = minimumCodeSize + 1
+    let nextCode = endCode + 1
+    let previousCode = -1
+    let bitOffset = 0
+    let outputPixels = 0
+    let codesSinceYield = 0
+    const resetDictionary = (): void => {
+      entryLengths.fill(0)
+      for (let index = 0; index < clearCode; index += 1) entryLengths[index] = 1
+      codeSize = minimumCodeSize + 1
+      nextCode = endCode + 1
+      previousCode = -1
+    }
+    resetDictionary()
+    while (bitOffset + codeSize <= data.length * 8) {
+      codesSinceYield += 1
+      if (codesSinceYield >= 8192) {
+        codesSinceYield = 0
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      let code = 0
+      for (let bit = 0; bit < codeSize; bit += 1) {
+        code |= ((data[(bitOffset + bit) >>> 3] >>> ((bitOffset + bit) & 7)) & 1) << bit
+      }
+      bitOffset += codeSize
+      if (code === clearCode) {
+        resetDictionary()
+        continue
+      }
+      if (code === endCode) return outputPixels === pixelCount
+      let entryLength = code < nextCode ? entryLengths[code] : 0
+      if (code === nextCode && previousCode >= 0) entryLength = entryLengths[previousCode] + 1
+      if (entryLength === 0 || outputPixels + entryLength > pixelCount) return false
+      outputPixels += entryLength
+      if (previousCode >= 0 && nextCode < 4096) {
+        entryLengths[nextCode] = entryLengths[previousCode] + 1
+        nextCode += 1
+        if (nextCode === 1 << codeSize && codeSize < 12) codeSize += 1
+      }
+      previousCode = code
+    }
+    return false
+  }
+  while (offset < bytes.length) {
+    const marker = bytes[offset]
+    offset += 1
+    if (marker === 0x3b) return hasImageData && offset === bytes.length
+    if (marker === 0x21) {
+      if (offset >= bytes.length) return false
+      offset += 1
+      if (!readSubBlocks(false)) return false
+      continue
+    }
+    if (marker !== 0x2c || offset + 9 > bytes.length) return false
+    const left = readUint16LittleEndian(bytes, offset)
+    const top = readUint16LittleEndian(bytes, offset + 2)
+    const width = readUint16LittleEndian(bytes, offset + 4)
+    const height = readUint16LittleEndian(bytes, offset + 6)
+    if (width === 0 || height === 0 || left + width > logicalWidth || top + height > logicalHeight) return false
+    const imagePackedFields = bytes[offset + 8]
+    offset += 9
+    if ((imagePackedFields & 0x80) !== 0) {
+      offset += 3 * 2 ** ((imagePackedFields & 0x07) + 1)
+    }
+    if (offset >= bytes.length) return false
+    const minimumCodeSize = bytes[offset]
+    offset += 1
+    const imageData = readSubBlocks(true)
+    if (!imageData || !await hasCompleteLzwImage(imageData, minimumCodeSize, width * height)) return false
+    hasImageData = true
+  }
+  return false
+}
+
+async function inferCompleteImageMimeTypeFromBytes(bytes: Uint8Array): Promise<string | null> {
+  const mimeType = inferImageMimeTypeFromHeader(bytes)
+  if (mimeType === 'image/png') return await isStructurallyCompletePng(bytes) ? mimeType : null
+  if (mimeType === 'image/jpeg') return isStructurallyCompleteJpeg(bytes) ? mimeType : null
+  if (mimeType === 'image/webp') return isStructurallyCompleteWebp(bytes) ? mimeType : null
+  if (mimeType === 'image/gif') return await isStructurallyCompleteGif(bytes) ? mimeType : null
+  if (mimeType === 'image/bmp') return isStructurallyCompleteBmp(bytes) ? mimeType : null
+  if (mimeType === 'image/avif') return isStructurallyCompleteAvif(bytes) ? mimeType : null
   return null
 }
 
 function inferImageMimeTypeFromBase64(value: string): string | null {
   const compact = value.trim().replace(/\s+/gu, '')
-  if (compact.length < 32 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(compact)) return null
+  if (compact.length < 8 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(compact)) return null
   try {
-    return inferImageMimeTypeFromBytes(Buffer.from(compact.slice(0, 64), 'base64'))
+    return inferImageMimeTypeFromHeader(Buffer.from(compact.slice(0, 64), 'base64'))
   } catch {
     return null
   }
@@ -506,7 +1064,7 @@ function normalizeBase64ImageDataUrl(value: string, mimeType: string): string | 
   const inferredMimeType = inferImageMimeTypeFromBase64(compact)
   if (!inferredMimeType) return null
   const normalizedMimeType = mimeType.trim().toLowerCase()
-  const finalMimeType = normalizedMimeType.startsWith('image/') && normalizedMimeType !== 'image/*'
+  const finalMimeType = normalizedMimeType === inferredMimeType
     ? normalizedMimeType
     : inferredMimeType
   return `data:${finalMimeType};base64,${compact}`
@@ -518,6 +1076,8 @@ function extensionFromMimeType(mimeType: string): string {
   if (normalized === 'image/jpeg') return '.jpg'
   if (normalized === 'image/webp') return '.webp'
   if (normalized === 'image/gif') return '.gif'
+  if (normalized === 'image/avif') return '.avif'
+  if (normalized === 'image/bmp') return '.bmp'
   if (normalized === 'image/svg+xml') return '.svg'
   if (normalized === 'application/pdf') return '.pdf'
   return ''
@@ -540,34 +1100,99 @@ function toAttachmentLinkTarget(block: Record<string, unknown>, fallback: string
   return `attachment://${candidate}`
 }
 
-async function persistInlineDataUrlToLocalFile(dataUrl: string, baseName: string): Promise<string | null> {
+const INLINE_MEDIA_PERSIST_CONCURRENCY = 2
+const INLINE_MEDIA_PERSIST_QUEUE_LIMIT = 32
+type InlineMediaPersistenceTask = {
+  run: () => Promise<string | null>
+  resolve: (value: string | null) => void
+  reject: (error: unknown) => void
+}
+const inlineMediaPersistenceQueue: InlineMediaPersistenceTask[] = []
+const inlineMediaPersistenceCapacityWaiters: Array<() => void> = []
+let activeInlineMediaPersistenceTasks = 0
+
+function drainInlineMediaPersistenceQueue(): void {
+  while (activeInlineMediaPersistenceTasks < INLINE_MEDIA_PERSIST_CONCURRENCY) {
+    const task = inlineMediaPersistenceQueue.shift()
+    if (!task) return
+    inlineMediaPersistenceCapacityWaiters.shift()?.()
+    activeInlineMediaPersistenceTasks += 1
+    void task.run()
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        activeInlineMediaPersistenceTasks -= 1
+        drainInlineMediaPersistenceQueue()
+      })
+  }
+}
+
+async function scheduleInlineMediaPersistence(run: () => Promise<string | null>): Promise<string | null> {
+  while (inlineMediaPersistenceQueue.length >= INLINE_MEDIA_PERSIST_QUEUE_LIMIT) {
+    await new Promise<void>((resolve) => inlineMediaPersistenceCapacityWaiters.push(resolve))
+  }
+  return new Promise<string | null>((resolve, reject) => {
+    inlineMediaPersistenceQueue.push({ run, resolve, reject })
+    drainInlineMediaPersistenceQueue()
+  })
+}
+
+async function persistInlineDataUrlToLocalFileNow(
+  dataUrl: string,
+  baseName: string,
+  mediaDir: string,
+): Promise<string | null> {
   const trimmed = dataUrl.trim()
-  const match = /^data:([^;,]*)(;base64)?,(.*)$/isu.exec(trimmed)
-  if (!match) return null
-  const mimeType = (match[1] ?? '').trim().toLowerCase()
-  const encodedPayload = match[3] ?? ''
+  if (!trimmed.toLowerCase().startsWith('data:')) return null
+  const commaIndex = trimmed.indexOf(',')
+  if (commaIndex < 5) return null
+  const metadataParts = trimmed.slice(5, commaIndex).split(';')
+  const mimeType = (metadataParts.shift() ?? '').trim().toLowerCase()
+  const isBase64 = metadataParts.some((part) => part.trim().toLowerCase() === 'base64')
+  const encodedPayload = trimmed.slice(commaIndex + 1)
+  if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml' && !isBase64) return null
   let bytes: Buffer
   try {
-    bytes = match[2]
-      ? Buffer.from(encodedPayload, 'base64')
-      : Buffer.from(decodeURIComponent(encodedPayload), 'utf8')
+    if (isBase64) {
+      const compactPayload = encodedPayload.replace(/\s+/gu, '')
+      if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(compactPayload) || compactPayload.length % 4 === 1) return null
+      bytes = Buffer.from(compactPayload, 'base64')
+    } else {
+      bytes = Buffer.from(decodeURIComponent(encodedPayload), 'utf8')
+    }
   } catch {
     return null
   }
-  if (bytes.length === 0) return null
+  if (bytes.length === 0 || bytes.length > MAX_INLINE_IMAGE_BYTES) return null
 
   const hash = createHash('sha1').update(bytes).digest('hex')
-  const ext = extensionFromMimeType(mimeType)
-  const mediaDir = join(tmpdir(), 'codex-web-inline-media')
-  await mkdir(mediaDir, { recursive: true })
-  const fileName = `${baseName}-${hash}${ext}`
-  const filePath = join(mediaDir, fileName)
+  const inferredImageMimeType = await inferCompleteImageMimeTypeFromBytes(bytes)
+  if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml' && !inferredImageMimeType) return null
+  const persistedMimeType = inferredImageMimeType ?? mimeType
+  const ext = extensionFromMimeType(persistedMimeType)
   try {
-    await stat(filePath)
-  } catch {
-    await writeFile(filePath, bytes)
+    await mkdir(mediaDir, { recursive: true })
+    const fileName = `${baseName}-${hash}${ext}`
+    const filePath = join(mediaDir, fileName)
+    try {
+      await stat(filePath)
+    } catch {
+      await writeFile(filePath, bytes)
+    }
+    return filePath
+  } catch (error) {
+    console.error(`[codex-api] Failed to persist inline image ${baseName}`, error)
+    return null
   }
-  return filePath
+}
+
+export async function persistInlineDataUrlToLocalFile(
+  dataUrl: string,
+  baseName: string,
+  mediaDir = join(tmpdir(), 'codex-web-inline-media'),
+): Promise<string | null> {
+  return scheduleInlineMediaPersistence(
+    () => persistInlineDataUrlToLocalFileNow(dataUrl, baseName, mediaDir),
+  )
 }
 
 function toLocalImageProxyUrl(path: string): string {
@@ -575,6 +1200,15 @@ function toLocalImageProxyUrl(path: string): string {
 }
 
 const INLINE_IMAGE_FIELD_NAMES = new Set([
+  'b64_json',
+  'image',
+  'image_url',
+  'images',
+  'result',
+  'url',
+])
+
+const INLINE_GENERATED_IMAGE_PAYLOAD_FIELD_NAMES = new Set([
   'b64_json',
   'image',
   'image_url',
@@ -592,6 +1226,117 @@ type InlinePayloadSanitizeContext = {
 
 function isPotentialInlineImageField(fieldName: string | undefined): boolean {
   return typeof fieldName === 'string' && INLINE_IMAGE_FIELD_NAMES.has(fieldName)
+}
+
+function omitGeneratedImagePayloadFields(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => !INLINE_GENERATED_IMAGE_PAYLOAD_FIELD_NAMES.has(key)),
+  )
+}
+
+async function resolveExistingLocalImagePath(value: unknown): Promise<string | null> {
+  const rawPath = asNonEmptyString(value)
+  if (!rawPath) return null
+
+  let imagePath = rawPath
+  if (rawPath.startsWith('/codex-local-image?')) {
+    try {
+      imagePath = new URL(rawPath, 'http://localhost').searchParams.get('path') ?? ''
+    } catch {
+      return null
+    }
+  } else if (rawPath.startsWith('file://')) {
+    try {
+      imagePath = fileURLToPath(rawPath)
+    } catch {
+      return null
+    }
+  }
+  if (!isAbsolute(imagePath)) return null
+  if (!isSupportedLocalImagePath(imagePath)) return null
+
+  try {
+    return (await stat(imagePath)).isFile() ? imagePath : null
+  } catch {
+    return null
+  }
+}
+
+async function resolveGeneratedImageFallbackPath(
+  record: Record<string, unknown>,
+  context: InlinePayloadSanitizeContext,
+): Promise<string | null> {
+  const mimeType = asNonEmptyString(record.mime_type)
+    ?? asNonEmptyString(record.mimeType)
+    ?? 'image/png'
+  const maxCandidates = 32
+  const maxCandidateCharacters = 32 * 1024 * 1024
+  const rawCandidates: string[] = []
+  let candidateCharacters = 0
+  let candidateBudgetExhausted = false
+  const addCandidate = (value: unknown): void => {
+    if (candidateBudgetExhausted || rawCandidates.length >= maxCandidates) {
+      candidateBudgetExhausted = true
+      return
+    }
+    const candidate = asNonEmptyString(value)
+    if (!candidate) return
+    if (candidate.length > maxCandidateCharacters - candidateCharacters) {
+      candidateBudgetExhausted = true
+      return
+    }
+    rawCandidates.push(candidate)
+    candidateCharacters += candidate.length
+  }
+  for (const value of [record.result, record.b64_json, record.image, record.url, record.image_url]) {
+    addCandidate(value)
+  }
+  if (Array.isArray(record.images)) {
+    for (let index = 0; index < record.images.length && index < maxCandidates && !candidateBudgetExhausted; index += 1) {
+      const entry = record.images[index]
+      const entryRecord = asRecord(entry)
+      if (entryRecord) {
+        for (const value of [
+          entryRecord.result,
+          entryRecord.b64_json,
+          entryRecord.image,
+          entryRecord.url,
+          entryRecord.image_url,
+        ]) {
+          addCandidate(value)
+        }
+      } else {
+        addCandidate(entry)
+      }
+    }
+  } else {
+    addCandidate(record.images)
+  }
+  for (const candidate of rawCandidates) {
+    const dataUrl = normalizeBase64ImageDataUrl(candidate, mimeType)
+    if (dataUrl) {
+      const localPath = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
+      if (localPath) return localPath
+      continue
+    }
+
+    const existingFallbackPath = await resolveExistingLocalImagePath(candidate)
+    if (existingFallbackPath) return existingFallbackPath
+  }
+  return null
+}
+
+export async function sanitizeThreadItemsForTurn(turnId: string, items: unknown[]): Promise<unknown[]> {
+  const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+    thread: {
+      turns: [{ id: turnId, items }],
+    },
+  })
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : []
+  const turn = asRecord(turns[0])
+  return Array.isArray(turn?.items) ? turn.items : items
 }
 
 async function sanitizeInlineImageString(
@@ -622,6 +1367,37 @@ async function sanitizeInlineUserContentBlock(
   if (!record) return block
 
   const type = asNonEmptyString(record.type) ?? ''
+  if (type === 'imageView') {
+    const existingPath = await resolveExistingLocalImagePath(record.path)
+    if (existingPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        path: existingPath,
+      }
+    }
+
+    const fallbackPath = await resolveGeneratedImageFallbackPath(record, context)
+    if (fallbackPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        path: fallbackPath,
+      }
+    }
+    return omitGeneratedImagePayloadFields(record)
+  }
+
+  if (type === 'imageGeneration' || type === 'image_generation') {
+    const fallbackPath = await resolveGeneratedImageFallbackPath(record, context)
+    if (fallbackPath) {
+      return {
+        ...omitGeneratedImagePayloadFields(record),
+        type: 'imageView',
+        path: fallbackPath,
+      }
+    }
+    return omitGeneratedImagePayloadFields(record)
+  }
+
   const imageUrl = asNonEmptyString(record.url) ?? asNonEmptyString(record.image_url)
   if (imageUrl && isInlineDataUrl(imageUrl)) {
     const localUrl = await persistInlineDataUrlToLocalFile(imageUrl, `inline-image-${context.turnId}-${context.itemId}-${String(context.blockIndex)}`)
@@ -642,26 +1418,6 @@ async function sanitizeInlineUserContentBlock(
     return {
       type: 'text',
       text: `Image attachment: ${target}`,
-    }
-  }
-
-  if (type === 'imageGeneration' || type === 'image_generation') {
-    const rawResult = asNonEmptyString(record.result)
-      ?? asNonEmptyString(record.b64_json)
-      ?? asNonEmptyString(record.image)
-    const mimeType = asNonEmptyString(record.mime_type)
-      ?? asNonEmptyString(record.mimeType)
-      ?? 'image/png'
-    const dataUrl = rawResult ? normalizeBase64ImageDataUrl(rawResult, mimeType) : null
-    if (dataUrl) {
-      const localUrl = await persistInlineDataUrlToLocalFile(dataUrl, `generated-image-${context.turnId}-${context.itemId}`)
-      if (localUrl) {
-        return {
-          ...record,
-          type: 'imageView',
-          path: localUrl,
-        }
-      }
     }
   }
 
@@ -5890,17 +6646,135 @@ type StreamEventFrame = {
 type CapturedItem = {
   id: string
   type: string
+  threadId: string
   turnId: string
   data: Record<string, unknown>
   completed: boolean
+  sanitized: boolean
+  sanitizePromise: Promise<void> | null
+  capturedAtMs: number
+  estimatedBytes: number
+}
+
+const CAPTURED_ITEM_MAX_COUNT_PER_THREAD = 100
+const CAPTURED_ITEM_MAX_BYTES_PER_THREAD = 64 * 1024 * 1024
+const CAPTURED_ITEM_MAX_THREADS = 100
+const CAPTURED_ITEM_MAX_BYTES_TOTAL = 128 * 1024 * 1024
+const CAPTURED_ITEM_TTL_MS = 5 * 60 * 1000
+const CAPTURED_ITEM_SANITIZE_CONCURRENCY = 2
+const CAPTURED_ITEM_PATH_VALIDATION_CONCURRENCY = 4
+const CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT = 32
+const NOTIFICATION_GENERATION_THREAD_LIMIT = 1000
+
+type CapturedItemSanitizeTask = {
+  captured: CapturedItem
+  promise: Promise<void>
+  resolve: () => void
+}
+
+function estimateCapturedItemBytes(value: unknown): number {
+  const maxVisitedNodes = 10_000
+  const nodeOverheadBytes = 16
+  const pending: unknown[] = [value]
+  const seen = new Set<object>()
+  let total = 0
+  let visitedNodes = 0
+  while (pending.length > 0 && total <= CAPTURED_ITEM_MAX_BYTES_PER_THREAD) {
+    if (visitedNodes >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
+    const current = pending.pop()
+    visitedNodes += 1
+    total += nodeOverheadBytes
+    if (typeof current === 'string') {
+      total += Buffer.byteLength(current, 'utf8')
+      continue
+    }
+    if (typeof current === 'number') {
+      total += 8
+      continue
+    }
+    if (typeof current === 'bigint') {
+      total += Buffer.byteLength(current.toString(), 'utf8')
+      continue
+    }
+    if (typeof current === 'boolean') {
+      total += 4
+      continue
+    }
+    if (!current || typeof current !== 'object' || seen.has(current)) continue
+    seen.add(current)
+    if (Array.isArray(current)) {
+      total += current.length * 8
+      if (total > CAPTURED_ITEM_MAX_BYTES_PER_THREAD) return total
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        if (visitedNodes + pending.length >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
+        pending.push(current[index])
+      }
+    } else {
+      total += 32
+      for (const key in current as Record<string, unknown>) {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) continue
+        total += Buffer.byteLength(key, 'utf8') + 8
+        if (total > CAPTURED_ITEM_MAX_BYTES_PER_THREAD) return total
+        if (visitedNodes + pending.length >= maxVisitedNodes) return CAPTURED_ITEM_MAX_BYTES_PER_THREAD + 1
+        pending.push((current as Record<string, unknown>)[key])
+      }
+    }
+  }
+  return total
+}
+
+export async function sanitizeCapturedItemsForMerge<T extends { id: string; sanitized: boolean }>(
+  capturedMap: Map<string, T>,
+  sanitize: (captured: T) => Promise<void>,
+): Promise<T[]> {
+  const snapshot = Array.from(capturedMap.values())
+  let nextIndex = 0
+  const sanitizeNext = async (): Promise<void> => {
+    while (nextIndex < snapshot.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const captured = snapshot[index]
+      if (captured) await sanitize(captured)
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(CAPTURED_ITEM_SANITIZE_CONCURRENCY, snapshot.length) },
+    () => sanitizeNext(),
+  ))
+  return snapshot.filter((captured) => captured.sanitized && capturedMap.get(captured.id) === captured)
+}
+
+async function mapWithBoundedConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapValue: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let nextIndex = 0
+  const mapNext = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const value = values[index]
+      if (value !== undefined) results[index] = await mapValue(value)
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    () => mapNext(),
+  ))
+  return results
 }
 
 const MERGEABLE_ITEM_TYPES = new Set([
   'commandExecution',
   'fileChange',
+  'imageGeneration',
+  'image_generation',
+  'imageView',
 ])
 
-class AppServerProcess {
+export class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
   private initialized = false
   private initializePromise: Promise<void> | null = null
@@ -5915,9 +6789,21 @@ class AppServerProcess {
   private readonly threadTurnPageReadCacheByThreadId = new Map<string, { result: unknown; expiresAt: number }>()
   private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
+  private readonly capturedItemCleanupTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
+  private capturedItemEstimatedBytesTotal = 0
+  private readonly capturedItemSanitizeQueue: CapturedItemSanitizeTask[] = []
+  private activeCapturedItemSanitizations = 0
+  private capturedItemSanitizeCapacityPromise: Promise<void> | null = null
+  private resolveCapturedItemSanitizeCapacity: (() => void) | null = null
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
+  private readonly notificationGenerationByThreadId = new Map<string, number>()
+  private nextNotificationGeneration = 0
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private activeConfigSignature = ''
+
+  constructor(
+    private readonly capturedItemSanitizer: typeof sanitizeThreadItemsForTurn = sanitizeThreadItemsForTurn,
+  ) {}
 
 
   private getCodexCommand(): string {
@@ -6014,6 +6900,7 @@ class AppServerProcess {
       this.initialized = false
       this.initializePromise = null
       this.readBuffer = ''
+      this.clearCapturedItemState()
     })
   }
 
@@ -6066,6 +6953,7 @@ class AppServerProcess {
     this.captureItemFromNotification(notification)
     const nThreadId = this.extractThreadIdFromParams(notification.params)
     if (nThreadId) {
+      this.assignNextNotificationGeneration(nThreadId)
       this.invalidateLiveStateCache(nThreadId)
       this.threadTurnPageReadCacheByThreadId.delete(nThreadId)
     }
@@ -6125,6 +7013,36 @@ class AppServerProcess {
     this.threadTurnPageReadCacheByThreadId.delete(threadId)
   }
 
+  private trimNotificationGenerations(): void {
+    while (this.notificationGenerationByThreadId.size > NOTIFICATION_GENERATION_THREAD_LIMIT) {
+      const oldestThreadId = this.notificationGenerationByThreadId.keys().next().value as string | undefined
+      if (!oldestThreadId) break
+      this.notificationGenerationByThreadId.delete(oldestThreadId)
+    }
+  }
+
+  private assignNextNotificationGeneration(threadId: string): number {
+    this.nextNotificationGeneration += 1
+    this.notificationGenerationByThreadId.delete(threadId)
+    this.notificationGenerationByThreadId.set(threadId, this.nextNotificationGeneration)
+    this.trimNotificationGenerations()
+    return this.nextNotificationGeneration
+  }
+
+  getNotificationGeneration(threadId: string): number {
+    const generation = this.notificationGenerationByThreadId.get(threadId)
+    if (generation === undefined) return this.assignNextNotificationGeneration(threadId)
+    this.notificationGenerationByThreadId.delete(threadId)
+    this.notificationGenerationByThreadId.set(threadId, generation)
+    return generation
+  }
+
+  storeThreadReadSnapshotIfCurrent(threadId: string, generation: number, snapshot: unknown): boolean {
+    if (this.getNotificationGeneration(threadId) !== generation) return false
+    this.storeThreadReadSnapshot(threadId, snapshot)
+    return true
+  }
+
   getLastThreadReadSnapshot(threadId: string): unknown | null {
     return this.lastThreadReadSnapshotByThreadId.get(threadId) ?? null
   }
@@ -6157,6 +7075,18 @@ class AppServerProcess {
 
   cacheLiveState(threadId: string, data: unknown, turnCount: number, sessionSize: number): void {
     this.liveStateCache.set(threadId, { data, turnCount, sessionSize })
+  }
+
+  cacheLiveStateIfCurrent(
+    threadId: string,
+    generation: number,
+    data: unknown,
+    turnCount: number,
+    sessionSize: number,
+  ): boolean {
+    if (this.getNotificationGeneration(threadId) !== generation) return false
+    this.cacheLiveState(threadId, data, turnCount, sessionSize)
+    return true
   }
 
   getCachedLiveState(threadId: string, turnCount: number, sessionSize: number): unknown | null {
@@ -6202,21 +7132,313 @@ class AppServerProcess {
 
     if (existing && existing.completed && !isCompleted) return
 
-    threadItems.set(itemId, {
+    const captured: CapturedItem = {
       id: itemId,
       type: itemType,
+      threadId,
       turnId,
       data: item as Record<string, unknown>,
       completed: isCompleted,
-    })
+      sanitized: false,
+      sanitizePromise: null,
+      capturedAtMs: Date.now(),
+      estimatedBytes: estimateCapturedItemBytes(item),
+    }
+    if (existing) {
+      this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - existing.estimatedBytes)
+      this.cancelQueuedCapturedItemSanitization(existing)
+    }
+    threadItems.set(itemId, captured)
+    this.capturedItemEstimatedBytesTotal += captured.estimatedBytes
+    this.capturedItemsByThreadId.delete(threadId)
+    this.capturedItemsByThreadId.set(threadId, threadItems)
+    this.pruneCapturedItemsForThread(threadId)
+    this.pruneCapturedItemsGlobally()
+
+    const isGeneratedImage = itemType === 'imageGeneration'
+      || itemType === 'image_generation'
+      || itemType === 'imageView'
+    if (isGeneratedImage && threadItems.get(itemId) === captured) {
+      void this.ensureCapturedItemSanitized(captured, false).then(() => {
+        if (threadItems?.get(itemId) !== captured) return
+        const previousEstimatedBytes = captured.estimatedBytes
+        captured.estimatedBytes = estimateCapturedItemBytes(captured.data)
+        this.capturedItemEstimatedBytesTotal = Math.max(
+          0,
+          this.capturedItemEstimatedBytesTotal + captured.estimatedBytes - previousEstimatedBytes,
+        )
+        this.pruneCapturedItemsForThread(threadId)
+        this.pruneCapturedItemsGlobally()
+      })
+    }
   }
 
-  mergeItemsIntoTurns(threadId: string, turns: unknown[]): unknown[] {
+  private clearCapturedItemCleanupTimer(threadId: string): void {
+    const timer = this.capturedItemCleanupTimersByThreadId.get(threadId)
+    if (timer) clearTimeout(timer)
+    this.capturedItemCleanupTimersByThreadId.delete(threadId)
+  }
+
+  private scheduleCapturedItemCleanup(threadId: string, threadItems: Map<string, CapturedItem>): void {
+    this.clearCapturedItemCleanupTimer(threadId)
+    if (threadItems.size === 0) return
+    const now = Date.now()
+    const earliestExpiry = Math.min(...Array.from(threadItems.values(), (item) => item.capturedAtMs + CAPTURED_ITEM_TTL_MS))
+    const timer = setTimeout(() => {
+      this.capturedItemCleanupTimersByThreadId.delete(threadId)
+      this.pruneCapturedItemsForThread(threadId)
+    }, Math.max(1, earliestExpiry - now))
+    timer.unref()
+    this.capturedItemCleanupTimersByThreadId.set(threadId, timer)
+  }
+
+  private pruneCapturedItemsForThread(threadId: string, now = Date.now()): void {
+    const threadItems = this.capturedItemsByThreadId.get(threadId)
+    if (!threadItems) {
+      this.clearCapturedItemCleanupTimer(threadId)
+      return
+    }
+    for (const [itemId, captured] of threadItems) {
+      if (now - captured.capturedAtMs >= CAPTURED_ITEM_TTL_MS) {
+        threadItems.delete(itemId)
+        this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - captured.estimatedBytes)
+        this.cancelQueuedCapturedItemSanitization(captured)
+      }
+    }
+    let totalBytes = Array.from(threadItems.values()).reduce((sum, item) => sum + item.estimatedBytes, 0)
+    while (threadItems.size > CAPTURED_ITEM_MAX_COUNT_PER_THREAD || totalBytes > CAPTURED_ITEM_MAX_BYTES_PER_THREAD) {
+      const oldest = threadItems.entries().next().value as [string, CapturedItem] | undefined
+      if (!oldest) break
+      threadItems.delete(oldest[0])
+      this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - oldest[1].estimatedBytes)
+      this.cancelQueuedCapturedItemSanitization(oldest[1])
+      totalBytes -= oldest[1].estimatedBytes
+    }
+    if (threadItems.size === 0) {
+      this.capturedItemsByThreadId.delete(threadId)
+      this.clearCapturedItemCleanupTimer(threadId)
+      return
+    }
+    this.scheduleCapturedItemCleanup(threadId, threadItems)
+  }
+
+  private cancelQueuedCapturedItemSanitization(captured: CapturedItem): void {
+    const taskIndex = this.capturedItemSanitizeQueue.findIndex((task) => task.captured === captured)
+    if (taskIndex < 0) return
+    const task = this.capturedItemSanitizeQueue.splice(taskIndex, 1)[0]
+    if (!task) return
+    if (captured.sanitizePromise === task.promise) captured.sanitizePromise = null
+    task.resolve()
+    this.signalCapturedItemSanitizeCapacity()
+  }
+
+  private evictCapturedThread(threadId: string): void {
+    const threadItems = this.capturedItemsByThreadId.get(threadId)
+    if (!threadItems) return
+    const estimatedBytes = Array.from(threadItems.values()).reduce((sum, item) => sum + item.estimatedBytes, 0)
+    for (const captured of threadItems.values()) this.cancelQueuedCapturedItemSanitization(captured)
+    threadItems.clear()
+    this.capturedItemsByThreadId.delete(threadId)
+    this.clearCapturedItemCleanupTimer(threadId)
+    this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - estimatedBytes)
+  }
+
+  private pruneCapturedItemsGlobally(): void {
+    while (this.capturedItemsByThreadId.size > CAPTURED_ITEM_MAX_THREADS
+      || this.capturedItemEstimatedBytesTotal > CAPTURED_ITEM_MAX_BYTES_TOTAL) {
+      const oldestThreadId = this.capturedItemsByThreadId.keys().next().value as string | undefined
+      if (!oldestThreadId) break
+      this.evictCapturedThread(oldestThreadId)
+    }
+  }
+
+  private clearCapturedItemState(): void {
+    this.nextNotificationGeneration += 1
+    for (const timer of this.capturedItemCleanupTimersByThreadId.values()) clearTimeout(timer)
+    this.capturedItemCleanupTimersByThreadId.clear()
+    for (const threadItems of this.capturedItemsByThreadId.values()) threadItems.clear()
+    this.capturedItemsByThreadId.clear()
+    this.capturedItemEstimatedBytesTotal = 0
+    for (const task of this.capturedItemSanitizeQueue.splice(0)) {
+      if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
+      task.resolve()
+    }
+    this.signalCapturedItemSanitizeCapacity()
+    this.notificationGenerationByThreadId.clear()
+  }
+
+  private isCapturedItemCurrent(captured: CapturedItem): boolean {
+    return this.capturedItemsByThreadId.get(captured.threadId)?.get(captured.id) === captured
+  }
+
+  private waitForCapturedItemSanitizeCapacity(): Promise<void> {
+    if (!this.capturedItemSanitizeCapacityPromise) {
+      this.capturedItemSanitizeCapacityPromise = new Promise<void>((resolve) => {
+        this.resolveCapturedItemSanitizeCapacity = resolve
+      })
+    }
+    return this.capturedItemSanitizeCapacityPromise
+  }
+
+  private signalCapturedItemSanitizeCapacity(): void {
+    const resolve = this.resolveCapturedItemSanitizeCapacity
+    this.capturedItemSanitizeCapacityPromise = null
+    this.resolveCapturedItemSanitizeCapacity = null
+    resolve?.()
+  }
+
+  private pumpCapturedItemSanitizeQueue(): void {
+    while (this.activeCapturedItemSanitizations < CAPTURED_ITEM_SANITIZE_CONCURRENCY) {
+      const task = this.capturedItemSanitizeQueue.shift()
+      if (!task) return
+      this.signalCapturedItemSanitizeCapacity()
+      this.activeCapturedItemSanitizations += 1
+      void (async () => {
+        if (!this.isCapturedItemCurrent(task.captured)) return
+        const sanitizedItems = await this.capturedItemSanitizer(task.captured.turnId, [task.captured.data])
+        if (!this.isCapturedItemCurrent(task.captured)) return
+        const sanitizedData = asRecord(sanitizedItems[0]) ?? task.captured.data
+        const isGeneratedImage = task.captured.type === 'imageGeneration'
+          || task.captured.type === 'image_generation'
+          || task.captured.type === 'imageView'
+        if (isGeneratedImage) {
+          const hasPayloadFields = Array.from(INLINE_GENERATED_IMAGE_PAYLOAD_FIELD_NAMES)
+            .some((fieldName) => Object.prototype.hasOwnProperty.call(sanitizedData, fieldName))
+          const hasRenderablePath = sanitizedData.type === 'imageView'
+            && Boolean(await resolveExistingLocalImagePath(sanitizedData.path))
+          if (hasPayloadFields || !hasRenderablePath) {
+            throw new Error('Generated image sanitization did not produce a payload-free renderable imageView')
+          }
+        }
+        task.captured.data = sanitizedData
+        task.captured.sanitized = true
+      })().catch((error) => {
+        if (!this.isCapturedItemCurrent(task.captured)) return
+        console.error(
+          `[codex-api] Failed to sanitize captured item ${task.captured.id} (${task.captured.type}) for turn ${task.captured.turnId}`,
+          error,
+        )
+      }).finally(() => {
+        if (task.captured.sanitizePromise === task.promise) task.captured.sanitizePromise = null
+        task.resolve()
+        this.activeCapturedItemSanitizations -= 1
+        this.signalCapturedItemSanitizeCapacity()
+        this.pumpCapturedItemSanitizeQueue()
+      })
+    }
+  }
+
+  private async ensureCapturedItemSanitized(captured: CapturedItem, waitForCapacity = true): Promise<void> {
+    if (captured.sanitized || !this.isCapturedItemCurrent(captured)) return
+    if (!captured.sanitizePromise) {
+      while (this.capturedItemSanitizeQueue.length >= CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT) {
+        if (!waitForCapacity) return
+        await this.waitForCapturedItemSanitizeCapacity()
+        if (captured.sanitized || !this.isCapturedItemCurrent(captured)) return
+        if (captured.sanitizePromise) break
+      }
+      if (captured.sanitizePromise) {
+        await captured.sanitizePromise
+        return
+      }
+      let resolveTask: (() => void) | undefined
+      const promise = new Promise<void>((resolve) => {
+        resolveTask = resolve
+      })
+      const task: CapturedItemSanitizeTask = {
+        captured,
+        promise,
+        resolve: () => resolveTask?.(),
+      }
+      captured.sanitizePromise = promise
+      this.capturedItemSanitizeQueue.push(task)
+      this.pumpCapturedItemSanitizeQueue()
+    }
+    await captured.sanitizePromise
+  }
+
+  async mergeItemsIntoTurns(threadId: string, turns: unknown[], appendMissingTurns = false): Promise<unknown[]> {
     const capturedMap = this.capturedItemsByThreadId.get(threadId)
     if (!capturedMap || capturedMap.size === 0) return turns
 
+    const materializedItemsById = new Map<string, Record<string, unknown>>()
+    for (const turn of turns) {
+      const turnRecord = asRecord(turn)
+      const items = Array.isArray(turnRecord?.items) ? turnRecord.items : []
+      for (const item of items) {
+        const itemRecord = asRecord(item)
+        const itemId = typeof itemRecord?.id === 'string' ? itemRecord.id : ''
+        if (itemId && itemRecord) materializedItemsById.set(itemId, itemRecord)
+      }
+    }
+    const captureEntries = Array.from(capturedMap.entries())
+    const materializationDecisions = new Array<{
+      itemId: string
+      captured: CapturedItem
+      shouldEvict: boolean
+    } | null>(captureEntries.length).fill(null)
+    const pathValidationCandidates: Array<{
+      index: number
+      itemId: string
+      captured: CapturedItem
+      path: string
+    }> = []
+    for (let index = 0; index < captureEntries.length; index += 1) {
+      const [itemId, captured] = captureEntries[index]
+      const materializedItem = materializedItemsById.get(itemId)
+      if (!materializedItem) continue
+      const isGeneratedImage = captured.type === 'imageGeneration'
+        || captured.type === 'image_generation'
+        || captured.type === 'imageView'
+      if (!isGeneratedImage) {
+        materializationDecisions[index] = { itemId, captured, shouldEvict: true }
+        continue
+      }
+      if (asNonEmptyString(materializedItem.type) !== 'imageView') continue
+      const materializedPath = asNonEmptyString(materializedItem.path)
+      if (!materializedPath) continue
+      const capturedPath = captured.sanitized && captured.data.type === 'imageView'
+        ? asNonEmptyString(captured.data.path)
+        : null
+      if (materializedPath === capturedPath) {
+        materializationDecisions[index] = { itemId, captured, shouldEvict: true }
+      } else {
+        pathValidationCandidates.push({ index, itemId, captured, path: materializedPath })
+      }
+    }
+    if (pathValidationCandidates.length > 0) {
+      const validated = await mapWithBoundedConcurrency(
+        pathValidationCandidates,
+        CAPTURED_ITEM_PATH_VALIDATION_CONCURRENCY,
+        async (candidate) => ({
+          ...candidate,
+          shouldEvict: Boolean(await resolveExistingLocalImagePath(candidate.path)),
+        }),
+      )
+      for (const decision of validated) materializationDecisions[decision.index] = decision
+    }
+    for (const decision of materializationDecisions) {
+      if (!decision) continue
+      const { itemId, captured, shouldEvict } = decision
+      if (shouldEvict && capturedMap.get(itemId) === captured) {
+        capturedMap.delete(itemId)
+        this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - captured.estimatedBytes)
+        this.cancelQueuedCapturedItemSanitization(captured)
+      }
+    }
+    if (capturedMap.size === 0) {
+      this.capturedItemsByThreadId.delete(threadId)
+      this.clearCapturedItemCleanupTimer(threadId)
+      return turns
+    }
+
+    const capturedSnapshot = await sanitizeCapturedItemsForMerge(
+      capturedMap,
+      (captured) => this.ensureCapturedItemSanitized(captured),
+    )
+
     const itemsByTurnId = new Map<string, CapturedItem[]>()
-    for (const captured of capturedMap.values()) {
+    for (const captured of capturedSnapshot) {
       let group = itemsByTurnId.get(captured.turnId)
       if (!group) {
         group = []
@@ -6225,29 +7447,46 @@ class AppServerProcess {
       group.push(captured)
     }
 
-    return turns.map((turn) => {
+    const mergedTurnIds = new Set<string>()
+    const mergedTurns = turns.map((turn) => {
       const turnRecord = asRecord(turn)
       if (!turnRecord) return turn
       const turnId = typeof turnRecord.id === 'string' ? turnRecord.id : ''
       if (!turnId) return turn
+      mergedTurnIds.add(turnId)
 
       const captured = itemsByTurnId.get(turnId)
       if (!captured || captured.length === 0) return turn
 
       const existingItems = Array.isArray(turnRecord.items) ? (turnRecord.items as Record<string, unknown>[]) : []
-      const existingIds = new Set(existingItems.map((it) => (typeof it.id === 'string' ? it.id : '')).filter(Boolean))
-
-      const newItems = captured
-        .filter((c) => !existingIds.has(c.id))
-        .map((c) => c.data)
-
-      if (newItems.length === 0) return turn
+      const capturedById = new Map(captured.map((item) => [item.id, item]))
+      const replacedIds = new Set<string>()
+      const mergedItems = existingItems.map((item) => {
+        const itemId = typeof item.id === 'string' ? item.id : ''
+        const replacement = itemId ? capturedById.get(itemId) : undefined
+        if (!replacement) return item
+        replacedIds.add(itemId)
+        return replacement.data
+      })
+      for (const item of captured) {
+        if (!replacedIds.has(item.id)) mergedItems.push(item.data)
+      }
 
       return {
         ...turnRecord,
-        items: [...existingItems, ...newItems],
+        items: mergedItems,
       }
     })
+    if (appendMissingTurns) {
+      for (const [turnId, captured] of itemsByTurnId) {
+        if (mergedTurnIds.has(turnId)) continue
+        mergedTurns.push({
+          id: turnId,
+          items: captured.map((item) => item.data),
+        })
+      }
+    }
+    return mergedTurns
   }
 
   private sendServerRequestReply(requestId: number, reply: ServerRequestReply): void {
@@ -6443,6 +7682,7 @@ class AppServerProcess {
   }
 
   dispose(): void {
+    this.clearCapturedItemState()
     if (!this.process) return
 
     const proc = this.process
@@ -6483,6 +7723,34 @@ class AppServerProcess {
     }, 1500)
     forceKillTimer.unref()
   }
+}
+
+export async function mergeCapturedItemsIntoThreadResult(
+  appServer: Pick<AppServerProcess, 'mergeItemsIntoTurns'>,
+  result: unknown,
+  appendMissingTurns = false,
+): Promise<unknown> {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const threadId = typeof thread?.id === 'string' ? thread.id : ''
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !threadId || !turns) return result
+
+  const mergedTurns = await appServer.mergeItemsIntoTurns(threadId, turns, appendMissingTurns)
+  if (mergedTurns === turns) return result
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: mergedTurns,
+    },
+  }
+}
+
+export function shouldAppendMissingCapturedTurns(method: string, params: unknown): boolean {
+  if (!THREAD_METHODS_WITH_TURNS.has(method)) return false
+  const requestParams = asRecord(params)
+  return !(method === 'thread/read' && requestParams?.includeTurns === false)
 }
 
 export class BackendQueueProcessor {
@@ -7478,25 +8746,31 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          }
 		          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
 		            const params = asRecord(body.params)
-		            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
-		            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
-		            if (snapshot) {
-		              setJson(res, 200, { result: snapshot })
-		              return
-		            }
+	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
+	            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
+	            if (snapshot) {
+	              const mergedSnapshot = await mergeCapturedItemsIntoThreadResult(
+	                appServer,
+	                snapshot,
+	                shouldAppendMissingCapturedTurns(body.method, body.params),
+	              )
+	              setJson(res, 200, { result: mergedSnapshot })
+	              return
+	            }
 		          }
           if (body.method === 'thread/read' && isThreadMaterializationPendingError(error)) {
             const params = asRecord(body.params)
             const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
             if (threadId) {
-              setJson(res, 200, {
-                result: {
-                  thread: {
-                    id: threadId,
-                    turns: [],
-                    status: { type: 'inProgress' },
-                  },
+              const pendingResult = await mergeCapturedItemsIntoThreadResult(appServer, {
+                thread: {
+                  id: threadId,
+                  turns: [],
+                  status: { type: 'inProgress' },
                 },
+              }, true)
+              setJson(res, 200, {
+                result: pendingResult,
               })
               return
             }
@@ -7511,16 +8785,30 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           ? mergeImportedThreadsIntoThreadListResult(errorMergedResult)
           : errorMergedResult
         const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, listMergedResult)
-        const result = THREAD_METHODS_WITH_TURNS.has(body.method)
+        let result = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
           : sanitizedResult
+
+        const resultRecordBeforeCaptureMerge = asRecord(result)
+        const resultThreadBeforeCaptureMerge = asRecord(resultRecordBeforeCaptureMerge?.thread)
+        const resultThreadId = typeof resultThreadBeforeCaptureMerge?.id === 'string'
+          ? resultThreadBeforeCaptureMerge.id
+          : ''
+        const resultNotificationGeneration = resultThreadId
+          ? appServer.getNotificationGeneration(resultThreadId)
+          : 0
+
+        if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
+          const appendMissingCapturedTurns = shouldAppendMissingCapturedTurns(body.method, body.params)
+          result = await mergeCapturedItemsIntoThreadResult(appServer, result, appendMissingCapturedTurns)
+        }
 
 	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
 	          const rpcRecord = asRecord(result)
 	          const rpcThread = asRecord(rpcRecord?.thread)
 	          const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
-          if (rpcThreadId) {
-            appServer.storeThreadReadSnapshot(rpcThreadId, result)
+          if (rpcThreadId && rpcThreadId === resultThreadId) {
+            appServer.storeThreadReadSnapshotIfCurrent(rpcThreadId, resultNotificationGeneration, result)
           }
         }
 
@@ -7577,7 +8865,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             },
           }
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', pagedResult)
-          const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
+          const skillMergedResult = await mergeSessionSkillInputsIntoThreadResult(sanitized)
+          const result = await mergeCapturedItemsIntoThreadResult(appServer, skillMergedResult)
 
           setJson(res, 200, {
             result,
@@ -7639,14 +8928,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
+          const notificationGeneration = appServer.getNotificationGeneration(threadId)
           const threadReadResult = mergeStreamTurnErrorsIntoThreadResult(appServer, await appServer.rpc('thread/read', {
             threadId,
             includeTurns: true,
           }))
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', threadReadResult)
-          appServer.storeThreadReadSnapshot(threadId, sanitized)
+          const mergedSanitized = await mergeCapturedItemsIntoThreadResult(appServer, sanitized)
 
-          const record = asRecord(sanitized)
+          const record = asRecord(mergedSanitized)
           const thread = asRecord(record?.thread)
           const rawTurns = Array.isArray(thread?.turns) ? thread.turns : []
 
@@ -7659,13 +8949,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             } catch { /* missing */ }
           }
 
-          const cached = appServer.getCachedLiveState(threadId, rawTurns.length, sessionSize)
+          const cached = appServer.getNotificationGeneration(threadId) === notificationGeneration
+            ? appServer.getCachedLiveState(threadId, rawTurns.length, sessionSize)
+            : null
           if (cached) {
             setJson(res, 200, cached)
             return
           }
 
-          let turns = appServer.mergeItemsIntoTurns(threadId, rawTurns)
+          let turns = rawTurns
 
           if (sessionPath && isAbsolute(sessionPath) && sessionSize > 0) {
             try {
@@ -7690,8 +8982,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }
 
           if (!isInProgress) {
-            appServer.cacheLiveState(threadId, responseData, rawTurns.length, sessionSize)
+            appServer.cacheLiveStateIfCurrent(
+              threadId,
+              notificationGeneration,
+              responseData,
+              rawTurns.length,
+              sessionSize,
+            )
           }
+
+          appServer.storeThreadReadSnapshotIfCurrent(threadId, notificationGeneration, mergedSanitized)
 
           setJson(res, 200, responseData)
         } catch (error) {
@@ -7711,7 +9011,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const record = asRecord(snapshot)
             const thread = asRecord(record?.thread)
             const rawTurns = Array.isArray(thread?.turns) ? thread.turns : []
-            const turns = appServer.mergeItemsIntoTurns(threadId, rawTurns)
+            const turns = await appServer.mergeItemsIntoTurns(threadId, rawTurns)
             setJson(res, 200, {
               threadId,
               conversationState: { turns },

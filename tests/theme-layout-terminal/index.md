@@ -12,6 +12,7 @@ Return to the [manual test index](../../tests.md).
 | [Feature: Dark theme for worktree runtime selector and Skills Hub](dark-theme-for-worktree-runtime-selector-and-skills-hub.md) |
 | [Feature: Dark theme states for runtime mode toggle](dark-theme-states-for-runtime-mode-toggle.md) |
 | [Feature: Revert PR #16 mobile viewport and chat scroll behavior changes](revert-pr-16-mobile-viewport-and-chat-scroll-behavior-changes.md) |
+| [Feature: Mobile viewport event coalescing](mobile-viewport-event-coalescing.md) |
 | [Feature: Revert Renat scrolling/input-layout behavior (without Fast mode changes)](revert-renat-scrolling-input-layout-behavior-without-fast-mode-changes.md) |
 | [Feature: Dark theme command rows in chat remain readable](dark-theme-command-rows-in-chat-remain-readable.md) |
 | [Feature: Home composer vertical alignment matches reference layout](home-composer-vertical-alignment-matches-reference-layout.md) |
