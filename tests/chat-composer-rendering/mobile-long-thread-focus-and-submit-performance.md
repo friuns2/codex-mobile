@@ -24,10 +24,11 @@
 - Expanded command output remains readable and scrollable, with the same light and dark theme styling.
 - The four retained screenshots show the tested conversation and composer at both required viewport sizes and themes.
 
-#### Latest Browser Evidence (2026-09-27)
+#### Latest Browser Evidence (2026-09-26 UTC / 2026-09-27 CST)
 
 - Tested URL: `http://127.0.0.1:5900/#/thread/01a0b451-366c-7e22-8515-f50cf0cb8202`.
-- At `375x812` and `768x1024` in both themes, the collapsed output nodes were absent, a 615,472-character output appeared after expansion and was removed after collapse, submission followed the latest message, and no browser long task was observed.
+- Chromium was throttled to 4× CPU. A `PerformanceObserver` recorded `longtask` entries around the focus, keyboard-resize, submit, and keyboard-close sequences. Across `375x812` and `768x1024` in both themes, keyboard opening took 149–162 ms, submission and keyboard closing took 167–216 ms, and the observer recorded zero long tasks for those actions.
+- In all four runs the collapsed output nodes were absent, a 615,472-character output appeared after expansion and was removed after collapse, and submission followed the latest message.
 - Local artifacts: `/home/mjzcng/local_ops/codex-mobile-mobile-performance/output/playwright/mobile-viewport-375x812-light.png`, `/home/mjzcng/local_ops/codex-mobile-mobile-performance/output/playwright/mobile-viewport-375x812-dark.png`, `/home/mjzcng/local_ops/codex-mobile-mobile-performance/output/playwright/mobile-viewport-768x1024-light.png`, and `/home/mjzcng/local_ops/codex-mobile-mobile-performance/output/playwright/mobile-viewport-768x1024-dark.png`.
 
 ![375x812 light](../../output/playwright/mobile-viewport-375x812-light.png)

@@ -35,7 +35,7 @@
 - Empty or materialization-pending `thread/read` recovery responses merge current captured images, including a synthetic pending turn when no materialized turn exists yet.
 - Generated images recover scalar `url` and `image_url` fallbacks plus string or object entries in `images`; concurrent reads share the same job even after waiting for capacity, and evicted generation entries cannot make stale responses current again.
 - Generated fallback recovery examines at most 32 candidates and 32 MiB of candidate text, accepts parameterized Base64 image data URLs, and strips unusable payloads from normal responses. Captured images are marked sanitized only after producing a payload-free `imageView` with a renderable path; failed cleanup is omitted and retried.
-- PNG checksum or decompression failures, header-only lossless WebP, and invalid GIF dimensions or LZW data do not mask a later complete fallback. An unavailable temporary media directory omits that image without rejecting the containing thread response.
+- PNG checksum or decompression failures, header-only lossless WebP, and invalid GIF dimensions or LZW data do not mask a later complete fallback. PNG inflation uses asynchronous zlib; GIF validation periodically yields the event loop; decode-and-persist work is globally limited to two active jobs and 32 queued jobs. An unavailable temporary media directory omits that image without rejecting the containing thread response.
 - Captured-item size estimation traverses at most 10,000 nodes without variadic array expansion; wider structures are treated as over-limit and are not retained.
 
 #### Rollback/Cleanup

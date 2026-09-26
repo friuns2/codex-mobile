@@ -12,7 +12,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
-import { inflateSync } from 'node:zlib'
+import { inflate } from 'node:zlib'
 import { handleAccountRoutes } from './accountRoutes.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
@@ -550,7 +550,19 @@ function computeCrc32(bytes: Uint8Array, start: number, end: number): number {
   return (crc ^ 0xffffffff) >>> 0
 }
 
-function isStructurallyCompletePng(bytes: Uint8Array): boolean {
+const MAX_INLINE_IMAGE_BYTES = 24 * 1024 * 1024
+const MAX_DECODED_IMAGE_BYTES = 64 * 1024 * 1024
+
+function inflateImageData(bytes: Buffer, maxOutputLength: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    inflate(bytes, { maxOutputLength }, (error, result) => {
+      if (error) reject(error)
+      else resolve(result)
+    })
+  })
+}
+
+async function isStructurallyCompletePng(bytes: Uint8Array): Promise<boolean> {
   if (inferImageMimeTypeFromHeader(bytes) !== 'image/png') return false
   let offset = 8
   let firstChunk = true
@@ -620,13 +632,16 @@ function isStructurallyCompletePng(bytes: Uint8Array): boolean {
         if (passWidth === 0 || rows === 0) continue
         const rowBytes = Math.ceil(passWidth * bitsPerPixel / 8)
         expectedBytes += rows * (rowBytes + 1)
-        if (!Number.isSafeInteger(expectedBytes) || expectedBytes > 64 * 1024 * 1024) return false
+        if (!Number.isSafeInteger(expectedBytes) || expectedBytes > MAX_DECODED_IMAGE_BYTES) return false
         passRows.push({ rows, rowBytes })
       }
       try {
-        const inflated = inflateSync(Buffer.concat(imageDataChunks.map((chunk) => Buffer.from(chunk))), {
-          maxOutputLength: 64 * 1024 * 1024,
-        })
+        const compressedLength = imageDataChunks.reduce((total, chunk) => total + chunk.length, 0)
+        if (compressedLength <= 0 || compressedLength > MAX_INLINE_IMAGE_BYTES) return false
+        const inflated = await inflateImageData(
+          Buffer.concat(imageDataChunks, compressedLength),
+          Math.min(MAX_DECODED_IMAGE_BYTES, expectedBytes + 1),
+        )
         if (inflated.length !== expectedBytes) return false
         let inflatedOffset = 0
         for (const pass of passRows) {
@@ -891,7 +906,7 @@ function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
   return offset === bytes.length && hasFtyp && hasMeta && hasMediaData
 }
 
-function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
+async function isStructurallyCompleteGif(bytes: Uint8Array): Promise<boolean> {
   if (inferImageMimeTypeFromHeader(bytes) !== 'image/gif' || bytes.length < 14) return false
   const logicalWidth = readUint16LittleEndian(bytes, 6)
   const logicalHeight = readUint16LittleEndian(bytes, 8)
@@ -911,6 +926,7 @@ function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
       offset += 1
       if (blockLength === 0) {
         if (!collect) return new Uint8Array()
+        if (totalLength > MAX_INLINE_IMAGE_BYTES) return null
         const combined = new Uint8Array(totalLength)
         let writeOffset = 0
         for (const chunk of chunks) {
@@ -923,13 +939,23 @@ function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
       if (collect) {
         chunks.push(bytes.subarray(offset, offset + blockLength))
         totalLength += blockLength
+        if (totalLength > MAX_INLINE_IMAGE_BYTES) return null
       }
       offset += blockLength
     }
     return null
   }
-  const hasCompleteLzwImage = (data: Uint8Array, minimumCodeSize: number, pixelCount: number): boolean => {
-    if (minimumCodeSize < 2 || minimumCodeSize > 8 || data.length === 0 || pixelCount <= 0) return false
+  const hasCompleteLzwImage = async (
+    data: Uint8Array,
+    minimumCodeSize: number,
+    pixelCount: number,
+  ): Promise<boolean> => {
+    if (minimumCodeSize < 2
+      || minimumCodeSize > 8
+      || data.length === 0
+      || data.length > MAX_INLINE_IMAGE_BYTES
+      || pixelCount <= 0
+      || pixelCount > MAX_DECODED_IMAGE_BYTES) return false
     const clearCode = 1 << minimumCodeSize
     const endCode = clearCode + 1
     const entryLengths = new Uint32Array(4096)
@@ -938,6 +964,7 @@ function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
     let previousCode = -1
     let bitOffset = 0
     let outputPixels = 0
+    let codesSinceYield = 0
     const resetDictionary = (): void => {
       entryLengths.fill(0)
       for (let index = 0; index < clearCode; index += 1) entryLengths[index] = 1
@@ -947,6 +974,11 @@ function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
     }
     resetDictionary()
     while (bitOffset + codeSize <= data.length * 8) {
+      codesSinceYield += 1
+      if (codesSinceYield >= 8192) {
+        codesSinceYield = 0
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
       let code = 0
       for (let bit = 0; bit < codeSize; bit += 1) {
         code |= ((data[(bitOffset + bit) >>> 3] >>> ((bitOffset + bit) & 7)) & 1) << bit
@@ -995,18 +1027,18 @@ function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
     const minimumCodeSize = bytes[offset]
     offset += 1
     const imageData = readSubBlocks(true)
-    if (!imageData || !hasCompleteLzwImage(imageData, minimumCodeSize, width * height)) return false
+    if (!imageData || !await hasCompleteLzwImage(imageData, minimumCodeSize, width * height)) return false
     hasImageData = true
   }
   return false
 }
 
-function inferCompleteImageMimeTypeFromBytes(bytes: Uint8Array): string | null {
+async function inferCompleteImageMimeTypeFromBytes(bytes: Uint8Array): Promise<string | null> {
   const mimeType = inferImageMimeTypeFromHeader(bytes)
-  if (mimeType === 'image/png') return isStructurallyCompletePng(bytes) ? mimeType : null
+  if (mimeType === 'image/png') return await isStructurallyCompletePng(bytes) ? mimeType : null
   if (mimeType === 'image/jpeg') return isStructurallyCompleteJpeg(bytes) ? mimeType : null
   if (mimeType === 'image/webp') return isStructurallyCompleteWebp(bytes) ? mimeType : null
-  if (mimeType === 'image/gif') return isStructurallyCompleteGif(bytes) ? mimeType : null
+  if (mimeType === 'image/gif') return await isStructurallyCompleteGif(bytes) ? mimeType : null
   if (mimeType === 'image/bmp') return isStructurallyCompleteBmp(bytes) ? mimeType : null
   if (mimeType === 'image/avif') return isStructurallyCompleteAvif(bytes) ? mimeType : null
   return null
@@ -1068,10 +1100,46 @@ function toAttachmentLinkTarget(block: Record<string, unknown>, fallback: string
   return `attachment://${candidate}`
 }
 
-export async function persistInlineDataUrlToLocalFile(
+const INLINE_MEDIA_PERSIST_CONCURRENCY = 2
+const INLINE_MEDIA_PERSIST_QUEUE_LIMIT = 32
+type InlineMediaPersistenceTask = {
+  run: () => Promise<string | null>
+  resolve: (value: string | null) => void
+  reject: (error: unknown) => void
+}
+const inlineMediaPersistenceQueue: InlineMediaPersistenceTask[] = []
+const inlineMediaPersistenceCapacityWaiters: Array<() => void> = []
+let activeInlineMediaPersistenceTasks = 0
+
+function drainInlineMediaPersistenceQueue(): void {
+  while (activeInlineMediaPersistenceTasks < INLINE_MEDIA_PERSIST_CONCURRENCY) {
+    const task = inlineMediaPersistenceQueue.shift()
+    if (!task) return
+    inlineMediaPersistenceCapacityWaiters.shift()?.()
+    activeInlineMediaPersistenceTasks += 1
+    void task.run()
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        activeInlineMediaPersistenceTasks -= 1
+        drainInlineMediaPersistenceQueue()
+      })
+  }
+}
+
+async function scheduleInlineMediaPersistence(run: () => Promise<string | null>): Promise<string | null> {
+  while (inlineMediaPersistenceQueue.length >= INLINE_MEDIA_PERSIST_QUEUE_LIMIT) {
+    await new Promise<void>((resolve) => inlineMediaPersistenceCapacityWaiters.push(resolve))
+  }
+  return new Promise<string | null>((resolve, reject) => {
+    inlineMediaPersistenceQueue.push({ run, resolve, reject })
+    drainInlineMediaPersistenceQueue()
+  })
+}
+
+async function persistInlineDataUrlToLocalFileNow(
   dataUrl: string,
   baseName: string,
-  mediaDir = join(tmpdir(), 'codex-web-inline-media'),
+  mediaDir: string,
 ): Promise<string | null> {
   const trimmed = dataUrl.trim()
   if (!trimmed.toLowerCase().startsWith('data:')) return null
@@ -1094,10 +1162,10 @@ export async function persistInlineDataUrlToLocalFile(
   } catch {
     return null
   }
-  if (bytes.length === 0) return null
+  if (bytes.length === 0 || bytes.length > MAX_INLINE_IMAGE_BYTES) return null
 
   const hash = createHash('sha1').update(bytes).digest('hex')
-  const inferredImageMimeType = inferCompleteImageMimeTypeFromBytes(bytes)
+  const inferredImageMimeType = await inferCompleteImageMimeTypeFromBytes(bytes)
   if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml' && !inferredImageMimeType) return null
   const persistedMimeType = inferredImageMimeType ?? mimeType
   const ext = extensionFromMimeType(persistedMimeType)
@@ -1115,6 +1183,16 @@ export async function persistInlineDataUrlToLocalFile(
     console.error(`[codex-api] Failed to persist inline image ${baseName}`, error)
     return null
   }
+}
+
+export async function persistInlineDataUrlToLocalFile(
+  dataUrl: string,
+  baseName: string,
+  mediaDir = join(tmpdir(), 'codex-web-inline-media'),
+): Promise<string | null> {
+  return scheduleInlineMediaPersistence(
+    () => persistInlineDataUrlToLocalFileNow(dataUrl, baseName, mediaDir),
+  )
 }
 
 function toLocalImageProxyUrl(path: string): string {
