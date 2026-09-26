@@ -71,11 +71,11 @@
                     class="cmd-output-wrap"
                     :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                   >
-                    <div class="cmd-output-inner">
+                    <div v-if="commandOutputText(cmd) !== null" class="cmd-output-inner">
                       <pre
                         class="cmd-output"
                         :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                        v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
+                        v-text="commandOutputText(cmd)"
                       ></pre>
                     </div>
                   </div>
@@ -103,11 +103,11 @@
                 class="cmd-output-wrap"
                 :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
               >
-                <div class="cmd-output-inner">
+                <div v-if="commandOutputText(message) !== null" class="cmd-output-inner">
                   <pre
                     class="cmd-output"
                     :class="{ 'cmd-output-condensed': isCommandOutputCondensed(message) }"
-                    v-text="message.commandExecution?.aggregatedOutput || '(no output)'"
+                    v-text="commandOutputText(message)"
                   ></pre>
                 </div>
               </div>
@@ -300,11 +300,11 @@
                         class="cmd-output-wrap"
                         :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                       >
-                        <div class="cmd-output-inner">
+                        <div v-if="commandOutputText(cmd) !== null" class="cmd-output-inner">
                           <pre
                             class="cmd-output"
                             :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                            v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
+                            v-text="commandOutputText(cmd)"
                           ></pre>
                         </div>
                       </div>
@@ -923,6 +923,7 @@ import { updateThreadFileChanges } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { copyTextToClipboard, copyTextWithSelectionFallback } from '../../utils/clipboard'
+import { resolveCommandOutputText } from '../../utils/commandOutputRendering'
 
 import IconTablerArrowBackUp from '../icons/IconTablerArrowBackUp.vue'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -1154,6 +1155,10 @@ function isCommandCompact(message: UiMessage): boolean {
 
 function isCommandOutputCondensed(message: UiMessage): boolean {
   return isCommandMessage(message) && (isLiveTurnRuntime.value || message.commandExecution?.status === 'inProgress')
+}
+
+function commandOutputText(message: UiMessage): string | null {
+  return resolveCommandOutputText(isCommandExpanded(message), message.commandExecution?.aggregatedOutput)
 }
 
 function toggleCommandExpand(message: UiMessage): void {
