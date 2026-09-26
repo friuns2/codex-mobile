@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { deflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
@@ -47,6 +48,38 @@ function localImagePathFromProxyUrl(value: string): string {
   const imagePath = parsed.searchParams.get('path')
   expect(imagePath).toBeTruthy()
   return imagePath ?? ''
+}
+
+function pngChunk(type: string, payload: Buffer): Buffer {
+  const typeBytes = Buffer.from(type, 'ascii')
+  const crcBytes = Buffer.concat([typeBytes, payload])
+  let crc = 0xffffffff
+  for (const byte of crcBytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 1) !== 0 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1
+    }
+  }
+  const header = Buffer.alloc(8)
+  header.writeUInt32BE(payload.length, 0)
+  typeBytes.copy(header, 4)
+  const checksum = Buffer.alloc(4)
+  checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0)
+  return Buffer.concat([header, payload, checksum])
+}
+
+function createCompressibleGrayscalePngBase64(width: number, height: number): string {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8
+  const rawRows = Buffer.alloc(height * (width + 1))
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(rawRows)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]).toString('base64')
 }
 
 describe('thread inline media sanitization', () => {
@@ -1189,6 +1222,22 @@ describe('thread inline media sanitization', () => {
     } finally {
       await rm(blockingPath, { force: true })
     }
+  })
+
+  it('yields the event loop while validating a large compressed PNG', async () => {
+    const largePngDataUrl = `data:image/png;base64,${createCompressibleGrayscalePngBase64(4096, 4096)}`
+    let persistenceCompleted = false
+    const persistence = persistInlineDataUrlToLocalFile(largePngDataUrl, 'async-validation')
+      .then((path) => {
+        persistenceCompleted = true
+        return path
+      })
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(persistenceCompleted).toBe(false)
+    const persistedPath = await persistence
+    expect(persistedPath).toMatch(/\.png$/u)
+    expect(existsSync(persistedPath as string)).toBe(true)
   })
 
   it('leaves non-image result strings untouched', async () => {
