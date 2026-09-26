@@ -30,6 +30,7 @@ Return to the [manual test index](../../tests.md).
 | [Feature: Markdown link with backticked label renders as file link](markdown-link-with-backticked-label-renders-as-file-link.md) |
 | [Feature: Backticked bare filenames render as file links](backticked-bare-filenames-render-as-file-links.md) |
 | [Feature: Lazy message rendering (windowed conversation)](lazy-message-rendering-windowed-conversation.md) |
+| [Feature: Mobile long-thread focus and submit performance](mobile-long-thread-focus-and-submit-performance.md) |
 | [Assistant generated image rendering](assistant-generated-image-rendering.md) |
 | [Stop button activates promptly for new threads](stop-button-activates-promptly-for-new-threads.md) |
 | [New-thread plan mode persists and toggles correctly](new-thread-plan-mode-persists-and-toggles-correctly.md) |

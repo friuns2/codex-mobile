@@ -1260,6 +1260,7 @@ import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
 import { createFrameCoalescer } from './utils/frameCoalescer'
+import { jumpConversationToLatestOnMobile } from './utils/mobileConversationJump'
 import { resolveLayoutViewportHeight, resolveVirtualKeyboardRotationHold } from './utils/viewportState'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
@@ -3568,7 +3569,7 @@ async function syncAfterMobileResume(): Promise<void> {
 
 function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fileAttachments: Array<{ label: string; path: string; fsPath: string }>; skills: Array<{ name: string; path: string }>; mode: 'steer' | 'queue' }): void {
   const text = payload.text
-  scheduleMobileConversationJumpToLatest()
+  jumpMobileConversationToLatest()
   const editingState = editingQueuedMessageState.value
   const queueInsertIndex =
     payload.mode === 'queue'
@@ -3609,21 +3610,9 @@ function onEditQueuedMessage(messageId: string): void {
 }
 
 
-function scheduleMobileConversationJumpToLatest(): void {
-  if (!isMobile.value || isHomeRoute.value) return
-
-  const jumpToLatest = () => {
+function jumpMobileConversationToLatest(): void {
+  jumpConversationToLatestOnMobile(isMobile.value, isHomeRoute.value, () => {
     threadConversationRef.value?.jumpToLatest()
-  }
-
-  jumpToLatest()
-  void nextTick(() => {
-    jumpToLatest()
-    if (typeof window === 'undefined') return
-    window.requestAnimationFrame(() => {
-      jumpToLatest()
-      window.requestAnimationFrame(jumpToLatest)
-    })
   })
 }
 
@@ -4348,7 +4337,7 @@ function onRollback(payload: { turnId: string }): void {
 function onImplementPlan(payload: { turnId: string }): void {
   if (isHomeRoute.value || !selectedThreadId.value) return
   setSelectedCollaborationMode('default')
-  scheduleMobileConversationJumpToLatest()
+  jumpMobileConversationToLatest()
   void sendMessageToSelectedThread('Implement', [], [], 'steer', [], undefined, 'default')
 }
 
@@ -5062,7 +5051,7 @@ async function submitFirstMessageForNewThread(
     const threadId = await sendMessageToNewThread(text, targetCwd, imageUrls, skills, fileAttachments)
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
-    scheduleMobileConversationJumpToLatest()
+    jumpMobileConversationToLatest()
   } catch {
     // Error is already reflected in state.
   }
@@ -5097,7 +5086,7 @@ async function onTryDirectoryItem(payload: DirectoryTryItemPayload): Promise<voi
     const threadId = await sendMessageToNewThread(text, targetCwd, [], skills, [])
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
-    scheduleMobileConversationJumpToLatest()
+    jumpMobileConversationToLatest()
   } catch {
     // Error is already reflected in shared thread state.
   } finally {
