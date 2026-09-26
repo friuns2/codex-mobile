@@ -458,6 +458,15 @@ function readUint32LittleEndian(bytes: Uint8Array, offset: number): number {
     + bytes[offset + 3] * 0x1000000
 }
 
+function readUint16LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] + bytes[offset + 1] * 0x100
+}
+
+function readInt32LittleEndian(bytes: Uint8Array, offset: number): number {
+  const unsigned = readUint32LittleEndian(bytes, offset)
+  return unsigned > 0x7fffffff ? unsigned - 0x100000000 : unsigned
+}
+
 function matchesAscii(bytes: Uint8Array, offset: number, value: string): boolean {
   if (offset < 0 || offset + value.length > bytes.length) return false
   for (let index = 0; index < value.length; index += 1) {
@@ -609,9 +618,11 @@ function isStructurallyCompleteJpeg(bytes: Uint8Array): boolean {
   let offset = 2
   let hasStartOfFrame = false
   let hasStartOfScan = false
+  let scanDataBytes = 0
   while (offset < bytes.length) {
     if (bytes[offset] !== 0xff) {
       if (!hasStartOfScan) return false
+      scanDataBytes += 1
       offset += 1
       continue
     }
@@ -619,8 +630,15 @@ function isStructurallyCompleteJpeg(bytes: Uint8Array): boolean {
     if (offset >= bytes.length) return false
     const marker = bytes[offset]
     offset += 1
-    if (marker === 0xd9) return hasStartOfFrame && hasStartOfScan && offset === bytes.length
-    if (marker === 0x00 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
+    if (marker === 0xd9) {
+      return hasStartOfFrame && hasStartOfScan && scanDataBytes > 0 && offset === bytes.length
+    }
+    if (marker === 0x00) {
+      if (!hasStartOfScan) return false
+      scanDataBytes += 1
+      continue
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
     if (offset + 2 > bytes.length) return false
     const segmentLength = bytes[offset] * 0x100 + bytes[offset + 1]
     if (segmentLength < 2 || offset + segmentLength > bytes.length) return false
@@ -628,9 +646,25 @@ function isStructurallyCompleteJpeg(bytes: Uint8Array): boolean {
       || (marker >= 0xc5 && marker <= 0xc7)
       || (marker >= 0xc9 && marker <= 0xcb)
       || (marker >= 0xcd && marker <= 0xcf)) {
+      if (segmentLength < 11) return false
+      const componentCount = bytes[offset + 7]
+      const precision = bytes[offset + 2]
+      const height = bytes[offset + 3] * 0x100 + bytes[offset + 4]
+      const width = bytes[offset + 5] * 0x100 + bytes[offset + 6]
+      if (precision === 0
+        || precision > 16
+        || componentCount === 0
+        || segmentLength !== 8 + componentCount * 3
+        || width === 0
+        || height === 0) return false
       hasStartOfFrame = true
     }
-    if (marker === 0xda) hasStartOfScan = true
+    if (marker === 0xda) {
+      if (!hasStartOfFrame || segmentLength < 8) return false
+      const componentCount = bytes[offset + 2]
+      if (componentCount === 0 || componentCount > 4 || segmentLength !== 6 + componentCount * 2) return false
+      hasStartOfScan = true
+    }
     offset += segmentLength
   }
   return false
@@ -641,12 +675,49 @@ function isStructurallyCompleteBmp(bytes: Uint8Array): boolean {
   const declaredLength = readUint32LittleEndian(bytes, 2)
   const pixelOffset = readUint32LittleEndian(bytes, 10)
   const dibHeaderLength = readUint32LittleEndian(bytes, 14)
-  return declaredLength === bytes.length
-    && pixelOffset >= 14 + dibHeaderLength
-    && pixelOffset < bytes.length
-    && dibHeaderLength >= 12
-    && 14 + dibHeaderLength <= bytes.length
-    && bytes.length - pixelOffset > 0
+  if (declaredLength !== bytes.length || (dibHeaderLength !== 12 && dibHeaderLength < 40)) return false
+  if (14 + dibHeaderLength > bytes.length) return false
+
+  let width: number
+  let height: number
+  let planes: number
+  let bitsPerPixel: number
+  let compression = 0
+  let declaredImageBytes = 0
+  let minimumPixelOffset = 14 + dibHeaderLength
+  if (dibHeaderLength === 12) {
+    width = readUint16LittleEndian(bytes, 18)
+    height = readUint16LittleEndian(bytes, 20)
+    planes = readUint16LittleEndian(bytes, 22)
+    bitsPerPixel = readUint16LittleEndian(bytes, 24)
+    if (bitsPerPixel <= 8) minimumPixelOffset += 3 * 2 ** bitsPerPixel
+  } else {
+    width = readInt32LittleEndian(bytes, 18)
+    height = readInt32LittleEndian(bytes, 22)
+    planes = readUint16LittleEndian(bytes, 26)
+    bitsPerPixel = readUint16LittleEndian(bytes, 28)
+    compression = readUint32LittleEndian(bytes, 30)
+    declaredImageBytes = readUint32LittleEndian(bytes, 34)
+    const maximumPaletteEntries = bitsPerPixel <= 8 ? 2 ** bitsPerPixel : 0
+    const colorsUsed = readUint32LittleEndian(bytes, 46)
+    if (colorsUsed > maximumPaletteEntries && maximumPaletteEntries > 0) return false
+    minimumPixelOffset += 4 * (colorsUsed || maximumPaletteEntries)
+    if (dibHeaderLength === 40 && compression === 3) minimumPixelOffset += 12
+    if (dibHeaderLength === 40 && compression === 6) minimumPixelOffset += 16
+  }
+  if (width <= 0 || height === 0 || planes !== 1) return false
+  if (![1, 4, 8, 16, 24, 32].includes(bitsPerPixel)) return false
+  if (compression !== 0 && !((compression === 3 || compression === 6) && (bitsPerPixel === 16 || bitsPerPixel === 32))) {
+    return false
+  }
+  if (pixelOffset < minimumPixelOffset || pixelOffset >= bytes.length) return false
+  const absoluteHeight = Math.abs(height)
+  const rowBits = width * bitsPerPixel
+  const rowStride = Math.ceil(rowBits / 32) * 4
+  const requiredImageBytes = rowStride * absoluteHeight
+  if (!Number.isSafeInteger(requiredImageBytes) || requiredImageBytes <= 0) return false
+  if (declaredImageBytes > 0 && declaredImageBytes < requiredImageBytes) return false
+  return pixelOffset + requiredImageBytes <= bytes.length
 }
 
 function readIsoBox(
@@ -6336,6 +6407,7 @@ const CAPTURED_ITEM_MAX_THREADS = 100
 const CAPTURED_ITEM_MAX_BYTES_TOTAL = 128 * 1024 * 1024
 const CAPTURED_ITEM_TTL_MS = 5 * 60 * 1000
 const CAPTURED_ITEM_SANITIZE_CONCURRENCY = 2
+const CAPTURED_ITEM_PATH_VALIDATION_CONCURRENCY = 4
 const CAPTURED_ITEM_SANITIZE_QUEUE_LIMIT = 32
 const NOTIFICATION_GENERATION_THREAD_LIMIT = 1000
 
@@ -6415,6 +6487,28 @@ export async function sanitizeCapturedItemsForMerge<T extends { id: string; sani
     () => sanitizeNext(),
   ))
   return snapshot.filter((captured) => captured.sanitized && capturedMap.get(captured.id) === captured)
+}
+
+async function mapWithBoundedConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapValue: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let nextIndex = 0
+  const mapNext = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const value = values[index]
+      if (value !== undefined) results[index] = await mapValue(value)
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    () => mapNext(),
+  ))
+  return results
 }
 
 const MERGEABLE_ITEM_TYPES = new Set([
@@ -7022,17 +7116,56 @@ export class AppServerProcess {
         if (itemId && itemRecord) materializedItemsById.set(itemId, itemRecord)
       }
     }
-    for (const [itemId, captured] of capturedMap) {
+    const captureEntries = Array.from(capturedMap.entries())
+    const materializationDecisions = new Array<{
+      itemId: string
+      captured: CapturedItem
+      shouldEvict: boolean
+    } | null>(captureEntries.length).fill(null)
+    const pathValidationCandidates: Array<{
+      index: number
+      itemId: string
+      captured: CapturedItem
+      path: string
+    }> = []
+    for (let index = 0; index < captureEntries.length; index += 1) {
+      const [itemId, captured] = captureEntries[index]
       const materializedItem = materializedItemsById.get(itemId)
       if (!materializedItem) continue
       const isGeneratedImage = captured.type === 'imageGeneration'
         || captured.type === 'image_generation'
         || captured.type === 'imageView'
-      const materializedType = asNonEmptyString(materializedItem.type) ?? ''
-      const hasRenderableMaterializedImage = materializedType === 'imageView'
-        && Boolean(await resolveExistingLocalImagePath(materializedItem.path))
-      if (!isGeneratedImage || hasRenderableMaterializedImage) {
-        if (capturedMap.get(itemId) !== captured) continue
+      if (!isGeneratedImage) {
+        materializationDecisions[index] = { itemId, captured, shouldEvict: true }
+        continue
+      }
+      if (asNonEmptyString(materializedItem.type) !== 'imageView') continue
+      const materializedPath = asNonEmptyString(materializedItem.path)
+      if (!materializedPath) continue
+      const capturedPath = captured.sanitized && captured.data.type === 'imageView'
+        ? asNonEmptyString(captured.data.path)
+        : null
+      if (materializedPath === capturedPath) {
+        materializationDecisions[index] = { itemId, captured, shouldEvict: true }
+      } else {
+        pathValidationCandidates.push({ index, itemId, captured, path: materializedPath })
+      }
+    }
+    if (pathValidationCandidates.length > 0) {
+      const validated = await mapWithBoundedConcurrency(
+        pathValidationCandidates,
+        CAPTURED_ITEM_PATH_VALIDATION_CONCURRENCY,
+        async (candidate) => ({
+          ...candidate,
+          shouldEvict: Boolean(await resolveExistingLocalImagePath(candidate.path)),
+        }),
+      )
+      for (const decision of validated) materializationDecisions[decision.index] = decision
+    }
+    for (const decision of materializationDecisions) {
+      if (!decision) continue
+      const { itemId, captured, shouldEvict } = decision
+      if (shouldEvict && capturedMap.get(itemId) === captured) {
         capturedMap.delete(itemId)
         this.capturedItemEstimatedBytesTotal = Math.max(0, this.capturedItemEstimatedBytesTotal - captured.estimatedBytes)
         this.cancelQueuedCapturedItemSanitization(captured)
