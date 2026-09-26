@@ -11,6 +11,7 @@ import {
   mergeCapturedItemsIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
+  persistInlineDataUrlToLocalFile,
   sanitizeCapturedItemsForMerge,
   sanitizeThreadTurnsInlinePayloads,
   sanitizeThreadItemsForTurn,
@@ -18,16 +19,19 @@ import {
   toAutomationApiRecord,
 } from './codexAppServerBridge'
 
-const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
 const pngDataUrl = `data:image/png;base64,${pngBase64}`
-const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
+const pngWithInvalidCrcBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBADs='
+const gifWithZeroWidthBase64 = 'R0lGODlhAAABAIAAAAAAAP///ywAAAAAAQABAAACAkQBADs='
 const jpegBase64 = '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATAABAQAAAAAAAAAAAAAAAAAAAAYBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAAgACAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiwBRf3//2Q=='
 const jpegWithoutScanDataBase64 = '/9j/wAALCAABAAEBAREA/9oACAEBAAA/AP/Z'
 const webpBase64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA='
 const avifBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAALG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMbWRhdAECAwQ='
 const avifIdatBase64 = 'AAAAGGZ0eXBhdmlmAAAAAGF2aWZtaWYxAAAAOG1ldGEAAAAAAAAACHBpdG0AAAAIaWxvYwAAAAhpaW5mAAAACGlwcnAAAAAMaWRhdAECAwQ='
 const webpExtendedHeaderOnlyBase64 = 'UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAAAAAAAAA'
-const animatedWebpContainerBase64 = 'UklGRk4AAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GIgAAAAAAAAAAAAAAAAAAAAAAAABWUDggCgAAABAAAJ0BKgEAAQA='
+const webpLosslessHeaderOnlyBase64 = 'UklGRhIAAABXRUJQVlA4TAUAAAAvAAAAAAA='
+const animatedWebpContainerBase64 = 'UklGRsoAAABXRUJQVlA4WAoAAAASAAAAAQAAAQAAQU5JTQYAAAD/////AABBTk1GSgAAAAAAAAAAAAEAAAEAAPQBAABWUDggMgAAALABAJ0BKgIAAgACADQlmAJ0AQ72nkAAzj91oWJPVVOq5fyNPKxhNJOj+Zvwo+Tr/AAAQU5NRkwAAAAAAAAAAAABAAABAAD0AQAAVlA4IDQAAACwAQCdASoCAAIAAgA0JZACdAEO+KbQAP7Pgfk/BDpqiY0OGj6I7XFzZEUfo/7v/Ul7AAAA'
 const malformedWebpRasterBase64 = 'UklGRg4AAABXRUJQVlA4IAEAAAAAAA=='
 const bmpBase64 = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9AAD9AAAAAP0AAP0AAA=='
 const truncatedBmpBase64 = 'Qk04AAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
@@ -339,7 +343,9 @@ describe('thread inline media sanitization', () => {
 
     const merged = await mergeCapturedItemsIntoThreadResult(appServer, {
       thread: { id: 'thread-pending', turns: [], status: { type: 'inProgress' } },
-    }, true) as { thread: { turns: Array<{ id: string; items: Array<Record<string, unknown>> }> } }
+    }, shouldAppendMissingCapturedTurns('thread/read', { includeTurns: true })) as {
+      thread: { turns: Array<{ id: string; items: Array<Record<string, unknown>> }> }
+    }
 
     expect(merged.thread.turns).toHaveLength(1)
     expect(merged.thread.turns[0].id).toBe('turn-pending')
@@ -996,6 +1002,32 @@ describe('thread inline media sanitization', () => {
     expect(imageView).not.toHaveProperty('b64_json')
   })
 
+  it.each([
+    ['PNG with a bad chunk checksum', pngWithInvalidCrcBase64],
+    ['lossless WebP with only its five-byte header', webpLosslessHeaderOnlyBase64],
+    ['GIF with a zero-width logical screen', gifWithZeroWidthBase64],
+  ])('skips a %s before a complete fallback', async (_description, invalidImage) => {
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-structural-fallback',
+          items: [{
+            id: 'generated-structural-fallback',
+            type: 'imageGeneration',
+            result: invalidImage,
+            b64_json: pngBase64,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+
+    const imageView = result.thread.turns[0].items[0]
+    expect(imageView.path).toMatch(/\.png$/u)
+    expect(existsSync(imageView.path as string)).toBe(true)
+    expect(imageView).not.toHaveProperty('result')
+    expect(imageView).not.toHaveProperty('b64_json')
+  })
+
   it('accepts an animated WebP whose raster chunk is nested in a frame', async () => {
     const [imageView] = await sanitizeThreadItemsForTurn('turn-animated', [{
       id: 'generated-animated',
@@ -1136,6 +1168,26 @@ describe('thread inline media sanitization', () => {
       expect(imageView).not.toHaveProperty('result')
     } finally {
       await rm(unsupportedPath, { force: true })
+    }
+  })
+
+  it('returns null instead of rejecting when the inline media directory cannot be created', async () => {
+    const blockingPath = join(tmpdir(), `codex-inline-media-blocker-${randomUUID()}`)
+    await writeFile(blockingPath, 'file blocks child directory creation')
+    const logSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      await expect(persistInlineDataUrlToLocalFile(
+        pngDataUrl,
+        'write-failure',
+        join(blockingPath, 'media'),
+      )).resolves.toBeNull()
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to persist inline image write-failure'),
+        expect.anything(),
+      )
+    } finally {
+      await rm(blockingPath, { force: true })
     }
   })
 

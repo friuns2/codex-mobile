@@ -12,6 +12,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
+import { inflateSync } from 'node:zlib'
 import WebSocket, { type RawData } from 'ws'
 import { handleAccountRoutes } from './accountRoutes.js'
 import { buildAppServerArgs, resolveAppServerRuntimeConfig } from './appServerRuntimeConfig.js'
@@ -626,20 +627,109 @@ function inferImageMimeTypeFromHeader(bytes: Uint8Array): string | null {
   return null
 }
 
+const PNG_CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
+  let crc = value
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) !== 0 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1
+  return crc >>> 0
+})
+
+function computeCrc32(bytes: Uint8Array, start: number, end: number): number {
+  let crc = 0xffffffff
+  for (let offset = start; offset < end; offset += 1) {
+    crc = PNG_CRC32_TABLE[(crc ^ bytes[offset]) & 0xff] ^ (crc >>> 8)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
 function isStructurallyCompletePng(bytes: Uint8Array): boolean {
   if (inferImageMimeTypeFromHeader(bytes) !== 'image/png') return false
   let offset = 8
   let firstChunk = true
+  let width = 0
+  let height = 0
+  let bitsPerPixel = 0
+  let colorType = -1
+  let interlaceMethod = 0
+  let hasPalette = false
   let hasImageData = false
+  let imageDataEnded = false
+  const imageDataChunks: Uint8Array[] = []
   while (offset + 12 <= bytes.length) {
     const payloadSize = readUint32BigEndian(bytes, offset)
     const chunkEnd = offset + 12 + payloadSize
     if (!Number.isSafeInteger(chunkEnd) || chunkEnd > bytes.length) return false
     const typeOffset = offset + 4
-    if (firstChunk && (!matchesAscii(bytes, typeOffset, 'IHDR') || payloadSize !== 13)) return false
-    if (matchesAscii(bytes, typeOffset, 'IDAT') && payloadSize > 0) hasImageData = true
+    const payloadStart = offset + 8
+    const payloadEnd = payloadStart + payloadSize
+    if (computeCrc32(bytes, typeOffset, payloadEnd) !== readUint32BigEndian(bytes, payloadEnd)) return false
+    if (firstChunk) {
+      if (!matchesAscii(bytes, typeOffset, 'IHDR') || payloadSize !== 13) return false
+      width = readUint32BigEndian(bytes, payloadStart)
+      height = readUint32BigEndian(bytes, payloadStart + 4)
+      const bitDepth = bytes[payloadStart + 8]
+      colorType = bytes[payloadStart + 9]
+      const validDepthsByColorType: Record<number, number[]> = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16],
+      }
+      const channelsByColorType: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }
+      if (width === 0 || height === 0 || !validDepthsByColorType[colorType]?.includes(bitDepth)) return false
+      if (bytes[payloadStart + 10] !== 0 || bytes[payloadStart + 11] !== 0) return false
+      interlaceMethod = bytes[payloadStart + 12]
+      if (interlaceMethod !== 0 && interlaceMethod !== 1) return false
+      bitsPerPixel = bitDepth * channelsByColorType[colorType]
+    } else if (matchesAscii(bytes, typeOffset, 'IHDR')) {
+      return false
+    }
+    if (matchesAscii(bytes, typeOffset, 'PLTE')) {
+      if (hasImageData || payloadSize === 0 || payloadSize > 768 || payloadSize % 3 !== 0) return false
+      hasPalette = true
+    }
+    if (matchesAscii(bytes, typeOffset, 'IDAT')) {
+      if (imageDataEnded) return false
+      if (payloadSize > 0) {
+        hasImageData = true
+        imageDataChunks.push(bytes.subarray(payloadStart, payloadEnd))
+      }
+    } else if (hasImageData && !matchesAscii(bytes, typeOffset, 'IEND')) {
+      imageDataEnded = true
+    }
     if (matchesAscii(bytes, typeOffset, 'IEND')) {
-      return hasImageData && payloadSize === 0 && chunkEnd === bytes.length
+      if (!hasImageData || payloadSize !== 0 || chunkEnd !== bytes.length) return false
+      if (colorType === 3 && !hasPalette) return false
+      const passes = interlaceMethod === 0
+        ? [[0, 0, 1, 1]]
+        : [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]]
+      let expectedBytes = 0
+      const passRows: Array<{ rows: number; rowBytes: number }> = []
+      for (const [startX, startY, stepX, stepY] of passes) {
+        const passWidth = width > startX ? Math.ceil((width - startX) / stepX) : 0
+        const rows = height > startY ? Math.ceil((height - startY) / stepY) : 0
+        if (passWidth === 0 || rows === 0) continue
+        const rowBytes = Math.ceil(passWidth * bitsPerPixel / 8)
+        expectedBytes += rows * (rowBytes + 1)
+        if (!Number.isSafeInteger(expectedBytes) || expectedBytes > 64 * 1024 * 1024) return false
+        passRows.push({ rows, rowBytes })
+      }
+      try {
+        const inflated = inflateSync(Buffer.concat(imageDataChunks.map((chunk) => Buffer.from(chunk))), {
+          maxOutputLength: 64 * 1024 * 1024,
+        })
+        if (inflated.length !== expectedBytes) return false
+        let inflatedOffset = 0
+        for (const pass of passRows) {
+          for (let row = 0; row < pass.rows; row += 1) {
+            if (inflated[inflatedOffset] > 4) return false
+            inflatedOffset += pass.rowBytes + 1
+          }
+        }
+        return inflatedOffset === inflated.length
+      } catch {
+        return false
+      }
     }
     firstChunk = false
     offset = chunkEnd
@@ -656,17 +746,29 @@ function isStructurallyCompleteWebp(bytes: Uint8Array): boolean {
     const payloadOffset = offset + 8
     if (matchesAscii(bytes, offset, 'VP8 ')) {
       if (chunkLength < 10 || payloadOffset + 10 > bytes.length) return false
-      const isKeyFrame = (bytes[payloadOffset] & 0x01) === 0
+      const frameTag = bytes[payloadOffset]
+        | (bytes[payloadOffset + 1] << 8)
+        | (bytes[payloadOffset + 2] << 16)
+      const isKeyFrame = (frameTag & 0x01) === 0
+      const firstPartitionLength = frameTag >>> 5
       const hasStartCode = bytes[payloadOffset + 3] === 0x9d
         && bytes[payloadOffset + 4] === 0x01
         && bytes[payloadOffset + 5] === 0x2a
       const width = (bytes[payloadOffset + 6] | (bytes[payloadOffset + 7] << 8)) & 0x3fff
       const height = (bytes[payloadOffset + 8] | (bytes[payloadOffset + 9] << 8)) & 0x3fff
-      return isKeyFrame && hasStartCode && width > 0 && height > 0
+      return isKeyFrame
+        && firstPartitionLength > 0
+        && firstPartitionLength <= chunkLength - 10
+        && hasStartCode
+        && width > 0
+        && height > 0
     }
     if (matchesAscii(bytes, offset, 'VP8L')) {
-      if (chunkLength < 5 || payloadOffset + 5 > bytes.length || bytes[payloadOffset] !== 0x2f) return false
-      return ((readUint32LittleEndian(bytes, payloadOffset + 1) >>> 29) & 0x07) === 0
+      if (chunkLength <= 5 || payloadOffset + chunkLength > bytes.length || bytes[payloadOffset] !== 0x2f) return false
+      const dimensions = readUint32LittleEndian(bytes, payloadOffset + 1)
+      const width = (dimensions & 0x3fff) + 1
+      const height = ((dimensions >>> 14) & 0x3fff) + 1
+      return width > 0 && height > 0 && ((dimensions >>> 29) & 0x07) === 0
     }
     return false
   }
@@ -882,19 +984,80 @@ function isStructurallyCompleteAvif(bytes: Uint8Array): boolean {
 
 function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
   if (inferImageMimeTypeFromHeader(bytes) !== 'image/gif' || bytes.length < 14) return false
+  const logicalWidth = readUint16LittleEndian(bytes, 6)
+  const logicalHeight = readUint16LittleEndian(bytes, 8)
+  if (logicalWidth === 0 || logicalHeight === 0) return false
   let offset = 13
   const packedFields = bytes[10]
   if ((packedFields & 0x80) !== 0) {
     offset += 3 * 2 ** ((packedFields & 0x07) + 1)
   }
+  if (offset > bytes.length) return false
   let hasImageData = false
-  const skipSubBlocks = (): boolean => {
+  const readSubBlocks = (collect: boolean): Uint8Array | null => {
+    const chunks: Uint8Array[] = []
+    let totalLength = 0
     while (offset < bytes.length) {
       const blockLength = bytes[offset]
       offset += 1
-      if (blockLength === 0) return true
-      if (offset + blockLength > bytes.length) return false
+      if (blockLength === 0) {
+        if (!collect) return new Uint8Array()
+        const combined = new Uint8Array(totalLength)
+        let writeOffset = 0
+        for (const chunk of chunks) {
+          combined.set(chunk, writeOffset)
+          writeOffset += chunk.length
+        }
+        return combined
+      }
+      if (offset + blockLength > bytes.length) return null
+      if (collect) {
+        chunks.push(bytes.subarray(offset, offset + blockLength))
+        totalLength += blockLength
+      }
       offset += blockLength
+    }
+    return null
+  }
+  const hasCompleteLzwImage = (data: Uint8Array, minimumCodeSize: number, pixelCount: number): boolean => {
+    if (minimumCodeSize < 2 || minimumCodeSize > 8 || data.length === 0 || pixelCount <= 0) return false
+    const clearCode = 1 << minimumCodeSize
+    const endCode = clearCode + 1
+    const entryLengths = new Uint32Array(4096)
+    let codeSize = minimumCodeSize + 1
+    let nextCode = endCode + 1
+    let previousCode = -1
+    let bitOffset = 0
+    let outputPixels = 0
+    const resetDictionary = (): void => {
+      entryLengths.fill(0)
+      for (let index = 0; index < clearCode; index += 1) entryLengths[index] = 1
+      codeSize = minimumCodeSize + 1
+      nextCode = endCode + 1
+      previousCode = -1
+    }
+    resetDictionary()
+    while (bitOffset + codeSize <= data.length * 8) {
+      let code = 0
+      for (let bit = 0; bit < codeSize; bit += 1) {
+        code |= ((data[(bitOffset + bit) >>> 3] >>> ((bitOffset + bit) & 7)) & 1) << bit
+      }
+      bitOffset += codeSize
+      if (code === clearCode) {
+        resetDictionary()
+        continue
+      }
+      if (code === endCode) return outputPixels === pixelCount
+      let entryLength = code < nextCode ? entryLengths[code] : 0
+      if (code === nextCode && previousCode >= 0) entryLength = entryLengths[previousCode] + 1
+      if (entryLength === 0 || outputPixels + entryLength > pixelCount) return false
+      outputPixels += entryLength
+      if (previousCode >= 0 && nextCode < 4096) {
+        entryLengths[nextCode] = entryLengths[previousCode] + 1
+        nextCode += 1
+        if (nextCode === 1 << codeSize && codeSize < 12) codeSize += 1
+      }
+      previousCode = code
     }
     return false
   }
@@ -905,19 +1068,25 @@ function isStructurallyCompleteGif(bytes: Uint8Array): boolean {
     if (marker === 0x21) {
       if (offset >= bytes.length) return false
       offset += 1
-      if (!skipSubBlocks()) return false
+      if (!readSubBlocks(false)) return false
       continue
     }
     if (marker !== 0x2c || offset + 9 > bytes.length) return false
+    const left = readUint16LittleEndian(bytes, offset)
+    const top = readUint16LittleEndian(bytes, offset + 2)
+    const width = readUint16LittleEndian(bytes, offset + 4)
+    const height = readUint16LittleEndian(bytes, offset + 6)
+    if (width === 0 || height === 0 || left + width > logicalWidth || top + height > logicalHeight) return false
     const imagePackedFields = bytes[offset + 8]
     offset += 9
     if ((imagePackedFields & 0x80) !== 0) {
       offset += 3 * 2 ** ((imagePackedFields & 0x07) + 1)
     }
     if (offset >= bytes.length) return false
+    const minimumCodeSize = bytes[offset]
     offset += 1
-    const imageDataStart = offset
-    if (!skipSubBlocks() || offset <= imageDataStart + 1) return false
+    const imageData = readSubBlocks(true)
+    if (!imageData || !hasCompleteLzwImage(imageData, minimumCodeSize, width * height)) return false
     hasImageData = true
   }
   return false
@@ -990,7 +1159,11 @@ function toAttachmentLinkTarget(block: Record<string, unknown>, fallback: string
   return `attachment://${candidate}`
 }
 
-async function persistInlineDataUrlToLocalFile(dataUrl: string, baseName: string): Promise<string | null> {
+export async function persistInlineDataUrlToLocalFile(
+  dataUrl: string,
+  baseName: string,
+  mediaDir = join(tmpdir(), 'codex-web-inline-media'),
+): Promise<string | null> {
   const trimmed = dataUrl.trim()
   if (!trimmed.toLowerCase().startsWith('data:')) return null
   const commaIndex = trimmed.indexOf(',')
@@ -1019,16 +1192,20 @@ async function persistInlineDataUrlToLocalFile(dataUrl: string, baseName: string
   if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml' && !inferredImageMimeType) return null
   const persistedMimeType = inferredImageMimeType ?? mimeType
   const ext = extensionFromMimeType(persistedMimeType)
-  const mediaDir = join(tmpdir(), 'codex-web-inline-media')
-  await mkdir(mediaDir, { recursive: true })
-  const fileName = `${baseName}-${hash}${ext}`
-  const filePath = join(mediaDir, fileName)
   try {
-    await stat(filePath)
-  } catch {
-    await writeFile(filePath, bytes)
+    await mkdir(mediaDir, { recursive: true })
+    const fileName = `${baseName}-${hash}${ext}`
+    const filePath = join(mediaDir, fileName)
+    try {
+      await stat(filePath)
+    } catch {
+      await writeFile(filePath, bytes)
+    }
+    return filePath
+  } catch (error) {
+    console.error(`[codex-api] Failed to persist inline image ${baseName}`, error)
+    return null
   }
-  return filePath
 }
 
 function toLocalImageProxyUrl(path: string): string {
@@ -9082,7 +9259,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
 	            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
 	            if (snapshot) {
-	              const mergedSnapshot = await mergeCapturedItemsIntoThreadResult(appServer, snapshot)
+	              const mergedSnapshot = await mergeCapturedItemsIntoThreadResult(
+	                appServer,
+	                snapshot,
+	                shouldAppendMissingCapturedTurns(body.method, body.params),
+	              )
 	              setJson(res, 200, { result: mergedSnapshot })
 	              return
 	            }

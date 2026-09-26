@@ -11,11 +11,12 @@
 2. Confirm the message area where the inline image appears.
 3. Open Network tab and inspect `POST /codex-api/rpc` `thread/read` response.
 4. Verify the image block now has `type: "image"` and a `/codex-local-image?path=...` URL instead of a `data:` URL.
-5. Run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts` from the repository root. The command must report every test in that file as passed.
-6. To reproduce fallback selection alone, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "fallback"`. Confirm the output includes the malformed-first-candidate cases for generic headers, JPEG scan data, BMP raster data, and unavailable local paths.
-7. To reproduce live replacement and write-failure behavior, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "shares live image cleanup|same-id image notification|cleanup failures"`. Confirm all three named cases pass.
-8. To reproduce bounded retention and queue resets, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "bounds captured|bounds eager image|bounded queue capacity"`. Confirm the queue never exceeds 32 waiting jobs, physical sanitation concurrency never exceeds two, and captured state reaches the asserted count/byte limits.
-9. To reproduce pre-materialization response recovery, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "pending thread recovery|successful response before its turn materializes"`. Confirm the returned synthetic turn contains a payload-free `imageView`.
+5. Start an image-generation turn. After its `item/completed` notification appears in the Network stream, reload before the next materialized `thread/read` includes that turn. Confirm the reloaded chat still shows the image, its URL starts with `/codex-local-image?path=`, and the recovered `thread/read` item is an `imageView` without `result`, `b64_json`, `image`, `url`, `image_url`, or `images` payload fields.
+6. Run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts` from the repository root. The command must report every test in that file as passed.
+7. To reproduce fallback selection alone, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "fallback"`. Confirm the output includes the malformed-first-candidate cases for generic headers, PNG checksums, JPEG scan data, WebP raster data, GIF dimensions, BMP raster data, and unavailable local paths.
+8. To reproduce live replacement and write-failure behavior, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "shares live image cleanup|same-id image notification|cleanup failures|media directory"`. Confirm all four named cases pass.
+9. To reproduce bounded retention and queue resets, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "bounds captured|bounds eager image|bounded queue capacity"`. Confirm the queue never exceeds 32 waiting jobs, physical sanitation concurrency never exceeds two, and captured state reaches the asserted count/byte limits.
+10. To reproduce pre-materialization response recovery, run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts -t "pending thread recovery|successful response before its turn materializes"`. Confirm the returned synthetic turn contains a payload-free `imageView`.
 
 #### Expected Results
 - Inline `data:` image payload is not sent in RPC response.
@@ -34,6 +35,7 @@
 - Empty or materialization-pending `thread/read` recovery responses merge current captured images, including a synthetic pending turn when no materialized turn exists yet.
 - Generated images recover scalar `url` and `image_url` fallbacks plus string or object entries in `images`; concurrent reads share the same job even after waiting for capacity, and evicted generation entries cannot make stale responses current again.
 - Generated fallback recovery examines at most 32 candidates and 32 MiB of candidate text, accepts parameterized Base64 image data URLs, and strips unusable payloads from normal responses. Captured images are marked sanitized only after producing a payload-free `imageView` with a renderable path; failed cleanup is omitted and retried.
+- PNG checksum or decompression failures, header-only lossless WebP, and invalid GIF dimensions or LZW data do not mask a later complete fallback. An unavailable temporary media directory omits that image without rejecting the containing thread response.
 - Captured-item size estimation traverses at most 10,000 nodes without variadic array expansion; wider structures are treated as over-limit and are not retained.
 
 #### Rollback/Cleanup
